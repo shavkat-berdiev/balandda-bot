@@ -1,7 +1,10 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
-from api.routers import reports, transactions
+from api.routers import auth, categories, daily_reports, reports, transactions, users
 
 app = FastAPI(
     title="Balandda Analytics API",
@@ -11,16 +14,31 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://analytics.berdiev.uz"],
+    allow_origins=[
+        "https://analytics.berdiev.uz",
+        "http://localhost:5173",  # Vite dev server
+        "http://localhost:8000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# API routes
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(transactions.router, prefix="/api/v1/transactions", tags=["transactions"])
 app.include_router(reports.router, prefix="/api/v1/reports", tags=["reports"])
+app.include_router(categories.router, prefix="/api/v1/categories", tags=["categories"])
+app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
+app.include_router(daily_reports.router, prefix="/api/v1/daily-reports", tags=["daily-reports"])
 
 
-@app.get("/health")
+@app.get("/api/health")
 async def health():
     return {"status": "ok", "service": "balandda-api"}
+
+
+# Serve frontend static files (production build)
+web_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "dist")
+if os.path.isdir(web_dist):
+    app.mount("/", StaticFiles(directory=web_dist, html=True), name="frontend")

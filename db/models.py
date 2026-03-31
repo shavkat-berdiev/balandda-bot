@@ -1,11 +1,12 @@
-import enum
-from datetime import datetime
+from datetime import datetime, date
 
 from sqlalchemy import (
     BigInteger,
+    Date,
     DateTime,
     Enum,
     ForeignKey,
+    Integer,
     Numeric,
     String,
     Text,
@@ -13,31 +14,40 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+# Import all enums and labels from the standalone module
+from db.enums import (
+    AccommodationType,
+    ACCOMMODATION_TYPE_LABELS,
+    BusinessUnit,
+    ExpenseCategory,
+    EXPENSE_CATEGORY_LABELS,
+    Language,
+    PaymentMethod,
+    PAYMENT_METHOD_LABELS,
+    TransactionType,
+    UserRole,
+)
+
+# Re-export for backward compatibility
+__all__ = [
+    "Base",
+    "AccommodationType", "ACCOMMODATION_TYPE_LABELS",
+    "BusinessUnit",
+    "ExpenseCategory", "EXPENSE_CATEGORY_LABELS",
+    "Language",
+    "PaymentMethod", "PAYMENT_METHOD_LABELS",
+    "TransactionType",
+    "UserRole",
+    "User", "Category", "Transaction",
+    "DailyReport", "ReportLineItem", "ReportExpense",
+]
+
 
 class Base(DeclarativeBase):
     pass
 
 
-class BusinessUnit(str, enum.Enum):
-    RESORT = "resort"
-    RESTAURANT = "restaurant"
-
-
-class TransactionType(str, enum.Enum):
-    CASH_IN = "cash_in"
-    CASH_OUT = "cash_out"
-
-
-class UserRole(str, enum.Enum):
-    ADMIN = "admin"
-    RESORT_MANAGER = "resort_manager"
-    RESTAURANT_MANAGER = "restaurant_manager"
-
-
-class Language(str, enum.Enum):
-    RU = "ru"
-    UZ = "uz"
-
+# ── Models ─────────────────────────────────────────────────────────
 
 class User(Base):
     __tablename__ = "users"
@@ -84,3 +94,54 @@ class Transaction(Base):
 
     user: Mapped["User"] = relationship(back_populates="transactions")
     category: Mapped["Category"] = relationship(back_populates="transactions")
+
+
+class DailyReport(Base):
+    """Parsed daily reports forwarded by admin."""
+    __tablename__ = "daily_reports"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    report_date: Mapped[date] = mapped_column(Date, index=True)
+    business_unit: Mapped[BusinessUnit] = mapped_column(Enum(BusinessUnit))
+    raw_text: Mapped[str] = mapped_column(Text)
+    total_income: Mapped[float] = mapped_column(Numeric(15, 2), default=0)
+    total_expense: Mapped[float] = mapped_column(Numeric(15, 2), default=0)
+    balance: Mapped[float] = mapped_column(Numeric(15, 2), default=0)
+    previous_balance: Mapped[float] = mapped_column(Numeric(15, 2), default=0)
+    imported_by: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    line_items: Mapped[list["ReportLineItem"]] = relationship(back_populates="report", cascade="all, delete-orphan")
+    expenses: Mapped[list["ReportExpense"]] = relationship(back_populates="report", cascade="all, delete-orphan")
+
+
+class ReportLineItem(Base):
+    """Individual income line from a daily report."""
+    __tablename__ = "report_line_items"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    report_id: Mapped[int] = mapped_column(ForeignKey("daily_reports.id", ondelete="CASCADE"))
+    accommodation_type: Mapped[AccommodationType] = mapped_column(Enum(AccommodationType))
+    unit_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    unit_label: Mapped[str] = mapped_column(String(100))
+    service_description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    payment_method: Mapped[PaymentMethod] = mapped_column(Enum(PaymentMethod))
+    amount: Mapped[float] = mapped_column(Numeric(15, 2))
+    discount_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    discount_reason: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    report: Mapped["DailyReport"] = relationship(back_populates="line_items")
+
+
+class ReportExpense(Base):
+    """Individual expense line from a daily report."""
+    __tablename__ = "report_expenses"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    report_id: Mapped[int] = mapped_column(ForeignKey("daily_reports.id", ondelete="CASCADE"))
+    expense_category: Mapped[ExpenseCategory] = mapped_column(Enum(ExpenseCategory))
+    description: Mapped[str] = mapped_column(String(255))
+    amount: Mapped[float] = mapped_column(Numeric(15, 2))
+
+    report: Mapped["DailyReport"] = relationship(back_populates="expenses")

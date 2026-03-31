@@ -101,10 +101,16 @@ async def main():
     dp = Dispatcher()
     dp.include_router(main_router)
 
+    # Error handler
+    @dp.error()
+    async def error_handler(event, exception):
+        logger.error(f"Error handling update: {exception}", exc_info=True)
+        return True
+
     # Start polling
     logger.info("Bot is running. Press Ctrl+C to stop.")
     try:
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
     finally:
         await bot.session.close()
         await engine.dispose()

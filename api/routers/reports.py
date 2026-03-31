@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.auth import get_current_user
 from db.database import get_session
 from db.models import BusinessUnit, Category, Transaction, TransactionType
 
@@ -25,6 +26,7 @@ async def daily_report(
     business_unit: BusinessUnit = Query(default=BusinessUnit.RESORT),
     report_date: date | None = None,
     session: AsyncSession = Depends(get_session),
+    _user: dict = Depends(get_current_user),
 ):
     """Get daily summary for a business unit."""
     target_date = report_date or date.today()

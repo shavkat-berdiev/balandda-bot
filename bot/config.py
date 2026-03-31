@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     timezone: str = "Asia/Tashkent"
 
     # Admin
-    admin_user_id: int = 0
+    admin_user_id: int | None = None
 
     @property
     def database_url(self) -> str:
