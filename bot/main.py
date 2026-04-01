@@ -2,7 +2,7 @@ import asyncio
 import logging
 import sys
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, types
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from sqlalchemy import text
@@ -113,8 +113,11 @@ async def main():
 
     # Error handler
     @dp.error()
-    async def error_handler(event, exception: Exception):
-        logger.error(f"Error handling update {event}: {exception}", exc_info=True)
+    async def error_handler(event: types.ErrorEvent):
+        logger.error(
+            f"Error handling update: {event.exception}",
+            exc_info=event.exception,
+        )
 
     # Setup scheduler for daily reports
     from bot.scheduler import setup_scheduler
