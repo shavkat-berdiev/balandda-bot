@@ -108,9 +108,11 @@ async def get_or_create_draft_report(user_id: int, report_date: date, business_u
         return report
 
 
-def format_amount(amount: float | Decimal) -> str:
+def format_amount(amount: float | Decimal | str) -> str:
     """Format amount with dot separators (e.g., 3.200.000)."""
-    if isinstance(amount, Decimal):
+    if isinstance(amount, str):
+        amount = float(amount)
+    elif isinstance(amount, Decimal):
         amount = float(amount)
     return f"{amount:,.0f}".replace(",", ".")
 
