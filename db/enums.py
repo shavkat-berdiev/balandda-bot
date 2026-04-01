@@ -4,55 +4,98 @@ import enum
 
 
 class BusinessUnit(str, enum.Enum):
-    RESORT = "resort"
-    RESTAURANT = "restaurant"
+    RESORT = "RESORT"
+    RESTAURANT = "RESTAURANT"
 
 
 class TransactionType(str, enum.Enum):
-    CASH_IN = "cash_in"
-    CASH_OUT = "cash_out"
+    CASH_IN = "CASH_IN"
+    CASH_OUT = "CASH_OUT"
 
 
 class UserRole(str, enum.Enum):
-    ADMIN = "admin"
-    RESORT_MANAGER = "resort_manager"
-    RESTAURANT_MANAGER = "restaurant_manager"
+    ADMIN = "ADMIN"
+    RESORT_MANAGER = "RESORT_MANAGER"
+    RESTAURANT_MANAGER = "RESTAURANT_MANAGER"
 
 
 class Language(str, enum.Enum):
-    RU = "ru"
-    UZ = "uz"
+    RU = "RU"
+    UZ = "UZ"
 
 
 class PaymentMethod(str, enum.Enum):
-    CASH = "cash"
-    CARD_TRANSFER = "card_transfer"
-    TERMINAL_VISA = "terminal_visa"
-    TERMINAL_UZCARD = "terminal_uzcard"
-    PAYME = "payme"
-    PREPAYMENT = "prepayment"
+    CASH = "CASH"
+    CARD_TRANSFER = "CARD_TRANSFER"
+    TERMINAL_VISA = "TERMINAL_VISA"
+    TERMINAL_UZCARD = "TERMINAL_UZCARD"
+    PAYME = "PAYME"
+    PREPAYMENT = "PREPAYMENT"
 
 
 class AccommodationType(str, enum.Enum):
-    DOMIK = "domik"
-    APARTMENT = "apartment"
-    PENTHOUSE = "penthouse"
-    VILLA = "villa"
-    WHITE_DOMIK = "white_domik"
-    SPA = "spa"
-    MASSAGE = "massage"
-    MINIBAR = "minibar"
-    HAMMAM = "hammam"
+    DOMIK = "DOMIK"
+    APARTMENT = "APARTMENT"
+    PENTHOUSE = "PENTHOUSE"
+    VILLA = "VILLA"
+    WHITE_DOMIK = "WHITE_DOMIK"
+    SPA = "SPA"
+    MASSAGE = "MASSAGE"
+    MINIBAR = "MINIBAR"
+    HAMMAM = "HAMMAM"
 
 
 class ExpenseCategory(str, enum.Enum):
-    INKASSATSIYA = "inkassatsiya"
-    BREAKFAST = "breakfast"
-    KITCHEN = "kitchen"
-    STAFF = "staff"
-    REFUND = "refund"
-    HOUSEHOLD = "household"
-    OTHER = "other"
+    INKASSATSIYA = "INKASSATSIYA"
+    BREAKFAST = "BREAKFAST"
+    KITCHEN = "KITCHEN"
+    STAFF = "STAFF"
+    SALARY = "SALARY"
+    REFUND = "REFUND"
+    HOUSEHOLD = "HOUSEHOLD"
+    REPAIR = "REPAIR"
+    DELIVERY = "DELIVERY"
+    OTHER = "OTHER"
+
+
+class DiscountType(str, enum.Enum):
+    PERCENTAGE = "PERCENTAGE"
+    FIXED_AMOUNT = "FIXED_AMOUNT"
+
+
+class DiscountReason(str, enum.Enum):
+    BIRTHDAY = "BIRTHDAY"
+    VIP_GUEST = "VIP_GUEST"
+    PROMOTION = "PROMOTION"
+    STAFF_REFERRAL = "STAFF_REFERRAL"
+    OTHER = "OTHER"
+
+
+class ServiceType(str, enum.Enum):
+    CLASSIC_AROMA_45 = "CLASSIC_AROMA_45"
+    CLASSIC_AROMA_60 = "CLASSIC_AROMA_60"
+    DETOX_60 = "DETOX_60"
+    DETOX_95 = "DETOX_95"
+    FOOT_MASSAGE_30 = "FOOT_MASSAGE_30"
+    BACK_MASSAGE_30 = "BACK_MASSAGE_30"
+    HAMMAM = "HAMMAM"
+    OTHER_SERVICE = "OTHER_SERVICE"
+
+
+class PropertyType(str, enum.Enum):
+    CHALET_WITH_SAUNA = "CHALET_WITH_SAUNA"
+    CHALET_WITHOUT_SAUNA = "CHALET_WITHOUT_SAUNA"
+    WHITE_CHALET = "WHITE_CHALET"
+    APARTMENT = "APARTMENT"
+    PENTHOUSE = "PENTHOUSE"
+    VILLA = "VILLA"
+    SPA_SUITE = "SPA_SUITE"
+
+
+class ReportStatus(str, enum.Enum):
+    DRAFT = "DRAFT"
+    SUBMITTED = "SUBMITTED"
+    APPROVED = "APPROVED"
 
 
 # ── Labels for display ──────────────────────────────────────────────
@@ -83,7 +126,50 @@ EXPENSE_CATEGORY_LABELS = {
     ExpenseCategory.BREAKFAST: "Затрата на завтрак",
     ExpenseCategory.KITCHEN: "Расходы кухни",
     ExpenseCategory.STAFF: "Затрата на персонал",
+    ExpenseCategory.SALARY: "Зарплата",
     ExpenseCategory.REFUND: "Возвраты",
     ExpenseCategory.HOUSEHOLD: "Хозяйственные расходы",
+    ExpenseCategory.REPAIR: "Ремонт",
+    ExpenseCategory.DELIVERY: "Доставка",
     ExpenseCategory.OTHER: "Прочие расходы",
+}
+
+DISCOUNT_TYPE_LABELS = {
+    DiscountType.PERCENTAGE: "Процент",
+    DiscountType.FIXED_AMOUNT: "Фиксированная сумма",
+}
+
+DISCOUNT_REASON_LABELS = {
+    DiscountReason.BIRTHDAY: "День рождения",
+    DiscountReason.VIP_GUEST: "VIP гость",
+    DiscountReason.PROMOTION: "Акция",
+    DiscountReason.STAFF_REFERRAL: "Рекомендация персонала",
+    DiscountReason.OTHER: "Другое",
+}
+
+SERVICE_TYPE_LABELS = {
+    ServiceType.CLASSIC_AROMA_45: "Классический аромамассаж 45мин",
+    ServiceType.CLASSIC_AROMA_60: "Классический аромамассаж 60мин",
+    ServiceType.DETOX_60: "Детокс терапия 60мин",
+    ServiceType.DETOX_95: "Детокс терапия 95мин",
+    ServiceType.FOOT_MASSAGE_30: "Массаж для ног 30мин",
+    ServiceType.BACK_MASSAGE_30: "Массаж спины 30мин",
+    ServiceType.HAMMAM: "Хаммам",
+    ServiceType.OTHER_SERVICE: "Другое",
+}
+
+PROPERTY_TYPE_LABELS = {
+    PropertyType.CHALET_WITH_SAUNA: "Домик с сауной",
+    PropertyType.CHALET_WITHOUT_SAUNA: "Домик без сауны",
+    PropertyType.WHITE_CHALET: "10-Белое Шале",
+    PropertyType.APARTMENT: "Апартамент",
+    PropertyType.PENTHOUSE: "Пентхаус",
+    PropertyType.VILLA: "Вилла",
+    PropertyType.SPA_SUITE: "SPA Сьют",
+}
+
+REPORT_STATUS_LABELS = {
+    ReportStatus.DRAFT: "Черновик",
+    ReportStatus.SUBMITTED: "Отправлено",
+    ReportStatus.APPROVED: "Одобрено",
 }

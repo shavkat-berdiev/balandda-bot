@@ -85,12 +85,22 @@ async def seed_categories():
         logger.info(f"Seeded {len(categories)} default categories")
 
 
+async def seed_new_tables():
+    """Seed new structured report tables (properties, services, minibar, staff)."""
+    from db.seed import seed_database
+
+    async with async_session() as session:
+        await seed_database(session)
+    logger.info("New structured report tables seeded")
+
+
 async def main():
     logger.info("Starting Balandda Bot...")
 
     # Initialize database
     await create_tables()
     await seed_categories()
+    await seed_new_tables()
 
     # Initialize bot
     bot = Bot(
@@ -103,15 +113,22 @@ async def main():
 
     # Error handler
     @dp.error()
-    async def error_handler(event, exception):
-        logger.error(f"Error handling update: {exception}", exc_info=True)
-        return True
+    async def error_handler(event, exception: Exception):
+        logger.error(f"Error handling update {event}: {exception}", exc_info=True)
+
+    # Setup scheduler for daily reports
+    from bot.scheduler import setup_scheduler
+
+    scheduler = setup_scheduler(bot)
+    scheduler.start()
+    logger.info("Scheduler started")
 
     # Start polling
     logger.info("Bot is running. Press Ctrl+C to stop.")
     try:
         await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
     finally:
+        scheduler.shutdown()
         await bot.session.close()
         await engine.dispose()
 

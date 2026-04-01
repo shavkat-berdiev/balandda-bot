@@ -23,7 +23,7 @@ async def cmd_lang(message: types.Message):
 async def on_lang_select(callback: types.CallbackQuery):
     """Handle language selection."""
     lang_code = callback.data.split(":")[1]
-    lang = Language(lang_code)
+    lang = Language(lang_code.upper())
 
     async with async_session() as session:
         result = await session.execute(
@@ -43,7 +43,7 @@ async def on_lang_select(callback: types.CallbackQuery):
     await callback.answer()
 
     # Show main menu in new language
-    section_name = get_text(f"section_{user.active_section.value}", lang_code)
+    section_name = get_text(f"section_{user.active_section.value.lower()}", lang_code)
     await callback.message.answer(
         get_text("main_menu", lang_code, section=section_name),
         reply_markup=main_menu_keyboard(lang_code),

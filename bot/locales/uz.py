@@ -16,6 +16,7 @@ messages = {
 
     # Main menu
     "main_menu": "Asosiy menyu — {section}",
+    "btn_new_report": "Yangi hisobot",
     "btn_cash_in": "Kirim",
     "btn_cash_out": "Chiqim",
     "btn_history": "Tarix",

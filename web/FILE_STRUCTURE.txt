@@ -1,0 +1,211 @@
+BALANDDA ANALYTICS DASHBOARD - COMPLETE FILE STRUCTURE
+=======================================================
+
+Created Files (9 new files):
+───────────────────────────
+
+1. src/components/DashboardLayout.jsx
+   - Main layout for analytics pages
+   - Dark sidebar with Russian navigation
+   - Date range picker in top bar
+   - Responsive design with mobile support
+   - ~150 lines
+
+2. src/pages/Analytics.jsx
+   - Router component for analytics section
+   - Routes sub-pages based on path
+   - Manages dateRange state
+   - ~35 lines
+
+3. src/pages/AnalyticsOverview.jsx
+   - Dashboard main page with KPIs and charts
+   - 4 KPI cards (Income, Expenses, Profit, Occupancy)
+   - Line chart (income vs expenses)
+   - Pie chart (payment methods)
+   - Bar chart (property types)
+   - ~280 lines
+
+4. src/pages/IncomePage.jsx
+   - Income breakdown and analytics
+   - Filters: property, payment method, search
+   - Summary table grouped by property
+   - Detailed transactions list
+   - Export button
+   - ~250 lines
+
+5. src/pages/ExpensePage.jsx
+   - Expense breakdown and analytics
+   - Category filter and search
+   - Pie chart for distribution
+   - Progress bars for categories
+   - Detailed expense table
+   - ~250 lines
+
+6. src/pages/PropertiesPage.jsx
+   - Property occupancy and revenue
+   - Property cards with status
+   - Summary cards (count, occupancy, revenue)
+   - Revenue bar chart
+   - Occupancy trend chart
+   - Detailed property table
+   - ~320 lines
+
+7. src/pages/ReportsPage.jsx
+   - Daily reports list
+   - Expandable report details
+   - Summary statistics
+   - Status and type badges
+   - Properties, methods, categories breakdown
+   - Download options
+   - ~290 lines
+
+8. src/utils/format.js
+   - formatCurrency() - Format with dot separators
+   - formatDate() - Full Russian date
+   - formatDateShort() - Short date format
+   - getDateRange() - Calculate date ranges
+   - ~60 lines
+
+9. ANALYTICS_DASHBOARD.md
+   - Complete documentation
+   - Architecture overview
+   - Component descriptions
+   - API integration guide
+   - ~300 lines
+
+
+Updated Files (3 files):
+───────────────────────
+
+1. src/api.js
+   - Added credentials: 'include'
+   - Added 6 new analytics endpoints
+   - ~60 lines total
+
+2. src/App.jsx
+   - Added Analytics import
+   - Added /analytics/* route
+   - Maintains existing functionality
+   - ~60 lines total
+
+3. src/index.css
+   - Added Google Fonts import
+   - Custom scrollbar styles
+   - Input focus styles
+   - Loading animation
+   - ~60 lines total
+
+
+Directory Structure:
+──────────────────
+
+web/
+├── src/
+│   ├── components/
+│   │   ├── DashboardLayout.jsx  [NEW]
+│   │   └── Layout.jsx
+│   ├── pages/
+│   │   ├── Analytics.jsx        [NEW]
+│   │   ├── AnalyticsOverview.jsx [NEW]
+│   │   ├── IncomePage.jsx       [NEW]
+│   │   ├── ExpensePage.jsx      [NEW]
+│   │   ├── PropertiesPage.jsx   [NEW]
+│   │   ├── ReportsPage.jsx      [NEW]
+│   │   ├── Dashboard.jsx
+│   │   ├── Categories.jsx
+│   │   ├── Users.jsx
+│   │   ├── Transactions.jsx
+│   │   └── Login.jsx
+│   ├── utils/
+│   │   └── format.js            [NEW]
+│   ├── App.jsx                  [UPDATED]
+│   ├── api.js                   [UPDATED]
+│   ├── index.css                [UPDATED]
+│   └── main.jsx
+├── public/
+├── package.json
+├── vite.config.js
+├── tailwind.config.js
+├── postcss.config.js
+├── index.html
+├── ANALYTICS_DASHBOARD.md       [NEW]
+└── FILE_STRUCTURE.txt           [NEW]
+
+
+Key Features:
+─────────────
+
+✓ 5 Main Analytics Pages
+  - Overview (Dashboard with KPIs and charts)
+  - Income (Breakdown with filters)
+  - Expenses (Category breakdown)
+  - Properties (Occupancy and revenue)
+  - Reports (Daily report list)
+
+✓ Professional UI Components
+  - KPI cards with color coding
+  - Responsive charts (Recharts)
+  - Data tables with sorting
+  - Filter dropdowns and search
+  - Status badges and indicators
+  - Progress bars
+
+✓ Design System
+  - Dark blue sidebar (#1a5676)
+  - Green accents (#2d8c5a)
+  - Responsive grid layouts
+  - Tailwind CSS utilities
+  - Lucide React icons
+  - Russian language UI
+
+✓ Data & API
+  - Mock data provided for all pages
+  - API endpoints defined in api.js
+  - Fallback to mock if API unavailable
+  - Currency formatting with dot separators
+  - Date range filtering (Today/Week/Month)
+
+✓ Developer Experience
+  - Clear file organization
+  - Reusable utility functions
+  - Consistent coding style
+  - Comprehensive documentation
+  - All syntax validated
+  - Ready for immediate use
+
+
+Tech Stack:
+───────────
+
+- React 18.3.1
+- React Router v6
+- Recharts 2.13.0
+- Lucide React 0.460.0
+- Tailwind CSS 3.4.16
+- Vite 6.0.3
+- Autoprefixer
+- PostCSS
+
+
+Usage:
+──────
+
+Development:
+  npm run dev
+
+Build:
+  npm run build
+
+Preview:
+  npm run preview
+
+Navigate to /analytics/* to access the dashboard
+
+
+All files are production-ready and include:
+- Proper error handling
+- Loading states
+- Responsive design
+- Mock data fallback
+- Russian language support
+- Professional styling

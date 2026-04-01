@@ -31,7 +31,7 @@ async def on_history(callback: types.CallbackQuery):
             await callback.answer()
             return
 
-        lang = user.language.value
+        lang = user.language.value.lower()
 
         # Get recent transactions
         result = await session.execute(

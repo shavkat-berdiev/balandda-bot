@@ -108,7 +108,7 @@ async def on_report(callback: types.CallbackQuery):
         await callback.answer()
         return
 
-    lang = user.language.value
+    lang = user.language.value.lower()
     report_text = await build_daily_report(user.active_section, date.today(), lang)
 
     back_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -137,8 +137,8 @@ async def on_back_menu(callback: types.CallbackQuery):
         await callback.answer()
         return
 
-    lang = user.language.value
-    section_name = get_text(f"section_{user.active_section.value}", lang)
+    lang = user.language.value.lower()
+    section_name = get_text(f"section_{user.active_section.value.lower()}", lang)
 
     await callback.message.edit_text(
         get_text("main_menu", lang, section=section_name),

@@ -22,6 +22,12 @@ def main_menu_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
+                text=f"📝 {get_text('btn_new_report', lang)}",
+                callback_data="action:new_report",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
                 text=f"💰 {get_text('btn_cash_in', lang)}",
                 callback_data="action:cash_in",
             ),

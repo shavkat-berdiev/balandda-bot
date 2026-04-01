@@ -83,14 +83,14 @@ async def on_cash_in(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    lang = user.language.value
+    lang = user.language.value.lower()
     keyboard = await build_category_keyboard(
         user.active_section, TransactionType.CASH_IN, lang
     )
 
     await state.update_data(
         transaction_type=TransactionType.CASH_IN.value,
-        business_unit=user.active_section.value,
+        business_unit=user.active_section.value.lower(),
         lang=lang,
     )
 
@@ -109,14 +109,14 @@ async def on_cash_out(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    lang = user.language.value
+    lang = user.language.value.lower()
     keyboard = await build_category_keyboard(
         user.active_section, TransactionType.CASH_OUT, lang
     )
 
     await state.update_data(
         transaction_type=TransactionType.CASH_OUT.value,
-        business_unit=user.active_section.value,
+        business_unit=user.active_section.value.lower(),
         lang=lang,
     )
 
@@ -222,7 +222,7 @@ async def _show_confirmation(message: types.Message, state: FSMContext, edit: bo
     tx_type = data["transaction_type"]
     amount = Decimal(data["amount"])
 
-    type_label = get_text("btn_cash_in" if tx_type == "cash_in" else "btn_cash_out", lang)
+    type_label = get_text("btn_cash_in" if tx_type.upper() == "CASH_IN" else "btn_cash_out", lang)
     note = data.get("note", "-")
 
     confirm_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -277,8 +277,8 @@ async def on_confirm(callback: types.CallbackQuery, state: FSMContext):
         transaction = Transaction(
             user_id=user.id,
             category_id=data["category_id"],
-            business_unit=BusinessUnit(data["business_unit"]),
-            transaction_type=TransactionType(data["transaction_type"]),
+            business_unit=BusinessUnit(data["business_unit"].upper()),
+            transaction_type=TransactionType(data["transaction_type"].upper()),
             amount=Decimal(data["amount"]),
             note=data.get("note") if data.get("note") != "-" else None,
         )
@@ -309,8 +309,8 @@ async def on_cancel(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
-    lang = user.language.value
-    section_name = get_text(f"section_{user.active_section.value}", lang)
+    lang = user.language.value.lower()
+    section_name = get_text(f"section_{user.active_section.value.lower()}", lang)
 
     await callback.message.edit_text(
         f"{get_text('transaction_cancelled', lang)}\n\n"

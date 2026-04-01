@@ -16,6 +16,7 @@ messages = {
 
     # Main menu
     "main_menu": "Главное меню — {section}",
+    "btn_new_report": "Новый отчёт",
     "btn_cash_in": "Приход",
     "btn_cash_out": "Расход",
     "btn_history": "История",

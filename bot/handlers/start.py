@@ -70,7 +70,7 @@ async def cmd_start(message: types.Message):
                     await message.answer(get_text("not_authorized"))
                     return
 
-    lang = user.language.value
+    lang = user.language.value.lower()
     await message.answer(
         get_text("welcome", lang),
         reply_markup=section_keyboard(lang),
@@ -81,7 +81,7 @@ async def cmd_start(message: types.Message):
 async def on_section_select(callback: types.CallbackQuery):
     """Handle section selection."""
     section = callback.data.split(":")[1]
-    business_unit = BusinessUnit(section)
+    business_unit = BusinessUnit(section.upper())
 
     async with async_session() as session:
         result = await session.execute(
@@ -94,7 +94,7 @@ async def on_section_select(callback: types.CallbackQuery):
 
         user.active_section = business_unit
         await session.commit()
-        lang = user.language.value
+        lang = user.language.value.lower()
 
     section_name = get_text(f"section_{section}", lang)
     await callback.message.edit_text(
@@ -112,8 +112,8 @@ async def cmd_menu(message: types.Message):
         await message.answer(get_text("not_authorized"))
         return
 
-    lang = user.language.value
-    section = user.active_section.value
+    lang = user.language.value.lower()
+    section = user.active_section.value.lower()
     section_name = get_text(f"section_{section}", lang)
     await message.answer(
         get_text("main_menu", lang, section=section_name),

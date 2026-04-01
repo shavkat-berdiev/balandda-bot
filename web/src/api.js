@@ -1,0 +1,67 @@
+const API_BASE = '/api/v1';
+
+function getToken() {
+  return localStorage.getItem('token');
+}
+
+async function request(path, options = {}) {
+  const token = getToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...options.headers,
+  };
+
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' });
+
+  if (res.status === 401) {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    window.location.href = '/login';
+    return;
+  }
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+    throw new Error(err.detail || 'Request failed');
+  }
+
+  return res.json();
+}
+
+export const api = {
+  // Auth
+  telegramLogin: (data) => request('/auth/telegram', { method: 'POST', body: JSON.stringify(data) }),
+
+  // Transactions
+  getTransactions: (params = '') => request(`/transactions/${params ? '?' + params : ''}`),
+
+  // Reports
+  getDailyReport: (unit, date) =>
+    request(`/reports/daily?business_unit=${unit}${date ? '&report_date=' + date : ''}`),
+
+  // Categories
+  getCategories: (params = '') => request(`/categories/${params ? '?' + params : ''}`),
+  createCategory: (data) => request('/categories/', { method: 'POST', body: JSON.stringify(data) }),
+  updateCategory: (id, data) => request(`/categories/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCategory: (id) => request(`/categories/${id}`, { method: 'DELETE' }),
+
+  // Users
+  getUsers: () => request('/users/'),
+  createUser: (data) => request('/users/', { method: 'POST', body: JSON.stringify(data) }),
+  updateUser: (id, data) => request(`/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Analytics Dashboard
+  getDailyReports: (from, to) =>
+    request(`/daily-reports/list?from_date=${from}&to_date=${to}`),
+  getReportDetail: (id) =>
+    request(`/daily-reports/detail/${id}`),
+  getBreakdown: (from, to) =>
+    request(`/daily-reports/breakdown?from_date=${from}&to_date=${to}`),
+  getStructuredReports: (from, to) =>
+    request(`/structured-reports/list?from_date=${from}&to_date=${to}`),
+  getProperties: () =>
+    request('/properties'),
+  getHealth: () =>
+    request('/health'),
+};
