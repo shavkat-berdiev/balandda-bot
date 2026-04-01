@@ -76,7 +76,7 @@ async def get_user(telegram_id: int) -> User | None:
         return result.scalar_one_or_none()
 
 
-async def get_or_create_draft_report(user_id: int, report_date: date) -> StructuredReport:
+async def get_or_create_draft_report(user_id: int, report_date: date, business_unit) -> StructuredReport:
     """Get or create a draft report for today."""
     async with async_session() as session:
         result = await session.execute(
@@ -84,6 +84,7 @@ async def get_or_create_draft_report(user_id: int, report_date: date) -> Structu
                 and_(
                     StructuredReport.submitted_by == user_id,
                     StructuredReport.report_date == report_date,
+                    StructuredReport.business_unit == business_unit,
                     StructuredReport.status == ReportStatusEnum.DRAFT,
                 )
             )
@@ -93,6 +94,7 @@ async def get_or_create_draft_report(user_id: int, report_date: date) -> Structu
         if not report:
             report = StructuredReport(
                 report_date=report_date,
+                business_unit=business_unit,
                 status=ReportStatusEnum.DRAFT,
                 submitted_by=user_id,
                 total_income=Decimal(0),
@@ -143,7 +145,7 @@ async def on_new_report(callback: types.CallbackQuery, state: FSMContext):
     lang = user.language.value.lower()
 
     # Create or get draft report for today
-    report = await get_or_create_draft_report(user.id, date.today())
+    report = await get_or_create_draft_report(user.id, date.today(), user.active_section)
 
     # Store in FSM state
     await state.update_data(report_id=report.id, lang=lang, user_id=user.id)
