@@ -27,6 +27,34 @@ async def create_tables():
     logger.info("Database tables ready")
 
 
+async def run_migrations():
+    """Run schema migrations for columns added after initial table creation.
+
+    SQLAlchemy's create_all() only creates new tables, it does NOT add
+    columns to existing tables. We must ALTER TABLE manually.
+    """
+    migrations = [
+        # Added in v0.2: restaurant income category on income_entries
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'income_entries'
+                  AND column_name = 'restaurant_category'
+            ) THEN
+                ALTER TABLE income_entries
+                ADD COLUMN restaurant_category VARCHAR(50) NULL;
+            END IF;
+        END $$;
+        """,
+    ]
+    async with engine.begin() as conn:
+        for sql in migrations:
+            await conn.execute(text(sql))
+    logger.info("Database migrations applied")
+
+
 async def seed_categories():
     """Seed default categories if empty."""
     from db.models import BusinessUnit, Category, TransactionType
@@ -99,6 +127,7 @@ async def main():
 
     # Initialize database
     await create_tables()
+    await run_migrations()
     await seed_categories()
     await seed_new_tables()
 

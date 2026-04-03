@@ -400,59 +400,67 @@ async def on_add_accommodation(callback: types.CallbackQuery, state: FSMContext)
 @router.callback_query(F.data.startswith("prop:"), NewReportStates.choosing_property)
 async def on_property_selected(callback: types.CallbackQuery, state: FSMContext):
     """Property selected, show prepayment info and ask for payment method."""
-    prop_id = int(callback.data.split(":")[1])
-    data = await state.get_data()
-    lang = data.get("lang", "ru")
-    report_date_str = data.get("report_date", date.today().isoformat())
-    report_date = date.fromisoformat(report_date_str)
+    try:
+        prop_id = int(callback.data.split(":")[1])
+        data = await state.get_data()
+        lang = data.get("lang", "ru")
+        report_date_str = data.get("report_date", date.today().isoformat())
+        report_date = date.fromisoformat(report_date_str)
 
-    async with async_session() as session:
-        # Get property
-        result = await session.execute(select(Property).where(Property.id == prop_id))
-        prop = result.scalar_one_or_none()
+        async with async_session() as session:
+            # Get property
+            result = await session.execute(select(Property).where(Property.id == prop_id))
+            prop = result.scalar_one_or_none()
 
-        if not prop:
-            await callback.answer("Объект не найден")
-            return
+            if not prop:
+                await callback.answer("Объект не найден")
+                return
 
-        # Check for existing prepayments on this property
-        # Look for PREPAYMENT entries linked to this property across all reports
-        # within a reasonable window (30 days before the report date)
-        prepay_query = (
-            select(IncomeEntry)
-            .join(StructuredReport)
-            .where(
-                IncomeEntry.property_id == prop_id,
-                IncomeEntry.payment_method == PaymentMethod.PREPAYMENT,
-                StructuredReport.report_date >= report_date - timedelta(days=30),
-                StructuredReport.report_date <= report_date,
-            )
-        )
-        prepay_result = await session.execute(prepay_query)
-        prepayments = prepay_result.scalars().all()
+            # Check for existing prepayments on this property
+            # Look for PREPAYMENT entries linked to this property across all reports
+            # within a reasonable window (30 days before the report date)
+            try:
+                prepay_query = (
+                    select(IncomeEntry)
+                    .join(StructuredReport)
+                    .where(
+                        IncomeEntry.property_id == prop_id,
+                        IncomeEntry.payment_method == PaymentMethod.PREPAYMENT,
+                        StructuredReport.report_date >= report_date - timedelta(days=30),
+                        StructuredReport.report_date <= report_date,
+                    )
+                )
+                prepay_result = await session.execute(prepay_query)
+                prepayments = prepay_result.scalars().all()
+            except Exception as e:
+                logger.error(f"Prepayment query failed: {e}")
+                prepayments = []
 
-    await state.update_data(current_property=prop_id, base_price=float(prop.price_weekday))
+        await state.update_data(current_property=prop_id, base_price=float(prop.price_weekday))
 
-    # Build info text
-    info = f"💳 {prop.name_ru}\nБазовая цена: {format_amount(prop.price_weekday)}\n"
+        # Build info text
+        info = f"💳 {prop.name_ru}\nБазовая цена: {format_amount(prop.price_weekday)}\n"
 
-    if prepayments:
-        total_prepaid = sum(float(p.amount) for p in prepayments)
-        info += f"\n💵 Предоплата: {format_amount(total_prepaid)} ({len(prepayments)} платеж(ей))\n"
+        if prepayments:
+            total_prepaid = sum(float(p.amount) for p in prepayments)
+            info += f"\n💵 Предоплата: {format_amount(total_prepaid)} ({len(prepayments)} платеж(ей))\n"
 
-    info += "\nВыберите способ оплаты:"
+        info += "\nВыберите способ оплаты:"
 
-    # Show payment methods
-    buttons = []
-    for method in PaymentMethod:
-        label = PAYMENT_METHOD_LABELS.get(method, method.value)
-        buttons.append([InlineKeyboardButton(text=label, callback_data=f"pm:{method.value}")])
+        # Show payment methods
+        buttons = []
+        for method in PaymentMethod:
+            label = PAYMENT_METHOD_LABELS.get(method, method.value)
+            buttons.append([InlineKeyboardButton(text=label, callback_data=f"pm:{method.value}")])
 
-    buttons.append([InlineKeyboardButton(text=f"❌ {get_text('btn_cancel', lang)}", callback_data="rpt:cancel")])
+        buttons.append([InlineKeyboardButton(text=f"❌ {get_text('btn_cancel', lang)}", callback_data="rpt:cancel")])
 
-    await state.set_state(NewReportStates.entering_payment)
-    await callback.message.edit_text(info, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
-    await callback.answer()
+        await state.set_state(NewReportStates.entering_payment)
+        await callback.message.edit_text(info, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+        await callback.answer()
+    except Exception as e:
+        logger.error(f"on_property_selected error: {e}", exc_info=True)
+        await callback.answer(f"Ошибка: {str(e)[:100]}", show_alert=True)
 
 
 @router.callback_query(F.data.startswith("pm:"), NewReportStates.entering_payment)
