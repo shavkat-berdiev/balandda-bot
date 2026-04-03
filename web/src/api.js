@@ -91,4 +91,10 @@ export const api = {
   getAdminStaff: () => request('/admin/staff'),
   createAdminStaff: (data) => request('/admin/staff', { method: 'POST', body: JSON.stringify(data) }),
   updateAdminStaff: (id, data) => request(`/admin/staff/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Structured Reports (with date filter)
+  getStructuredReportsList: (from, to) =>
+    request(`/structured/list?start_date=${from}&end_date=${to}`),
+  getStructuredReportDetail: (id) =>
+    request(`/structured/detail/${id}`),
 };

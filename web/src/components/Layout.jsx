@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { BarChart3, FolderOpen, Users, ArrowLeftRight, LogOut, Menu, X, Home, Sparkles, Wine, UserCog } from 'lucide-react';
+import { BarChart3, FolderOpen, Users, ArrowLeftRight, LogOut, Menu, X, Home, Sparkles, Wine, UserCog, FileText } from 'lucide-react';
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: BarChart3 },
@@ -10,6 +10,7 @@ const navItems = [
 ];
 
 const adminItems = [
+  { path: '/admin/reports', label: 'Отчёты', icon: FileText },
   { path: '/admin/properties', label: 'Объекты', icon: Home },
   { path: '/admin/services', label: 'Услуги', icon: Sparkles },
   { path: '/admin/minibar', label: 'Минибар', icon: Wine },

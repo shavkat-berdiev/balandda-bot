@@ -11,7 +11,7 @@ Flow:
 """
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 from aiogram import F, Router, types
@@ -54,6 +54,7 @@ logger = logging.getLogger(__name__)
 
 class NewReportStates(StatesGroup):
     """FSM states for structured report entry."""
+    choosing_date = State()
     choosing_action = State()
     choosing_property = State()
     choosing_service = State()
@@ -132,30 +133,190 @@ async def build_report_action_menu(lang: str) -> InlineKeyboardMarkup:
 
 
 # ────────────────────────────────────────────────────────────────────────
-# ENTRY POINT: Start new report
+# DATE PICKER HELPERS
+# ────────────────────────────────────────────────────────────────────────
+
+DAY_NAMES_RU = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+MONTH_NAMES_RU = [
+    "", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+]
+
+MAX_PAST_DAYS = 30
+MAX_FUTURE_DAYS = 90
+
+
+def _build_date_picker(year: int, month: int) -> InlineKeyboardMarkup:
+    """Build a calendar-style date picker for the given month."""
+    import calendar
+
+    today = date.today()
+    min_date = today - timedelta(days=MAX_PAST_DAYS)
+    max_date = today + timedelta(days=MAX_FUTURE_DAYS)
+
+    buttons = []
+
+    # Month/year header with nav arrows
+    buttons.append([
+        InlineKeyboardButton(text="◀️", callback_data=f"cal:prev:{year}:{month}"),
+        InlineKeyboardButton(text=f"{MONTH_NAMES_RU[month]} {year}", callback_data="cal:noop"),
+        InlineKeyboardButton(text="▶️", callback_data=f"cal:next:{year}:{month}"),
+    ])
+
+    # Day-of-week header
+    buttons.append([
+        InlineKeyboardButton(text=d, callback_data="cal:noop") for d in DAY_NAMES_RU
+    ])
+
+    # Day grid
+    cal = calendar.monthcalendar(year, month)
+    for week in cal:
+        row = []
+        for day_num in week:
+            if day_num == 0:
+                row.append(InlineKeyboardButton(text=" ", callback_data="cal:noop"))
+            else:
+                d = date(year, month, day_num)
+                if d < min_date or d > max_date:
+                    row.append(InlineKeyboardButton(text="·", callback_data="cal:noop"))
+                elif d == today:
+                    row.append(InlineKeyboardButton(
+                        text=f"[{day_num}]",
+                        callback_data=f"cal:day:{d.isoformat()}",
+                    ))
+                else:
+                    row.append(InlineKeyboardButton(
+                        text=str(day_num),
+                        callback_data=f"cal:day:{d.isoformat()}",
+                    ))
+        buttons.append(row)
+
+    # Cancel
+    buttons.append([InlineKeyboardButton(text="❌ Отмена", callback_data="rpt:cancel")])
+
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# ENTRY POINT: Start new report → date selection
 # ────────────────────────────────────────────────────────────────────────
 
 
 @router.callback_query(F.data == "action:new_report")
 async def on_new_report(callback: types.CallbackQuery, state: FSMContext):
-    """Start a new structured report."""
+    """Start a new structured report — show date picker."""
     user = await get_user(callback.from_user.id)
     if not user:
         await callback.answer("Пользователь не найден")
         return
 
     lang = user.language.value.lower()
+    await state.update_data(lang=lang, user_id=user.id, business_unit=user.active_section.value)
 
-    # Create or get draft report for today
-    report = await get_or_create_draft_report(user.id, date.today(), user.active_section)
+    today = date.today()
+    yesterday = today - timedelta(days=1)
 
-    # Store in FSM state
-    await state.update_data(report_id=report.id, lang=lang, user_id=user.id)
+    # Quick-pick buttons + calendar
+    buttons = [
+        [
+            InlineKeyboardButton(
+                text=f"📅 Сегодня ({today.strftime('%d.%m')})",
+                callback_data=f"cal:day:{today.isoformat()}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text=f"📅 Вчера ({yesterday.strftime('%d.%m')})",
+                callback_data=f"cal:day:{yesterday.isoformat()}",
+            ),
+        ],
+        [
+            InlineKeyboardButton(
+                text="📆 Выбрать дату...",
+                callback_data=f"cal:show:{today.year}:{today.month}",
+            ),
+        ],
+        [InlineKeyboardButton(text="❌ Отмена", callback_data="rpt:cancel")],
+    ]
+
+    await state.set_state(NewReportStates.choosing_date)
+    await callback.message.edit_text(
+        "📝 Новый отчёт\n\nВыберите дату отчёта:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("cal:show:"), NewReportStates.choosing_date)
+async def on_show_calendar(callback: types.CallbackQuery, state: FSMContext):
+    """Show full calendar picker."""
+    parts = callback.data.split(":")
+    year, month = int(parts[2]), int(parts[3])
+    keyboard = _build_date_picker(year, month)
+    await callback.message.edit_text(
+        "📆 Выберите дату:",
+        reply_markup=keyboard,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("cal:prev:"), NewReportStates.choosing_date)
+async def on_cal_prev(callback: types.CallbackQuery, state: FSMContext):
+    """Navigate calendar backwards."""
+    parts = callback.data.split(":")
+    year, month = int(parts[2]), int(parts[3])
+    month -= 1
+    if month < 1:
+        month = 12
+        year -= 1
+    keyboard = _build_date_picker(year, month)
+    await callback.message.edit_text("📆 Выберите дату:", reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("cal:next:"), NewReportStates.choosing_date)
+async def on_cal_next(callback: types.CallbackQuery, state: FSMContext):
+    """Navigate calendar forwards."""
+    parts = callback.data.split(":")
+    year, month = int(parts[2]), int(parts[3])
+    month += 1
+    if month > 12:
+        month = 1
+        year += 1
+    keyboard = _build_date_picker(year, month)
+    await callback.message.edit_text("📆 Выберите дату:", reply_markup=keyboard)
+    await callback.answer()
+
+
+@router.callback_query(F.data == "cal:noop", NewReportStates.choosing_date)
+async def on_cal_noop(callback: types.CallbackQuery, state: FSMContext):
+    """Ignore taps on header/empty cells."""
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("cal:day:"), NewReportStates.choosing_date)
+async def on_date_selected(callback: types.CallbackQuery, state: FSMContext):
+    """Date selected — create/get draft report and show action menu."""
+    date_str = callback.data.split(":", 2)[2]
+    selected_date = date.fromisoformat(date_str)
+
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+    user_id = data["user_id"]
+
+    # Get user for business unit
+    user = await get_user(callback.from_user.id)
+    if not user:
+        await callback.answer("Пользователь не найден")
+        return
+
+    report = await get_or_create_draft_report(user_id, selected_date, user.active_section)
+    await state.update_data(report_id=report.id, report_date=date_str)
     await state.set_state(NewReportStates.choosing_action)
 
     keyboard = await build_report_action_menu(lang)
     await callback.message.edit_text(
-        f"📝 Новый отчёт на {date.today().strftime('%d.%m.%Y')}\n\n"
+        f"📝 Отчёт на {selected_date.strftime('%d.%m.%Y')}\n\n"
         f"Выберите действие:",
         reply_markup=keyboard,
     )
@@ -210,21 +371,48 @@ async def on_add_accommodation(callback: types.CallbackQuery, state: FSMContext)
 
 @router.callback_query(F.data.startswith("prop:"), NewReportStates.choosing_property)
 async def on_property_selected(callback: types.CallbackQuery, state: FSMContext):
-    """Property selected, ask for payment method."""
+    """Property selected, show prepayment info and ask for payment method."""
     prop_id = int(callback.data.split(":")[1])
     data = await state.get_data()
     lang = data.get("lang", "ru")
+    report_date_str = data.get("report_date", date.today().isoformat())
+    report_date = date.fromisoformat(report_date_str)
 
-    # Get property to show price
     async with async_session() as session:
+        # Get property
         result = await session.execute(select(Property).where(Property.id == prop_id))
         prop = result.scalar_one_or_none()
 
-    if not prop:
-        await callback.answer("Объект не найден")
-        return
+        if not prop:
+            await callback.answer("Объект не найден")
+            return
+
+        # Check for existing prepayments on this property
+        # Look for PREPAYMENT entries linked to this property across all reports
+        # within a reasonable window (30 days before the report date)
+        prepay_query = (
+            select(IncomeEntry)
+            .join(StructuredReport)
+            .where(
+                IncomeEntry.property_id == prop_id,
+                IncomeEntry.payment_method == PaymentMethod.PREPAYMENT,
+                StructuredReport.report_date >= report_date - timedelta(days=30),
+                StructuredReport.report_date <= report_date,
+            )
+        )
+        prepay_result = await session.execute(prepay_query)
+        prepayments = prepay_result.scalars().all()
 
     await state.update_data(current_property=prop_id, base_price=float(prop.price_weekday))
+
+    # Build info text
+    info = f"💳 {prop.name_ru}\nБазовая цена: {format_amount(prop.price_weekday)}\n"
+
+    if prepayments:
+        total_prepaid = sum(float(p.amount) for p in prepayments)
+        info += f"\n💵 Предоплата: {format_amount(total_prepaid)} ({len(prepayments)} платеж(ей))\n"
+
+    info += "\nВыберите способ оплаты:"
 
     # Show payment methods
     buttons = []
@@ -235,10 +423,7 @@ async def on_property_selected(callback: types.CallbackQuery, state: FSMContext)
     buttons.append([InlineKeyboardButton(text=f"❌ {get_text('btn_cancel', lang)}", callback_data="rpt:cancel")])
 
     await state.set_state(NewReportStates.entering_payment)
-    await callback.message.edit_text(
-        f"💳 {prop.name_ru}\nБазовая цена: {format_amount(prop.price_weekday)}\n\nВыберите способ оплаты:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
+    await callback.message.edit_text(info, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     await callback.answer()
 
 

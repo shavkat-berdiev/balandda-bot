@@ -253,6 +253,8 @@ async def list_staff(
 async def list_structured_reports(
     business_unit: BusinessUnit = Query(default=BusinessUnit.RESORT),
     limit: int = Query(default=30, le=365),
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
     session: AsyncSession = Depends(get_session),
     _user: dict = Depends(get_current_user),
 ):
@@ -267,6 +269,10 @@ async def list_structured_reports(
             selectinload(StructuredReport.expense_entries),
         )
     )
+    if start_date:
+        query = query.where(StructuredReport.report_date >= start_date)
+    if end_date:
+        query = query.where(StructuredReport.report_date <= end_date)
     result = await session.execute(query)
     reports = result.scalars().all()
 
