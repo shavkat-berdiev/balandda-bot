@@ -341,7 +341,8 @@ async def on_confirm_expense(callback: types.CallbackQuery, state: FSMContext):
         # In report flow - go back to report action menu
         from bot.handlers.new_report import build_report_action_menu
 
-        keyboard = await build_report_action_menu(lang)
+        bu = data.get("business_unit", "RESORT")
+        keyboard = await build_report_action_menu(lang, business_unit=bu)
         await callback.message.edit_text(
             "✅ Расход добавлен\n\nВыберите действие:",
             reply_markup=keyboard,
@@ -378,10 +379,15 @@ async def on_cancel_expense(callback: types.CallbackQuery, state: FSMContext):
         # In report flow - go back to report action menu
         from bot.handlers.new_report import build_report_action_menu, NewReportStates
 
-        await state.update_data(report_id=data["report_id"], lang=lang, user_id=data.get("user_id"))
+        bu = data.get("business_unit", "RESORT")
+        await state.update_data(
+            report_id=data["report_id"], lang=lang,
+            user_id=data.get("user_id"), business_unit=bu,
+            report_date=data.get("report_date"),
+        )
         await state.set_state(NewReportStates.choosing_action)
 
-        keyboard = await build_report_action_menu(lang)
+        keyboard = await build_report_action_menu(lang, business_unit=bu)
         await callback.message.edit_text(
             "❌ Отменено\n\nВыберите действие:",
             reply_markup=keyboard,

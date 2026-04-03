@@ -114,9 +114,26 @@ async def main():
     # Error handler
     @dp.error()
     async def error_handler(event: types.ErrorEvent):
+        from aiogram.exceptions import TelegramBadRequest
+
+        exc = event.exception
+
+        # Suppress common non-critical Telegram API errors
+        if isinstance(exc, TelegramBadRequest):
+            msg = str(exc)
+            if "message is not modified" in msg:
+                logger.debug("Suppressed: message is not modified")
+                return True
+            if "message to edit not found" in msg:
+                logger.debug("Suppressed: message to edit not found")
+                return True
+            if "query is too old" in msg:
+                logger.debug("Suppressed: callback query too old")
+                return True
+
         logger.error(
-            f"Error handling update: {event.exception}",
-            exc_info=event.exception,
+            f"Error handling update: {exc}",
+            exc_info=exc,
         )
 
     # Setup scheduler for daily reports

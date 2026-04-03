@@ -71,6 +71,14 @@ class DiscountReason(str, enum.Enum):
     OTHER = "OTHER"
 
 
+class RestaurantIncomeCategory(str, enum.Enum):
+    FOOD = "FOOD"
+    DRINKS = "DRINKS"
+    BANQUET = "BANQUET"
+    DELIVERY = "DELIVERY"
+    OTHER = "OTHER"
+
+
 class ServiceType(str, enum.Enum):
     CLASSIC_AROMA_45 = "CLASSIC_AROMA_45"
     CLASSIC_AROMA_60 = "CLASSIC_AROMA_60"
@@ -145,6 +153,14 @@ DISCOUNT_REASON_LABELS = {
     DiscountReason.PROMOTION: "Акция",
     DiscountReason.STAFF_REFERRAL: "Рекомендация персонала",
     DiscountReason.OTHER: "Другое",
+}
+
+RESTAURANT_INCOME_LABELS = {
+    RestaurantIncomeCategory.FOOD: "Еда",
+    RestaurantIncomeCategory.DRINKS: "Напитки",
+    RestaurantIncomeCategory.BANQUET: "Банкет",
+    RestaurantIncomeCategory.DELIVERY: "Доставка",
+    RestaurantIncomeCategory.OTHER: "Другое",
 }
 
 SERVICE_TYPE_LABELS = {

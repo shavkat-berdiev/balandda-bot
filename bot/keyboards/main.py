@@ -64,21 +64,6 @@ def main_menu_keyboard(lang: str = "ru", current_section: str = "resort") -> Inl
     ])
 
 
-def confirm_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text=f"✅ {get_text('btn_confirm', lang)}",
-                callback_data="confirm:yes",
-            ),
-            InlineKeyboardButton(
-                text=f"❌ {get_text('btn_cancel', lang)}",
-                callback_data="confirm:no",
-            ),
-        ]
-    ])
-
-
 def language_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [

@@ -15,6 +15,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from aiogram import F, Router, types
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -33,6 +34,8 @@ from db.enums import (
     PaymentMethod,
     PAYMENT_METHOD_LABELS,
     ReportStatus,
+    RestaurantIncomeCategory,
+    RESTAURANT_INCOME_LABELS,
 )
 from db.models import (
     DiscountReason as DiscountReasonEnum,
@@ -59,12 +62,14 @@ class NewReportStates(StatesGroup):
     choosing_property = State()
     choosing_service = State()
     choosing_minibar = State()
+    choosing_restaurant_category = State()
     entering_payment = State()
     entering_amount = State()
     entering_discount = State()
     entering_discount_value = State()
     entering_days = State()
     entering_minibar_qty = State()
+    entering_restaurant_note = State()
     confirming_entry = State()
 
 
@@ -118,17 +123,30 @@ def format_amount(amount: float | Decimal | str) -> str:
     return f"{amount:,.0f}".replace(",", ".")
 
 
-async def build_report_action_menu(lang: str) -> InlineKeyboardMarkup:
-    """Build the main report action menu."""
-    buttons = [
-        [InlineKeyboardButton(text="🏠 Заселение", callback_data="rpt:add_accommodation")],
-        [InlineKeyboardButton(text="💆 Массаж / SPA", callback_data="rpt:add_service")],
-        [InlineKeyboardButton(text="🍹 Мини бар", callback_data="rpt:add_minibar")],
-        [InlineKeyboardButton(text="💸 Расход", callback_data="rpt:add_expense")],
-        [InlineKeyboardButton(text="👁 Предпросмотр", callback_data="rpt:preview")],
-        [InlineKeyboardButton(text="✅ Завершить отчёт", callback_data="rpt:finalize")],
-        [InlineKeyboardButton(text=f"❌ {get_text('btn_cancel', lang)}", callback_data="rpt:cancel")],
-    ]
+async def build_report_action_menu(lang: str, business_unit: str = "RESORT") -> InlineKeyboardMarkup:
+    """Build the main report action menu.
+
+    Resort: accommodation, service, minibar, expense
+    Restaurant: income (simple), expense
+    """
+    if business_unit == "RESTAURANT":
+        buttons = [
+            [InlineKeyboardButton(text="💰 Доход", callback_data="rpt:add_restaurant_income")],
+            [InlineKeyboardButton(text="💸 Расход", callback_data="rpt:add_expense")],
+            [InlineKeyboardButton(text="👁 Предпросмотр", callback_data="rpt:preview")],
+            [InlineKeyboardButton(text="✅ Завершить отчёт", callback_data="rpt:finalize")],
+            [InlineKeyboardButton(text=f"❌ {get_text('btn_cancel', lang)}", callback_data="rpt:cancel")],
+        ]
+    else:
+        buttons = [
+            [InlineKeyboardButton(text="🏠 Заселение", callback_data="rpt:add_accommodation")],
+            [InlineKeyboardButton(text="💆 Массаж / SPA", callback_data="rpt:add_service")],
+            [InlineKeyboardButton(text="🍹 Мини бар", callback_data="rpt:add_minibar")],
+            [InlineKeyboardButton(text="💸 Расход", callback_data="rpt:add_expense")],
+            [InlineKeyboardButton(text="👁 Предпросмотр", callback_data="rpt:preview")],
+            [InlineKeyboardButton(text="✅ Завершить отчёт", callback_data="rpt:finalize")],
+            [InlineKeyboardButton(text=f"❌ {get_text('btn_cancel', lang)}", callback_data="rpt:cancel")],
+        ]
     return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
@@ -311,10 +329,11 @@ async def on_date_selected(callback: types.CallbackQuery, state: FSMContext):
         return
 
     report = await get_or_create_draft_report(user_id, selected_date, user.active_section)
+    bu = data.get("business_unit", user.active_section.value)
     await state.update_data(report_id=report.id, report_date=date_str)
     await state.set_state(NewReportStates.choosing_action)
 
-    keyboard = await build_report_action_menu(lang)
+    keyboard = await build_report_action_menu(lang, business_unit=bu)
     await callback.message.edit_text(
         f"📝 Отчёт на {selected_date.strftime('%d.%m.%Y')}\n\n"
         f"Выберите действие:",
@@ -333,6 +352,15 @@ async def on_add_accommodation(callback: types.CallbackQuery, state: FSMContext)
     """Show property selection."""
     data = await state.get_data()
     lang = data.get("lang", "ru")
+
+    # Clear any leftover entry data from previous flows
+    await state.update_data(
+        current_property=None, base_price=None, amount=None,
+        payment_method=None, discount_type=None, discount_value=None,
+        discount_reason=None, num_days=None, current_service=None,
+        service_price=None, current_minibar=None, minibar_price=None,
+        quantity=None, entry_type="accommodation",
+    )
 
     async with async_session() as session:
         result = await session.execute(
@@ -447,7 +475,7 @@ async def on_payment_method_selected(callback: types.CallbackQuery, state: FSMCo
 
 @router.message(NewReportStates.entering_amount)
 async def on_amount_entered(message: types.Message, state: FSMContext):
-    """Amount entered, ask for discount."""
+    """Amount entered, ask for discount (resort) or payment (restaurant)."""
     data = await state.get_data()
     lang = data.get("lang", "ru")
 
@@ -463,7 +491,24 @@ async def on_amount_entered(message: types.Message, state: FSMContext):
 
     await state.update_data(amount=str(amount))
 
-    # Ask about discount
+    # For restaurant income: skip discounts, go to payment method
+    if data.get("entry_type") == "restaurant_income":
+        buttons = []
+        for method in PaymentMethod:
+            if method == PaymentMethod.PREPAYMENT:
+                continue  # Skip prepayment for restaurant income
+            label = PAYMENT_METHOD_LABELS.get(method, method.value)
+            buttons.append([InlineKeyboardButton(text=label, callback_data=f"rest_pm:{method.value}")])
+        buttons.append([InlineKeyboardButton(text=f"❌ {get_text('btn_cancel', lang)}", callback_data="rpt:cancel")])
+
+        await state.set_state(NewReportStates.entering_payment)
+        await message.answer(
+            f"💰 Сумма: {format_amount(float(amount))}\n\nВыберите способ оплаты:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
+        return
+
+    # For resort accommodation: ask about discount
     buttons = [
         [InlineKeyboardButton(text="Нет скидки", callback_data="discount:none")],
         [InlineKeyboardButton(text="% Процент", callback_data="discount:percentage")],
@@ -540,7 +585,7 @@ async def on_discount_reason(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
-async def _ask_for_days(message: types.Message, state: FSMContext):
+async def _ask_for_days(message: types.Message, state: FSMContext, edit: bool = True):
     """Helper to ask for number of days."""
     data = await state.get_data()
     lang = data.get("lang", "ru")
@@ -556,10 +601,16 @@ async def _ask_for_days(message: types.Message, state: FSMContext):
     ]
 
     await state.set_state(NewReportStates.entering_days)
-    await message.edit_text(
-        "Количество дней:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
-    )
+    if edit:
+        await message.edit_text(
+            "Количество дней:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
+    else:
+        await message.answer(
+            "Количество дней:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        )
 
 
 @router.callback_query(F.data.startswith("days:"), NewReportStates.entering_days)
@@ -570,12 +621,11 @@ async def on_days_selected(callback: types.CallbackQuery, state: FSMContext):
     lang = data.get("lang", "ru")
 
     if days_str == "other":
-        await state.set_state(NewReportStates.entering_days)
         await callback.message.edit_text("Введите количество дней:")
         await callback.answer()
     else:
         await state.update_data(num_days=int(days_str))
-        await _show_accommodation_confirmation(callback.message, state)
+        await _show_accommodation_confirmation(callback.message, state, edit=True)
         await callback.answer()
 
 
@@ -591,10 +641,10 @@ async def on_days_entered(message: types.Message, state: FSMContext):
         return
 
     await state.update_data(num_days=days)
-    await _show_accommodation_confirmation(message, state)
+    await _show_accommodation_confirmation(message, state, edit=False)
 
 
-async def _show_accommodation_confirmation(message: types.Message, state: FSMContext):
+async def _show_accommodation_confirmation(message: types.Message, state: FSMContext, edit: bool = True):
     """Show confirmation for accommodation entry."""
     data = await state.get_data()
     lang = data.get("lang", "ru")
@@ -640,7 +690,10 @@ async def _show_accommodation_confirmation(message: types.Message, state: FSMCon
     ]
 
     await state.set_state(NewReportStates.confirming_entry)
-    await message.edit_text(summary, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    if edit:
+        await message.edit_text(summary, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    else:
+        await message.answer(summary, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
 
 
 @router.callback_query(F.data == "acc:confirm", NewReportStates.confirming_entry)
@@ -685,9 +738,171 @@ async def on_accommodation_confirm(callback: types.CallbackQuery, state: FSMCont
     )
 
     await state.set_state(NewReportStates.choosing_action)
-    keyboard = await build_report_action_menu(lang)
+    keyboard = await build_report_action_menu(lang, business_unit=data.get("business_unit", "RESORT"))
     await callback.message.edit_text(
         "✅ Запись добавлена\n\nВыберите действие:",
+        reply_markup=keyboard,
+    )
+    await callback.answer()
+
+
+# ────────────────────────────────────────────────────────────────────────
+# RESTAURANT INCOME FLOW (simple: category → amount → payment → note → confirm)
+# ────────────────────────────────────────────────────────────────────────
+
+
+@router.callback_query(F.data == "rpt:add_restaurant_income", NewReportStates.choosing_action)
+async def on_add_restaurant_income(callback: types.CallbackQuery, state: FSMContext):
+    """Show restaurant income category selection."""
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+
+    # Clear leftover entry data
+    await state.update_data(
+        current_property=None, base_price=None, amount=None,
+        payment_method=None, discount_type=None, discount_value=None,
+        discount_reason=None, num_days=None, current_service=None,
+        service_price=None, current_minibar=None, minibar_price=None,
+        quantity=None, restaurant_category=None, restaurant_note=None,
+        entry_type="restaurant_income",
+    )
+
+    buttons = []
+    for cat in RestaurantIncomeCategory:
+        label = RESTAURANT_INCOME_LABELS.get(cat, cat.value)
+        buttons.append([InlineKeyboardButton(text=label, callback_data=f"rest_cat:{cat.value}")])
+
+    buttons.append([InlineKeyboardButton(text=f"❌ {get_text('btn_cancel', lang)}", callback_data="rpt:cancel")])
+
+    await state.set_state(NewReportStates.choosing_restaurant_category)
+    await callback.message.edit_text(
+        "💰 Выберите категорию дохода:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rest_cat:"), NewReportStates.choosing_restaurant_category)
+async def on_restaurant_category_selected(callback: types.CallbackQuery, state: FSMContext):
+    """Restaurant income category selected → ask for amount."""
+    cat_value = callback.data.split(":")[1]
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+
+    cat = RestaurantIncomeCategory(cat_value)
+    cat_label = RESTAURANT_INCOME_LABELS.get(cat, cat_value)
+
+    await state.update_data(restaurant_category=cat_value, restaurant_category_label=cat_label)
+    await state.set_state(NewReportStates.entering_amount)
+
+    await callback.message.edit_text(
+        f"💰 {cat_label}\n\nВведите сумму (UZS):"
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("rest_pm:"), NewReportStates.entering_payment)
+async def on_restaurant_payment_selected(callback: types.CallbackQuery, state: FSMContext):
+    """Restaurant income payment method selected → ask for note."""
+    method = callback.data.split(":")[1]
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+
+    await state.update_data(payment_method=method)
+    await state.set_state(NewReportStates.entering_restaurant_note)
+
+    buttons = [
+        [InlineKeyboardButton(text="⏩ Пропустить", callback_data="rest_note:skip")],
+        [InlineKeyboardButton(text=f"❌ {get_text('btn_cancel', lang)}", callback_data="rpt:cancel")],
+    ]
+
+    await callback.message.edit_text(
+        "📝 Добавьте комментарий (или пропустите):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "rest_note:skip", NewReportStates.entering_restaurant_note)
+async def on_restaurant_note_skip(callback: types.CallbackQuery, state: FSMContext):
+    """Note skipped."""
+    await state.update_data(restaurant_note="")
+    await _show_restaurant_income_confirmation(callback.message, state, edit=True)
+    await callback.answer()
+
+
+@router.message(NewReportStates.entering_restaurant_note)
+async def on_restaurant_note_entered(message: types.Message, state: FSMContext):
+    """Note entered."""
+    await state.update_data(restaurant_note=message.text.strip())
+    await _show_restaurant_income_confirmation(message, state, edit=False)
+
+
+async def _show_restaurant_income_confirmation(message: types.Message, state: FSMContext, edit: bool = True):
+    """Show confirmation for restaurant income entry."""
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+
+    amount = Decimal(data["amount"])
+    cat_label = data.get("restaurant_category_label", "Доход")
+    pm_label = PAYMENT_METHOD_LABELS.get(PaymentMethod(data["payment_method"]), data["payment_method"])
+    note = data.get("restaurant_note", "")
+
+    summary = f"📝 Доход (ресторан)\n\n"
+    summary += f"Категория: {cat_label}\n"
+    summary += f"Сумма: {format_amount(amount)}\n"
+    summary += f"Способ оплаты: {pm_label}\n"
+    if note:
+        summary += f"Комментарий: {note}\n"
+
+    buttons = [
+        [
+            InlineKeyboardButton(text="✅ Подтвердить", callback_data="rest:confirm"),
+            InlineKeyboardButton(text="❌ Отмена", callback_data="rpt:cancel"),
+        ]
+    ]
+
+    await state.set_state(NewReportStates.confirming_entry)
+    if edit:
+        await message.edit_text(summary, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+    else:
+        await message.answer(summary, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
+
+
+@router.callback_query(F.data == "rest:confirm", NewReportStates.confirming_entry)
+async def on_restaurant_income_confirm(callback: types.CallbackQuery, state: FSMContext):
+    """Save restaurant income entry."""
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+    report_id = data["report_id"]
+
+    async with async_session() as session:
+        entry = IncomeEntry(
+            report_id=report_id,
+            restaurant_category=RestaurantIncomeCategory(data["restaurant_category"]),
+            payment_method=PaymentMethod(data["payment_method"]),
+            amount=Decimal(data["amount"]),
+            note=data.get("restaurant_note") or None,
+        )
+        session.add(entry)
+
+        report = await session.get(StructuredReport, report_id)
+        if report:
+            report.total_income = (report.total_income or Decimal(0)) + Decimal(data["amount"])
+            await session.merge(report)
+
+        await session.commit()
+
+    # Clear entry data
+    await state.update_data(
+        restaurant_category=None, restaurant_category_label=None,
+        restaurant_note=None, amount=None, payment_method=None,
+    )
+
+    await state.set_state(NewReportStates.choosing_action)
+    keyboard = await build_report_action_menu(lang, business_unit=data.get("business_unit", "RESTAURANT"))
+    await callback.message.edit_text(
+        "✅ Доход добавлен\n\nВыберите действие:",
         reply_markup=keyboard,
     )
     await callback.answer()
@@ -703,6 +918,15 @@ async def on_add_service(callback: types.CallbackQuery, state: FSMContext):
     """Show service selection."""
     data = await state.get_data()
     lang = data.get("lang", "ru")
+
+    # Clear any leftover entry data from previous flows
+    await state.update_data(
+        current_property=None, base_price=None, amount=None,
+        payment_method=None, discount_type=None, discount_value=None,
+        discount_reason=None, num_days=None, current_service=None,
+        service_price=None, current_minibar=None, minibar_price=None,
+        quantity=None, entry_type="service",
+    )
 
     async with async_session() as session:
         result = await session.execute(
@@ -829,7 +1053,7 @@ async def on_service_confirm(callback: types.CallbackQuery, state: FSMContext):
 
     await state.update_data(current_service=None)
     await state.set_state(NewReportStates.choosing_action)
-    keyboard = await build_report_action_menu(lang)
+    keyboard = await build_report_action_menu(lang, business_unit=data.get("business_unit", "RESORT"))
     await callback.message.edit_text(
         "✅ Услуга добавлена\n\nВыберите действие:",
         reply_markup=keyboard,
@@ -847,6 +1071,15 @@ async def on_add_minibar(callback: types.CallbackQuery, state: FSMContext):
     """Show minibar item selection."""
     data = await state.get_data()
     lang = data.get("lang", "ru")
+
+    # Clear any leftover entry data from previous flows
+    await state.update_data(
+        current_property=None, base_price=None, amount=None,
+        payment_method=None, discount_type=None, discount_value=None,
+        discount_reason=None, num_days=None, current_service=None,
+        service_price=None, current_minibar=None, minibar_price=None,
+        quantity=None, entry_type="minibar",
+    )
 
     async with async_session() as session:
         result = await session.execute(
@@ -1040,7 +1273,7 @@ async def on_minibar_confirm(callback: types.CallbackQuery, state: FSMContext):
 
     await state.update_data(current_minibar=None, quantity=None)
     await state.set_state(NewReportStates.choosing_action)
-    keyboard = await build_report_action_menu(lang)
+    keyboard = await build_report_action_menu(lang, business_unit=data.get("business_unit", "RESORT"))
     await callback.message.edit_text(
         "✅ Товар добавлен\n\nВыберите действие:",
         reply_markup=keyboard,
@@ -1084,21 +1317,26 @@ async def on_preview(callback: types.CallbackQuery, state: FSMContext):
 
     if income_entries:
         lines.append("\n💰 Доходы:")
-        for entry in income_entries:
-            if entry.property_id:
-                # Get property name
-                async with async_session() as session:
+        # Load all related names in a single session
+        async with async_session() as session:
+            for entry in income_entries:
+                if entry.property_id:
                     prop = await session.get(Property, entry.property_id)
                     lines.append(f"  • {prop.name_ru if prop else 'Объект'}: {format_amount(entry.amount)}")
-            elif entry.service_item_id:
-                async with async_session() as session:
+                elif entry.service_item_id:
                     svc = await session.get(ServiceItem, entry.service_item_id)
                     lines.append(f"  • {svc.name_ru if svc else 'Услуга'}: {format_amount(entry.amount)}")
-            elif entry.minibar_item_id:
-                async with async_session() as session:
+                elif entry.minibar_item_id:
                     item = await session.get(MinibarItem, entry.minibar_item_id)
                     qty = entry.quantity or 1
                     lines.append(f"  • {item.name_ru if item else 'Товар'} (x{qty}): {format_amount(entry.amount)}")
+                else:
+                    # Generic income (e.g., restaurant)
+                    if entry.restaurant_category:
+                        cat_label = RESTAURANT_INCOME_LABELS.get(entry.restaurant_category, entry.restaurant_category.value)
+                        lines.append(f"  • {cat_label}: {format_amount(entry.amount)}")
+                    else:
+                        lines.append(f"  • Доход: {format_amount(entry.amount)}")
 
     if expense_entries:
         lines.append("\n💸 Расходы:")
@@ -1125,7 +1363,7 @@ async def on_back_to_menu(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     lang = data.get("lang", "ru")
 
-    keyboard = await build_report_action_menu(lang)
+    keyboard = await build_report_action_menu(lang, business_unit=data.get("business_unit", "RESORT"))
     await callback.message.edit_text(
         "📝 Отчёт\n\nВыберите действие:",
         reply_markup=keyboard,

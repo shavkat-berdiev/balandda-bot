@@ -32,6 +32,8 @@ from db.enums import (
     PROPERTY_TYPE_LABELS,
     ReportStatus,
     REPORT_STATUS_LABELS,
+    RestaurantIncomeCategory,
+    RESTAURANT_INCOME_LABELS,
     ServiceType,
     SERVICE_TYPE_LABELS,
     TransactionType,
@@ -259,6 +261,7 @@ class IncomeEntry(Base):
     property_id: Mapped[int | None] = mapped_column(ForeignKey("properties.id"), nullable=True)
     service_item_id: Mapped[int | None] = mapped_column(ForeignKey("service_items.id"), nullable=True)
     minibar_item_id: Mapped[int | None] = mapped_column(ForeignKey("minibar_items.id"), nullable=True)
+    restaurant_category: Mapped[RestaurantIncomeCategory | None] = mapped_column(Enum(RestaurantIncomeCategory), nullable=True)
     payment_method: Mapped[PaymentMethod] = mapped_column(Enum(PaymentMethod))
     amount: Mapped[float] = mapped_column(Numeric(15, 2))
     quantity: Mapped[int] = mapped_column(Integer, default=1)
