@@ -463,3 +463,205 @@ async def structured_breakdown(
         "by_expense_category": to_list(by_expense_cat),
         "daily_totals": daily_data,
     }
+
+
+@router.get("/transactions")
+async def structured_transactions(
+    business_unit: Optional[BusinessUnit] = None,
+    entry_type: Optional[str] = Query(default=None, description="income or expense"),
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    limit: int = Query(default=100, le=500),
+    session: AsyncSession = Depends(get_session),
+    _user: dict = Depends(get_current_user),
+):
+    """Return a flat list of all income/expense entries as transactions."""
+    if end_date is None:
+        end_date = date.today()
+    if start_date is None:
+        start_date = end_date - timedelta(days=30)
+
+    query = (
+        select(StructuredReport)
+        .where(
+            StructuredReport.report_date >= start_date,
+            StructuredReport.report_date <= end_date,
+        )
+        .options(
+            selectinload(StructuredReport.income_entries).selectinload(IncomeEntry.property),
+            selectinload(StructuredReport.income_entries).selectinload(IncomeEntry.service_item),
+            selectinload(StructuredReport.income_entries).selectinload(IncomeEntry.minibar_item),
+            selectinload(StructuredReport.expense_entries).selectinload(ExpenseEntry.staff_member),
+        )
+        .order_by(StructuredReport.report_date.desc())
+    )
+    if business_unit:
+        query = query.where(StructuredReport.business_unit == business_unit)
+
+    result = await session.execute(query)
+    reports = result.scalars().all()
+
+    transactions = []
+    for report in reports:
+        bu = report.business_unit.value
+
+        if entry_type != "expense":
+            for entry in report.income_entries:
+                name = (
+                    entry.property.name_ru if entry.property else
+                    entry.service_item.name_ru if entry.service_item else
+                    entry.minibar_item.name_ru if entry.minibar_item else
+                    "Доход"
+                )
+                category = (
+                    "Проживание" if entry.property else
+                    "Услуги" if entry.service_item else
+                    "Мини-бар" if entry.minibar_item else
+                    "Прочее"
+                )
+                transactions.append({
+                    "id": f"inc-{entry.id}",
+                    "date": report.report_date.isoformat(),
+                    "type": "income",
+                    "business_unit": bu,
+                    "category": category,
+                    "name": name,
+                    "payment_method": PAYMENT_METHOD_LABELS.get(
+                        entry.payment_method, entry.payment_method.value
+                    ),
+                    "amount": float(entry.amount),
+                    "quantity": entry.quantity or 1,
+                    "num_days": entry.num_days or 1,
+                    "note": entry.note,
+                    "status": report.status.value,
+                })
+
+        if entry_type != "income":
+            for entry in report.expense_entries:
+                transactions.append({
+                    "id": f"exp-{entry.id}",
+                    "date": report.report_date.isoformat(),
+                    "type": "expense",
+                    "business_unit": bu,
+                    "category": EXPENSE_CATEGORY_LABELS.get(
+                        entry.expense_category, entry.expense_category.value
+                    ),
+                    "name": entry.description or EXPENSE_CATEGORY_LABELS.get(
+                        entry.expense_category, entry.expense_category.value
+                    ),
+                    "payment_method": None,
+                    "amount": float(entry.amount),
+                    "quantity": 1,
+                    "num_days": 1,
+                    "note": entry.note,
+                    "status": report.status.value,
+                })
+
+    # Sort by date desc, then by amount desc
+    transactions.sort(key=lambda t: (t["date"], t["amount"]), reverse=True)
+    return transactions[:limit]
+
+
+@router.get("/dashboard")
+async def structured_dashboard(
+    business_unit: BusinessUnit = Query(default=BusinessUnit.RESORT),
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    session: AsyncSession = Depends(get_session),
+    _user: dict = Depends(get_current_user),
+):
+    """Dashboard data: totals, income breakdown, expense breakdown, daily trend, service breakdown."""
+    if end_date is None:
+        end_date = date.today()
+    if start_date is None:
+        start_date = end_date
+
+    query = (
+        select(StructuredReport)
+        .where(
+            StructuredReport.business_unit == business_unit,
+            StructuredReport.report_date >= start_date,
+            StructuredReport.report_date <= end_date,
+        )
+        .options(
+            selectinload(StructuredReport.income_entries).selectinload(IncomeEntry.property),
+            selectinload(StructuredReport.income_entries).selectinload(IncomeEntry.service_item),
+            selectinload(StructuredReport.income_entries).selectinload(IncomeEntry.minibar_item),
+            selectinload(StructuredReport.expense_entries),
+        )
+        .order_by(StructuredReport.report_date)
+    )
+    result = await session.execute(query)
+    reports = result.scalars().all()
+
+    total_income = 0.0
+    total_expense = 0.0
+    report_count = 0
+
+    by_income_cat: dict[str, float] = {}
+    by_expense_cat: dict[str, float] = {}
+    by_payment: dict[str, float] = {}
+    by_property: dict[str, float] = {}
+    by_service: dict[str, float] = {}
+    daily_data: dict[str, dict] = {}
+
+    for report in reports:
+        day_inc = float(report.total_income or 0)
+        day_exp = float(report.total_expense or 0)
+        total_income += day_inc
+        total_expense += day_exp
+        report_count += 1
+
+        day_key = report.report_date.isoformat()
+        if day_key not in daily_data:
+            daily_data[day_key] = {"date": day_key, "income": 0, "expense": 0}
+        daily_data[day_key]["income"] += day_inc
+        daily_data[day_key]["expense"] += day_exp
+
+        for entry in report.income_entries:
+            amt = float(entry.amount)
+
+            # By income category
+            if entry.property:
+                cat = "Проживание"
+                prop_name = entry.property.name_ru
+                by_property[prop_name] = by_property.get(prop_name, 0) + amt
+            elif entry.service_item:
+                cat = "Услуги"
+                svc_name = entry.service_item.name_ru
+                by_service[svc_name] = by_service.get(svc_name, 0) + amt
+            elif entry.minibar_item:
+                cat = "Мини-бар"
+            else:
+                cat = "Прочее"
+            by_income_cat[cat] = by_income_cat.get(cat, 0) + amt
+
+            # By payment method
+            pm_label = PAYMENT_METHOD_LABELS.get(entry.payment_method, entry.payment_method.value)
+            by_payment[pm_label] = by_payment.get(pm_label, 0) + amt
+
+        for entry in report.expense_entries:
+            ec_label = EXPENSE_CATEGORY_LABELS.get(entry.expense_category, entry.expense_category.value)
+            by_expense_cat[ec_label] = by_expense_cat.get(ec_label, 0) + float(entry.amount)
+
+    def dict_to_chart(d: dict) -> list:
+        return sorted(
+            [{"name": k, "value": v} for k, v in d.items()],
+            key=lambda x: x["value"],
+            reverse=True,
+        )
+
+    return {
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "total_income": total_income,
+        "total_expense": total_expense,
+        "net": total_income - total_expense,
+        "report_count": report_count,
+        "income_by_category": dict_to_chart(by_income_cat),
+        "expense_by_category": dict_to_chart(by_expense_cat),
+        "by_payment_method": dict_to_chart(by_payment),
+        "by_property": dict_to_chart(by_property),
+        "by_service": dict_to_chart(by_service),
+        "daily_totals": sorted(daily_data.values(), key=lambda x: x["date"]),
+    }
