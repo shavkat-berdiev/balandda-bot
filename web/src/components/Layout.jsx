@@ -22,8 +22,11 @@ export default function Layout({ user, onLogout, children }) {
 
   const roleLabels = {
     admin: 'Administrator',
+    ADMIN: 'Администратор',
     resort_manager: 'Resort Manager',
+    RESORT_MANAGER: 'Менеджер курорта',
     restaurant_manager: 'Restaurant Manager',
+    RESTAURANT_MANAGER: 'Менеджер ресторана',
   };
 
   return (

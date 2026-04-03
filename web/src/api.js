@@ -23,7 +23,11 @@ async function request(path, options = {}) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Request failed' }));
-    throw new Error(err.detail || 'Request failed');
+    let msg = err.detail || 'Request failed';
+    if (typeof msg !== 'string') {
+      msg = Array.isArray(msg) ? msg.map(e => e.msg || JSON.stringify(e)).join('; ') : JSON.stringify(msg);
+    }
+    throw new Error(msg);
   }
 
   return res.json();

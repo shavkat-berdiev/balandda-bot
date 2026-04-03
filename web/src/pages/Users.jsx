@@ -3,16 +3,16 @@ import { Plus, UserCheck, UserX, Check, X } from 'lucide-react';
 import { api } from '../api';
 
 const ROLES = [
-  { value: 'admin', label: 'Administrator' },
-  { value: 'resort_manager', label: 'Resort Manager' },
-  { value: 'restaurant_manager', label: 'Restaurant Manager' },
+  { value: 'ADMIN', label: 'Администратор' },
+  { value: 'RESORT_MANAGER', label: 'Менеджер курорта' },
+  { value: 'RESTAURANT_MANAGER', label: 'Менеджер ресторана' },
 ];
 
 export default function Users() {
   const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ telegram_id: '', full_name: '', role: 'resort_manager' });
+  const [form, setForm] = useState({ telegram_id: '', full_name: '', role: 'RESORT_MANAGER' });
   const [error, setError] = useState('');
 
   useEffect(() => { loadUsers(); }, []);
@@ -37,7 +37,7 @@ export default function Users() {
         role: form.role,
       });
       setShowForm(false);
-      setForm({ telegram_id: '', full_name: '', role: 'resort_manager' });
+      setForm({ telegram_id: '', full_name: '', role: 'RESORT_MANAGER' });
       loadUsers();
     } catch (err) {
       setError(err.message);
