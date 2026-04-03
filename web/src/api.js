@@ -64,4 +64,27 @@ export const api = {
     request('/properties'),
   getHealth: () =>
     request('/health'),
+
+  // Admin — Enums
+  getAdminEnums: () => request('/admin/enums'),
+
+  // Admin — Properties
+  getAdminProperties: () => request('/admin/properties'),
+  createAdminProperty: (data) => request('/admin/properties', { method: 'POST', body: JSON.stringify(data) }),
+  updateAdminProperty: (id, data) => request(`/admin/properties/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Admin — Services
+  getAdminServices: () => request('/admin/services'),
+  createAdminService: (data) => request('/admin/services', { method: 'POST', body: JSON.stringify(data) }),
+  updateAdminService: (id, data) => request(`/admin/services/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Admin — Minibar
+  getAdminMinibar: () => request('/admin/minibar'),
+  createAdminMinibar: (data) => request('/admin/minibar', { method: 'POST', body: JSON.stringify(data) }),
+  updateAdminMinibar: (id, data) => request(`/admin/minibar/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Admin — Staff
+  getAdminStaff: () => request('/admin/staff'),
+  createAdminStaff: (data) => request('/admin/staff', { method: 'POST', body: JSON.stringify(data) }),
+  updateAdminStaff: (id, data) => request(`/admin/staff/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 };

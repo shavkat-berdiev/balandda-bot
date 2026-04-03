@@ -1,12 +1,19 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { BarChart3, FolderOpen, Users, ArrowLeftRight, LogOut, Menu, X } from 'lucide-react';
+import { BarChart3, FolderOpen, Users, ArrowLeftRight, LogOut, Menu, X, Home, Sparkles, Wine, UserCog } from 'lucide-react';
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: BarChart3 },
   { path: '/transactions', label: 'Transactions', icon: ArrowLeftRight },
   { path: '/categories', label: 'Categories', icon: FolderOpen },
   { path: '/users', label: 'Users', icon: Users },
+];
+
+const adminItems = [
+  { path: '/admin/properties', label: 'Объекты', icon: Home },
+  { path: '/admin/services', label: 'Услуги', icon: Sparkles },
+  { path: '/admin/minibar', label: 'Минибар', icon: Wine },
+  { path: '/admin/staff', label: 'Сотрудники', icon: UserCog },
 ];
 
 export default function Layout({ user, onLogout, children }) {
@@ -80,6 +87,28 @@ function SidebarContent({ user, roleLabels, location, onLogout, onClose }) {
       {/* Navigation */}
       <nav className="flex-1 px-3 py-4 space-y-1">
         {navItems.map(({ path, label, icon: Icon }) => {
+          const active = location.pathname === path;
+          return (
+            <Link
+              key={path}
+              to={path}
+              onClick={onClose}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                active
+                  ? 'bg-blue-50 text-blue-700'
+                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+              }`}
+            >
+              <Icon size={20} />
+              {label}
+            </Link>
+          );
+        })}
+
+        <div className="pt-4 pb-1">
+          <p className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Управление</p>
+        </div>
+        {adminItems.map(({ path, label, icon: Icon }) => {
           const active = location.pathname === path;
           return (
             <Link
