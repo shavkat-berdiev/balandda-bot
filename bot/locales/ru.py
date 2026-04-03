@@ -18,6 +18,7 @@ messages = {
     "main_menu": "Главное меню — {section}",
     "btn_new_report": "Новый отчёт",
     "btn_cash_in": "Приход",
+    "btn_prepayment": "Предоплата",
     "btn_cash_out": "Расход",
     "btn_history": "История",
     "btn_report": "Отчёт",

@@ -18,7 +18,15 @@ def section_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
     ])
 
 
-def main_menu_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
+def main_menu_keyboard(lang: str = "ru", current_section: str = "resort") -> InlineKeyboardMarkup:
+    # Determine the other section for the switch button
+    if current_section == "resort":
+        switch_label = f"🔄 {get_text('section_restaurant', lang)}"
+        switch_data = "section:restaurant"
+    else:
+        switch_label = f"🔄 {get_text('section_resort', lang)}"
+        switch_data = "section:resort"
+
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
@@ -28,8 +36,8 @@ def main_menu_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(
-                text=f"💰 {get_text('btn_cash_in', lang)}",
-                callback_data="action:cash_in",
+                text=f"💵 {get_text('btn_prepayment', lang)}",
+                callback_data="action:prepayment",
             ),
             InlineKeyboardButton(
                 text=f"💸 {get_text('btn_cash_out', lang)}",
@@ -47,6 +55,7 @@ def main_menu_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
             ),
         ],
         [
+            InlineKeyboardButton(text=switch_label, callback_data=switch_data),
             InlineKeyboardButton(
                 text=f"⚙️ {get_text('btn_settings', lang)}",
                 callback_data="action:settings",

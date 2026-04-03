@@ -352,10 +352,11 @@ async def on_confirm_expense(callback: types.CallbackQuery, state: FSMContext):
         if user:
             from bot.keyboards.main import main_menu_keyboard
 
-            section_name = get_text(f"section_{user.active_section.value.lower()}", lang)
+            section = user.active_section.value.lower()
+            section_name = get_text(f"section_{section}", lang)
             await callback.message.edit_text(
                 f"✅ Расход добавлен\n\n{get_text('main_menu', lang, section=section_name)}",
-                reply_markup=main_menu_keyboard(lang),
+                reply_markup=main_menu_keyboard(lang, current_section=section),
             )
 
 
@@ -391,10 +392,11 @@ async def on_cancel_expense(callback: types.CallbackQuery, state: FSMContext):
         if user:
             from bot.keyboards.main import main_menu_keyboard
 
-            section_name = get_text(f"section_{user.active_section.value.lower()}", lang)
+            section = user.active_section.value.lower()
+            section_name = get_text(f"section_{section}", lang)
             await callback.message.edit_text(
                 f"❌ Отменено\n\n{get_text('main_menu', lang, section=section_name)}",
-                reply_markup=main_menu_keyboard(lang),
+                reply_markup=main_menu_keyboard(lang, current_section=section),
             )
 
     await callback.answer()

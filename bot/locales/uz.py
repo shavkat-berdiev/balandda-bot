@@ -18,6 +18,7 @@ messages = {
     "main_menu": "Asosiy menyu — {section}",
     "btn_new_report": "Yangi hisobot",
     "btn_cash_in": "Kirim",
+    "btn_prepayment": "Oldindan to'lov",
     "btn_cash_out": "Chiqim",
     "btn_history": "Tarix",
     "btn_report": "Hisobot",

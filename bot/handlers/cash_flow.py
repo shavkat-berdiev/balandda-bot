@@ -288,11 +288,12 @@ async def on_confirm(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
 
     # Show success + return to main menu
-    section_name = get_text(f"section_{data['business_unit']}", lang)
+    section = data['business_unit']
+    section_name = get_text(f"section_{section}", lang)
     await callback.message.edit_text(
         f"✅ {get_text('transaction_saved', lang)}\n\n"
         f"{get_text('main_menu', lang, section=section_name)}",
-        reply_markup=main_menu_keyboard(lang),
+        reply_markup=main_menu_keyboard(lang, current_section=section),
     )
     await callback.answer(get_text("transaction_saved", lang))
 
@@ -310,11 +311,12 @@ async def on_cancel(callback: types.CallbackQuery, state: FSMContext):
         return
 
     lang = user.language.value.lower()
-    section_name = get_text(f"section_{user.active_section.value.lower()}", lang)
+    section = user.active_section.value.lower()
+    section_name = get_text(f"section_{section}", lang)
 
     await callback.message.edit_text(
         f"{get_text('transaction_cancelled', lang)}\n\n"
         f"{get_text('main_menu', lang, section=section_name)}",
-        reply_markup=main_menu_keyboard(lang),
+        reply_markup=main_menu_keyboard(lang, current_section=section),
     )
     await callback.answer()

@@ -43,10 +43,11 @@ async def on_lang_select(callback: types.CallbackQuery):
     await callback.answer()
 
     # Show main menu in new language
-    section_name = get_text(f"section_{user.active_section.value.lower()}", lang_code)
+    section = user.active_section.value.lower()
+    section_name = get_text(f"section_{section}", lang_code)
     await callback.message.answer(
         get_text("main_menu", lang_code, section=section_name),
-        reply_markup=main_menu_keyboard(lang_code),
+        reply_markup=main_menu_keyboard(lang_code, current_section=section),
     )
 
 

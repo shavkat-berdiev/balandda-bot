@@ -138,10 +138,11 @@ async def on_back_menu(callback: types.CallbackQuery):
         return
 
     lang = user.language.value.lower()
-    section_name = get_text(f"section_{user.active_section.value.lower()}", lang)
+    section = user.active_section.value.lower()
+    section_name = get_text(f"section_{section}", lang)
 
     await callback.message.edit_text(
         get_text("main_menu", lang, section=section_name),
-        reply_markup=main_menu_keyboard(lang),
+        reply_markup=main_menu_keyboard(lang, current_section=section),
     )
     await callback.answer()
