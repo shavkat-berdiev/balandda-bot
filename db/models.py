@@ -28,6 +28,8 @@ from db.enums import (
     Language,
     PaymentMethod,
     PAYMENT_METHOD_LABELS,
+    PrepaymentStatus,
+    PREPAYMENT_STATUS_LABELS,
     PropertyType,
     PROPERTY_TYPE_LABELS,
     ReportStatus,
@@ -50,6 +52,7 @@ __all__ = [
     "ExpenseCategory", "EXPENSE_CATEGORY_LABELS",
     "Language",
     "PaymentMethod", "PAYMENT_METHOD_LABELS",
+    "PrepaymentStatus", "PREPAYMENT_STATUS_LABELS",
     "PropertyType", "PROPERTY_TYPE_LABELS",
     "ReportStatus", "REPORT_STATUS_LABELS",
     "ServiceType", "SERVICE_TYPE_LABELS",
@@ -59,6 +62,7 @@ __all__ = [
     "DailyReport", "ReportLineItem", "ReportExpense",
     "Property", "ServiceItem", "MinibarItem", "StaffMember",
     "StructuredReport", "IncomeEntry", "ExpenseEntry",
+    "Prepayment",
 ]
 
 
@@ -292,3 +296,30 @@ class ExpenseEntry(Base):
 
     report: Mapped["StructuredReport"] = relationship(back_populates="expense_entries")
     staff_member: Mapped["StaffMember | None"] = relationship(back_populates="expense_entries")
+
+
+class Prepayment(Base):
+    """Prepayment records — separate cashflow tracked by operators."""
+    __tablename__ = "prepayments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    guest_name: Mapped[str] = mapped_column(String(255))
+    property_id: Mapped[int] = mapped_column(ForeignKey("properties.id"))
+    check_in_date: Mapped[date] = mapped_column(Date, index=True)
+    check_out_date: Mapped[date] = mapped_column(Date)
+    amount: Mapped[float] = mapped_column(Numeric(15, 2))
+    payment_method: Mapped[PaymentMethod] = mapped_column(Enum(PaymentMethod), default=PaymentMethod.CARD_TRANSFER)
+    status: Mapped[PrepaymentStatus] = mapped_column(
+        Enum(PrepaymentStatus), default=PrepaymentStatus.PENDING
+    )
+    screenshot_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    operator_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    settled_in_report_id: Mapped[int | None] = mapped_column(
+        ForeignKey("structured_reports.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    property: Mapped["Property"] = relationship()
+    settled_in_report: Mapped["StructuredReport | None"] = relationship()

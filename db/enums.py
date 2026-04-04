@@ -17,6 +17,7 @@ class UserRole(str, enum.Enum):
     ADMIN = "ADMIN"
     RESORT_MANAGER = "RESORT_MANAGER"
     RESTAURANT_MANAGER = "RESTAURANT_MANAGER"
+    OPERATOR = "OPERATOR"
 
 
 class Language(str, enum.Enum):
@@ -106,6 +107,13 @@ class ReportStatus(str, enum.Enum):
     APPROVED = "APPROVED"
 
 
+class PrepaymentStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    CONFIRMED = "CONFIRMED"
+    SETTLED = "SETTLED"
+    CANCELLED = "CANCELLED"
+
+
 # ── Labels for display ──────────────────────────────────────────────
 
 PAYMENT_METHOD_LABELS = {
@@ -188,4 +196,11 @@ REPORT_STATUS_LABELS = {
     ReportStatus.DRAFT: "Черновик",
     ReportStatus.SUBMITTED: "Отправлено",
     ReportStatus.APPROVED: "Одобрено",
+}
+
+PREPAYMENT_STATUS_LABELS = {
+    PrepaymentStatus.PENDING: "Ожидает",
+    PrepaymentStatus.CONFIRMED: "Подтверждён",
+    PrepaymentStatus.SETTLED: "Зачтён",
+    PrepaymentStatus.CANCELLED: "Отменён",
 }

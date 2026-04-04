@@ -6,6 +6,7 @@ const ROLES = [
   { value: 'ADMIN', label: 'Администратор' },
   { value: 'RESORT_MANAGER', label: 'Менеджер курорта' },
   { value: 'RESTAURANT_MANAGER', label: 'Менеджер ресторана' },
+  { value: 'OPERATOR', label: 'Оператор' },
 ];
 
 export default function Users() {

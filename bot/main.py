@@ -48,6 +48,55 @@ async def run_migrations():
             END IF;
         END $$;
         """,
+        # Added in v0.3: OPERATOR role
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_enum
+                WHERE enumlabel = 'OPERATOR'
+                  AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'userrole')
+            ) THEN
+                ALTER TYPE userrole ADD VALUE 'OPERATOR';
+            END IF;
+        END $$;
+        """,
+        # Added in v0.3: PrepaymentStatus enum type
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'prepaymentstatus') THEN
+                CREATE TYPE prepaymentstatus AS ENUM ('PENDING', 'CONFIRMED', 'SETTLED', 'CANCELLED');
+            END IF;
+        END $$;
+        """,
+        # Added in v0.3: prepayments table
+        """
+        CREATE TABLE IF NOT EXISTS prepayments (
+            id SERIAL PRIMARY KEY,
+            guest_name VARCHAR(255) NOT NULL,
+            property_id INTEGER NOT NULL REFERENCES properties(id),
+            check_in_date DATE NOT NULL,
+            check_out_date DATE NOT NULL,
+            amount NUMERIC(15,2) NOT NULL,
+            payment_method VARCHAR(50) NOT NULL DEFAULT 'CARD_TRANSFER',
+            status prepaymentstatus NOT NULL DEFAULT 'PENDING',
+            screenshot_file_id VARCHAR(255),
+            note TEXT,
+            operator_telegram_id BIGINT NOT NULL,
+            settled_in_report_id INTEGER REFERENCES structured_reports(id),
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        """,
+        # Index on check_in_date for calendar queries
+        """
+        CREATE INDEX IF NOT EXISTS ix_prepayments_check_in_date ON prepayments (check_in_date);
+        """,
+        # Index on operator
+        """
+        CREATE INDEX IF NOT EXISTS ix_prepayments_operator ON prepayments (operator_telegram_id);
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:

@@ -120,4 +120,22 @@ export const api = {
     if (to) params.set('end_date', to);
     return request(`/structured/breakdown?${params}`);
   },
+
+  // Prepayments
+  getPrepaymentsList: (params = {}) => {
+    const sp = new URLSearchParams();
+    if (params.start_date) sp.set('start_date', params.start_date);
+    if (params.end_date) sp.set('end_date', params.end_date);
+    if (params.status) sp.set('status', params.status);
+    return request(`/prepayments/list?${sp}`);
+  },
+  getPrepaymentDetail: (id) => request(`/prepayments/detail/${id}`),
+  updatePrepaymentStatus: (id, status) =>
+    request(`/prepayments/status/${id}`, { method: 'PUT', body: JSON.stringify({ status }) }),
+  getPrepaymentCalendar: (from, to) => {
+    const sp = new URLSearchParams();
+    if (from) sp.set('start_date', from);
+    if (to) sp.set('end_date', to);
+    return request(`/prepayments/calendar?${sp}`);
+  },
 };

@@ -399,7 +399,7 @@ async def on_add_accommodation(callback: types.CallbackQuery, state: FSMContext)
 
 @router.callback_query(F.data.startswith("prop:"), NewReportStates.choosing_property)
 async def on_property_selected(callback: types.CallbackQuery, state: FSMContext):
-    """Property selected, show prepayment info and ask for payment method."""
+    """Property selected, check for active prepayments and ask for payment method."""
     try:
         prop_id = int(callback.data.split(":")[1])
         data = await state.get_data()
@@ -416,34 +416,52 @@ async def on_property_selected(callback: types.CallbackQuery, state: FSMContext)
                 await callback.answer("Объект не найден")
                 return
 
-            # Check for existing prepayments on this property
-            # Look for PREPAYMENT entries linked to this property across all reports
-            # within a reasonable window (30 days before the report date)
+            # Check for active prepayments on this property (PENDING or CONFIRMED)
+            from db.enums import PrepaymentStatus
+            from db.models import Prepayment
             try:
                 prepay_query = (
-                    select(IncomeEntry)
-                    .join(StructuredReport)
+                    select(Prepayment)
                     .where(
-                        IncomeEntry.property_id == prop_id,
-                        IncomeEntry.payment_method == PaymentMethod.PREPAYMENT,
-                        StructuredReport.report_date >= report_date - timedelta(days=30),
-                        StructuredReport.report_date <= report_date,
+                        Prepayment.property_id == prop_id,
+                        Prepayment.status.in_([
+                            PrepaymentStatus.PENDING,
+                            PrepaymentStatus.CONFIRMED,
+                        ]),
+                        Prepayment.check_in_date <= report_date + timedelta(days=1),
+                        Prepayment.check_out_date >= report_date,
                     )
                 )
                 prepay_result = await session.execute(prepay_query)
-                prepayments = prepay_result.scalars().all()
+                active_prepayments = prepay_result.scalars().all()
             except Exception as e:
                 logger.error(f"Prepayment query failed: {e}")
-                prepayments = []
+                active_prepayments = []
 
         await state.update_data(current_property=prop_id, base_price=float(prop.price_weekday))
 
         # Build info text
         info = f"💳 {prop.name_ru}\nБазовая цена: {format_amount(prop.price_weekday)}\n"
 
-        if prepayments:
-            total_prepaid = sum(float(p.amount) for p in prepayments)
-            info += f"\n💵 Предоплата: {format_amount(total_prepaid)} ({len(prepayments)} платеж(ей))\n"
+        if active_prepayments:
+            total_prepaid = sum(float(p.amount) for p in active_prepayments)
+            info += f"\n⚠️ <b>У этого объекта есть предоплата!</b>\n"
+            for pp in active_prepayments:
+                info += (
+                    f"  👤 {pp.guest_name} — {format_amount(pp.amount)} UZS\n"
+                    f"  📅 {pp.check_in_date.strftime('%d.%m')} → {pp.check_out_date.strftime('%d.%m')}\n"
+                )
+            info += (
+                f"\n💵 Итого предоплат: <b>{format_amount(total_prepaid)} UZS</b>\n"
+                f"Оставшаяся сумма к оплате: зависит от итоговой стоимости\n"
+            )
+            # Store prepayment IDs for later settlement
+            await state.update_data(
+                active_prepayment_ids=[p.id for p in active_prepayments],
+                prepaid_amount=float(total_prepaid),
+            )
+        else:
+            await state.update_data(active_prepayment_ids=[], prepaid_amount=0)
 
         info += "\nВыберите способ оплаты:"
 
@@ -470,14 +488,21 @@ async def on_payment_method_selected(callback: types.CallbackQuery, state: FSMCo
     data = await state.get_data()
     lang = data.get("lang", "ru")
     base_price = data.get("base_price", 0)
+    prepaid_amount = data.get("prepaid_amount", 0)
 
     await state.update_data(payment_method=method)
     await state.set_state(NewReportStates.entering_amount)
 
-    await callback.message.edit_text(
-        f"💰 Введите сумму\n\nБазовая цена: {format_amount(base_price)}\n\n"
-        f"(отправьте числовое значение):"
-    )
+    text = f"💰 Введите сумму\n\nБазовая цена: {format_amount(base_price)}\n"
+    if prepaid_amount > 0:
+        remaining = max(0, base_price - prepaid_amount)
+        text += (
+            f"\n💵 Предоплата: {format_amount(prepaid_amount)} UZS\n"
+            f"📌 Остаток к оплате: ~{format_amount(remaining)} UZS\n"
+        )
+    text += "\n(отправьте числовое значение):"
+
+    await callback.message.edit_text(text)
     await callback.answer()
 
 
@@ -690,6 +715,11 @@ async def _show_accommodation_confirmation(message: types.Message, state: FSMCon
 
     summary += f"Количество дней: {data['num_days']}\n"
 
+    # Show prepayment info if applicable
+    prepaid = data.get("prepaid_amount", 0)
+    if prepaid > 0:
+        summary += f"\n💵 Предоплата: {format_amount(prepaid)} (будет зачтена)\n"
+
     buttons = [
         [
             InlineKeyboardButton(text="✅ Подтвердить", callback_data="acc:confirm"),
@@ -706,7 +736,7 @@ async def _show_accommodation_confirmation(message: types.Message, state: FSMCon
 
 @router.callback_query(F.data == "acc:confirm", NewReportStates.confirming_entry)
 async def on_accommodation_confirm(callback: types.CallbackQuery, state: FSMContext):
-    """Save accommodation entry and return to menu."""
+    """Save accommodation entry, settle linked prepayments, and return to menu."""
     data = await state.get_data()
     lang = data.get("lang", "ru")
     report_id = data["report_id"]
@@ -731,6 +761,17 @@ async def on_accommodation_confirm(callback: types.CallbackQuery, state: FSMCont
             report.total_income = (report.total_income or Decimal(0)) + Decimal(data["amount"])
             await session.merge(report)
 
+        # Mark linked prepayments as SETTLED
+        active_prepayment_ids = data.get("active_prepayment_ids", [])
+        if active_prepayment_ids:
+            from db.enums import PrepaymentStatus
+            from db.models import Prepayment
+            for pid in active_prepayment_ids:
+                prepay = await session.get(Prepayment, pid)
+                if prepay and prepay.status in (PrepaymentStatus.PENDING, PrepaymentStatus.CONFIRMED):
+                    prepay.status = PrepaymentStatus.SETTLED
+                    prepay.settled_in_report_id = report_id
+
         await session.commit()
 
     # Clear entry data
@@ -743,6 +784,8 @@ async def on_accommodation_confirm(callback: types.CallbackQuery, state: FSMCont
         discount_value=None,
         discount_reason=None,
         num_days=None,
+        active_prepayment_ids=None,
+        prepaid_amount=None,
     )
 
     await state.set_state(NewReportStates.choosing_action)
