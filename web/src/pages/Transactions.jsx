@@ -66,8 +66,8 @@ export default function Transactions() {
             <select value={filterUnit} onChange={e => setFilterUnit(e.target.value)}
               className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm">
               <option value="">Все</option>
-              <option value="resort">Курорт</option>
-              <option value="restaurant">Ресторан</option>
+              <option value="RESORT">Курорт</option>
+              <option value="RESTAURANT">Ресторан</option>
             </select>
           </div>
           <div>

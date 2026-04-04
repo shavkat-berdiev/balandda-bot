@@ -52,7 +52,7 @@ function getPresetRange(preset) {
 
 export default function Dashboard() {
   const defaults = getDefaultDates();
-  const [section, setSection] = useState('resort');
+  const [section, setSection] = useState('RESORT');
   const [dateFrom, setDateFrom] = useState(defaults.from);
   const [dateTo, setDateTo] = useState(defaults.to);
   const [data, setData] = useState(null);
@@ -93,9 +93,9 @@ export default function Dashboard() {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={() => setSection('resort')}
+            onClick={() => setSection('RESORT')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              section === 'resort'
+              section === 'RESORT'
                 ? 'bg-blue-600 text-white'
                 : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
             }`}
@@ -103,9 +103,9 @@ export default function Dashboard() {
             Курорт
           </button>
           <button
-            onClick={() => setSection('restaurant')}
+            onClick={() => setSection('RESTAURANT')}
             className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              section === 'restaurant'
+              section === 'RESTAURANT'
                 ? 'bg-blue-600 text-white'
                 : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
             }`}
