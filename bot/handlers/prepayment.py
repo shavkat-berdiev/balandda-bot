@@ -601,7 +601,7 @@ async def on_prepay_confirm(callback: types.CallbackQuery, state: FSMContext):
             check_in_date=checkin,
             check_out_date=checkout,
             amount=Decimal(data['amount']),
-            payment_method=PaymentMethod(data['payment_method']),
+            payment_method=data['payment_method'],
             status=PrepaymentStatus.PENDING,
             screenshot_file_id=data.get('screenshot_file_id'),
             operator_telegram_id=data['user_telegram_id'],

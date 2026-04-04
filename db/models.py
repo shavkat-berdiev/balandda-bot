@@ -308,7 +308,7 @@ class Prepayment(Base):
     check_in_date: Mapped[date] = mapped_column(Date, index=True)
     check_out_date: Mapped[date] = mapped_column(Date)
     amount: Mapped[float] = mapped_column(Numeric(15, 2))
-    payment_method: Mapped[PaymentMethod] = mapped_column(Enum(PaymentMethod), default=PaymentMethod.CARD_TRANSFER)
+    payment_method: Mapped[str] = mapped_column(String(50), default="CARD_TRANSFER")
     status: Mapped[PrepaymentStatus] = mapped_column(
         Enum(PrepaymentStatus), default=PrepaymentStatus.PENDING
     )

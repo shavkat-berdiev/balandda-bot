@@ -11,7 +11,7 @@ from sqlalchemy.orm import selectinload
 
 from api.auth import get_current_user
 from db.database import get_session
-from db.enums import PrepaymentStatus, PREPAYMENT_STATUS_LABELS, PAYMENT_METHOD_LABELS
+from db.enums import PrepaymentStatus, PREPAYMENT_STATUS_LABELS, PaymentMethod, PAYMENT_METHOD_LABELS
 from db.models import Prepayment, Property
 
 router = APIRouter()
@@ -208,8 +208,10 @@ def _serialize_prepayment(p: Prepayment) -> dict:
         "check_out_date": p.check_out_date.isoformat(),
         "nights": (p.check_out_date - p.check_in_date).days,
         "amount": float(p.amount),
-        "payment_method": p.payment_method.value if p.payment_method else None,
-        "payment_method_label": PAYMENT_METHOD_LABELS.get(p.payment_method, ""),
+        "payment_method": p.payment_method if p.payment_method else None,
+        "payment_method_label": PAYMENT_METHOD_LABELS.get(
+            PaymentMethod(p.payment_method) if p.payment_method else None, p.payment_method or ""
+        ),
         "status": p.status.value,
         "status_label": PREPAYMENT_STATUS_LABELS.get(p.status, p.status.value),
         "has_screenshot": bool(p.screenshot_file_id),
