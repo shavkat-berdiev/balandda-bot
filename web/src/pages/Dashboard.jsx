@@ -18,49 +18,43 @@ function formatShort(amount) {
   return String(amount);
 }
 
-function getDefaultDates() {
-  const today = new Date();
-  return {
-    from: today.toISOString().split('T')[0],
-    to: today.toISOString().split('T')[0],
-  };
+function daysAgo(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().split('T')[0];
 }
 
-function getPresetRange(preset) {
-  const today = new Date();
-  const from = new Date(today);
-  switch (preset) {
-    case 'today':
-      break;
-    case 'week':
-      from.setDate(from.getDate() - 7);
-      break;
-    case 'month':
-      from.setDate(from.getDate() - 30);
-      break;
-    case 'quarter':
-      from.setDate(from.getDate() - 90);
-      break;
-    default:
-      break;
-  }
-  return {
-    from: from.toISOString().split('T')[0],
-    to: today.toISOString().split('T')[0],
-  };
+function today() {
+  return new Date().toISOString().split('T')[0];
 }
+
+const PRESETS = [
+  { key: 'today', label: 'Сегодня', from: () => today(), to: () => today() },
+  { key: '7d', label: '7 дней', from: () => daysAgo(7), to: () => today() },
+  { key: '30d', label: '30 дней', from: () => daysAgo(30), to: () => today() },
+  { key: '90d', label: '90 дней', from: () => daysAgo(90), to: () => today() },
+];
 
 export default function Dashboard() {
-  const defaults = getDefaultDates();
   const [section, setSection] = useState('RESORT');
-  const [dateFrom, setDateFrom] = useState(defaults.from);
-  const [dateTo, setDateTo] = useState(defaults.to);
+  const [activePreset, setActivePreset] = useState('7d');
+  const [dateFrom, setDateFrom] = useState(daysAgo(7));
+  const [dateTo, setDateTo] = useState(today());
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  // Separate trend data for the always-visible charts
+  const [trend7, setTrend7] = useState([]);
+  const [trend30, setTrend30] = useState([]);
 
   useEffect(() => {
     loadData();
   }, [section, dateFrom, dateTo]);
+
+  // Load 7-day and 30-day trends on section change
+  useEffect(() => {
+    loadTrends();
+  }, [section]);
 
   async function loadData() {
     setLoading(true);
@@ -73,13 +67,39 @@ export default function Dashboard() {
     setLoading(false);
   }
 
-  function applyPreset(preset) {
-    const range = getPresetRange(preset);
-    setDateFrom(range.from);
-    setDateTo(range.to);
+  async function loadTrends() {
+    try {
+      const [d7, d30] = await Promise.all([
+        api.getStructuredDashboard(section, daysAgo(7), today()),
+        api.getStructuredDashboard(section, daysAgo(30), today()),
+      ]);
+      setTrend7(d7.daily_totals || []);
+      setTrend30(d30.daily_totals || []);
+    } catch (err) {
+      console.error('Failed to load trends:', err);
+    }
   }
 
-  const isMultiDay = dateFrom !== dateTo;
+  function applyPreset(key) {
+    const preset = PRESETS.find(p => p.key === key);
+    if (preset) {
+      setActivePreset(key);
+      setDateFrom(preset.from());
+      setDateTo(preset.to());
+    }
+  }
+
+  function handleCustomDate(from, to) {
+    setActivePreset('custom');
+    setDateFrom(from);
+    setDateTo(to);
+  }
+
+  const periodLabel = activePreset === 'today' ? 'Сегодня'
+    : activePreset === '7d' ? 'Последние 7 дней'
+    : activePreset === '30d' ? 'Последние 30 дней'
+    : activePreset === '90d' ? 'Последние 90 дней'
+    : `${dateFrom} — ${dateTo}`;
 
   return (
     <div>
@@ -87,9 +107,7 @@ export default function Dashboard() {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-800">Dashboard</h1>
-          <p className="text-gray-500 text-sm mt-1">
-            {dateFrom === dateTo ? 'Сегодня' : `${dateFrom} — ${dateTo}`}
-          </p>
+          <p className="text-gray-500 text-sm mt-1">{periodLabel}</p>
         </div>
         <div className="flex gap-2">
           <button
@@ -119,23 +137,24 @@ export default function Dashboard() {
       <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6">
         <div className="flex flex-wrap items-end gap-3">
           <div className="flex gap-1.5">
-            {[
-              { key: 'today', label: 'Сегодня' },
-              { key: 'week', label: '7 дней' },
-              { key: 'month', label: '30 дней' },
-              { key: 'quarter', label: '90 дней' },
-            ].map(p => (
+            {PRESETS.map(p => (
               <button key={p.key} onClick={() => applyPreset(p.key)}
-                className="px-3 py-1.5 text-xs font-medium rounded-md bg-gray-100 hover:bg-blue-50 hover:text-blue-600 text-gray-600 transition-colors">
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  activePreset === p.key
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 hover:bg-blue-50 hover:text-blue-600 text-gray-600'
+                }`}>
                 {p.label}
               </button>
             ))}
           </div>
           <div className="flex items-center gap-2 ml-auto">
-            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+            <input type="date" value={dateFrom}
+              onChange={e => handleCustomDate(e.target.value, dateTo)}
               className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm" />
             <span className="text-gray-400 text-sm">—</span>
-            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+            <input type="date" value={dateTo}
+              onChange={e => handleCustomDate(dateFrom, e.target.value)}
               className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm" />
           </div>
         </div>
@@ -163,21 +182,14 @@ export default function Dashboard() {
 
           {/* Row 1: Income pie + Expense bar */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-            {/* Income by category */}
             <div className="bg-white rounded-xl border border-gray-200 p-6">
               <h2 className="text-lg font-semibold text-gray-800 mb-4">Доход по категориям</h2>
               {data.income_by_category?.length > 0 ? (
                 <ResponsiveContainer width="100%" height={260}>
                   <PieChart>
-                    <Pie
-                      data={data.income_by_category}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      outerRadius={90}
-                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
-                    >
+                    <Pie data={data.income_by_category} dataKey="value" nameKey="name"
+                      cx="50%" cy="50%" outerRadius={90}
+                      label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}>
                       {data.income_by_category.map((_, i) => (
                         <Cell key={i} fill={COLORS[i % COLORS.length]} />
                       ))}
@@ -190,7 +202,6 @@ export default function Dashboard() {
               )}
             </div>
 
-            {/* Expense by category */}
             <div className="bg-white rounded-xl border border-gray-200 p-6">
               <h2 className="text-lg font-semibold text-gray-800 mb-4">Расходы по категориям</h2>
               {data.expense_by_category?.length > 0 ? (
@@ -211,22 +222,14 @@ export default function Dashboard() {
 
           {/* Row 2: Payment methods + Properties */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
-            {/* Payment methods */}
             <div className="bg-white rounded-xl border border-gray-200 p-6">
               <h2 className="text-lg font-semibold text-gray-800 mb-4">Способы оплаты</h2>
               {data.by_payment_method?.length > 0 ? (
                 <ResponsiveContainer width="100%" height={260}>
                   <PieChart>
-                    <Pie
-                      data={data.by_payment_method}
-                      dataKey="value"
-                      nameKey="name"
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={50}
-                      outerRadius={90}
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                    >
+                    <Pie data={data.by_payment_method} dataKey="value" nameKey="name"
+                      cx="50%" cy="50%" innerRadius={50} outerRadius={90}
+                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}>
                       {data.by_payment_method.map((_, i) => (
                         <Cell key={i} fill={COLORS[(i + 2) % COLORS.length]} />
                       ))}
@@ -239,7 +242,6 @@ export default function Dashboard() {
               )}
             </div>
 
-            {/* By property */}
             <div className="bg-white rounded-xl border border-gray-200 p-6">
               <h2 className="text-lg font-semibold text-gray-800 mb-4">Доход по объектам</h2>
               {data.by_property?.length > 0 ? (
@@ -258,29 +260,9 @@ export default function Dashboard() {
             </div>
           </div>
 
-          {/* Row 3: Daily trend (only show for multi-day range) */}
-          {isMultiDay && data.daily_totals?.length > 1 && (
-            <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-              <h2 className="text-lg font-semibold text-gray-800 mb-4">Тренд по дням</h2>
-              <ResponsiveContainer width="100%" height={300}>
-                <AreaChart data={data.daily_totals}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis dataKey="date" tick={{ fontSize: 11 }}
-                    tickFormatter={d => new Date(d + 'T00:00:00').toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={formatShort} />
-                  <Tooltip formatter={(v) => formatUZS(v)}
-                    labelFormatter={d => new Date(d + 'T00:00:00').toLocaleDateString('ru-RU')} />
-                  <Legend />
-                  <Area type="monotone" dataKey="income" name="Доход" stroke="#10b981" fill="#10b98133" strokeWidth={2} />
-                  <Area type="monotone" dataKey="expense" name="Расход" stroke="#ef4444" fill="#ef444433" strokeWidth={2} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-
-          {/* Row 4: Services breakdown (if any) */}
+          {/* Services breakdown */}
           {data.by_service?.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 p-6">
+            <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
               <h2 className="text-lg font-semibold text-gray-800 mb-4">Доход по услугам</h2>
               <ResponsiveContainer width="100%" height={250}>
                 <BarChart data={data.by_service} layout="vertical">
@@ -294,6 +276,45 @@ export default function Dashboard() {
             </div>
           )}
         </>
+      )}
+
+      {/* Always-visible trend charts */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+        <TrendChart title="Тренд за 7 дней" data={trend7} />
+        <TrendChart title="Тренд за 30 дней" data={trend30} />
+      </div>
+    </div>
+  );
+}
+
+function TrendChart({ title, data }) {
+  const hasData = data && data.length > 0;
+  const hasValues = hasData && data.some(d => d.income > 0 || d.expense > 0);
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-6">
+      <h2 className="text-lg font-semibold text-gray-800 mb-4">{title}</h2>
+      {hasValues ? (
+        <ResponsiveContainer width="100%" height={260}>
+          <LineChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+            <XAxis dataKey="date" tick={{ fontSize: 10 }}
+              tickFormatter={d => {
+                const dt = new Date(d + 'T00:00:00');
+                return dt.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+              }} />
+            <YAxis tick={{ fontSize: 11 }} tickFormatter={formatShort} />
+            <Tooltip formatter={(v) => formatUZS(v)}
+              labelFormatter={d => new Date(d + 'T00:00:00').toLocaleDateString('ru-RU')} />
+            <Legend />
+            <Line type="monotone" dataKey="income" name="Доход" stroke="#10b981"
+              strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+            <Line type="monotone" dataKey="expense" name="Расход" stroke="#ef4444"
+              strokeWidth={2} dot={{ r: 3 }} activeDot={{ r: 5 }} />
+          </LineChart>
+        </ResponsiveContainer>
+      ) : (
+        <p className="text-gray-400 text-center py-16">Нет данных за этот период</p>
       )}
     </div>
   );

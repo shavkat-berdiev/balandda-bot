@@ -6,25 +6,32 @@ function formatUZS(amount) {
   return new Intl.NumberFormat('ru-RU').format(Math.round(amount));
 }
 
-function getDefaultDates() {
-  const today = new Date();
-  const from = new Date(today);
-  from.setDate(from.getDate() - 30);
-  return {
-    from: from.toISOString().split('T')[0],
-    to: today.toISOString().split('T')[0],
-  };
+function daysAgo(n) {
+  const d = new Date();
+  d.setDate(d.getDate() - n);
+  return d.toISOString().split('T')[0];
 }
 
+function today() {
+  return new Date().toISOString().split('T')[0];
+}
+
+const PRESETS = [
+  { key: 'today', label: 'Сегодня', from: () => today(), to: () => today() },
+  { key: '7d', label: '7 дней', from: () => daysAgo(7), to: () => today() },
+  { key: '30d', label: '30 дней', from: () => daysAgo(30), to: () => today() },
+  { key: '90d', label: '90 дней', from: () => daysAgo(90), to: () => today() },
+];
+
 export default function Transactions() {
-  const defaults = getDefaultDates();
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [filterUnit, setFilterUnit] = useState('');
   const [filterType, setFilterType] = useState('');
-  const [dateFrom, setDateFrom] = useState(defaults.from);
-  const [dateTo, setDateTo] = useState(defaults.to);
+  const [activePreset, setActivePreset] = useState('30d');
+  const [dateFrom, setDateFrom] = useState(daysAgo(30));
+  const [dateTo, setDateTo] = useState(today());
 
   useEffect(() => { loadTransactions(); }, [filterUnit, filterType, dateFrom, dateTo]);
 
@@ -44,6 +51,21 @@ export default function Transactions() {
       setError(err.message);
     }
     setLoading(false);
+  }
+
+  function applyPreset(key) {
+    const preset = PRESETS.find(p => p.key === key);
+    if (preset) {
+      setActivePreset(key);
+      setDateFrom(preset.from());
+      setDateTo(preset.to());
+    }
+  }
+
+  function handleCustomDate(from, to) {
+    setActivePreset('custom');
+    setDateFrom(from);
+    setDateTo(to);
   }
 
   const totalIncome = transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0);
@@ -79,14 +101,25 @@ export default function Transactions() {
               <option value="expense">Расход</option>
             </select>
           </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">С</label>
-            <input type="date" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
-              className="px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+          <div className="flex gap-1.5 items-end pb-0.5">
+            {PRESETS.map(p => (
+              <button key={p.key} onClick={() => applyPreset(p.key)}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  activePreset === p.key
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 hover:bg-blue-50 hover:text-blue-600 text-gray-600'
+                }`}>
+                {p.label}
+              </button>
+            ))}
           </div>
-          <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1">По</label>
-            <input type="date" value={dateTo} onChange={e => setDateTo(e.target.value)}
+          <div className="flex items-center gap-2 ml-auto">
+            <input type="date" value={dateFrom}
+              onChange={e => handleCustomDate(e.target.value, dateTo)}
+              className="px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+            <span className="text-gray-400 text-sm">—</span>
+            <input type="date" value={dateTo}
+              onChange={e => handleCustomDate(dateFrom, e.target.value)}
               className="px-3 py-2 border border-gray-200 rounded-lg text-sm" />
           </div>
         </div>
@@ -151,9 +184,10 @@ export default function Transactions() {
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                        tx.business_unit === 'resort' ? 'bg-blue-50 text-blue-700' : 'bg-orange-50 text-orange-700'
+                        tx.business_unit === 'RESORT' || tx.business_unit === 'resort'
+                          ? 'bg-blue-50 text-blue-700' : 'bg-orange-50 text-orange-700'
                       }`}>
-                        {tx.business_unit === 'resort' ? 'Курорт' : 'Ресторан'}
+                        {tx.business_unit === 'RESORT' || tx.business_unit === 'resort' ? 'Курорт' : 'Ресторан'}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600">{tx.category}</td>
