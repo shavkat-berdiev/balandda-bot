@@ -1,4 +1,5 @@
 from datetime import datetime, date
+from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
@@ -340,7 +341,7 @@ class WalletTransaction(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     sender_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
     receiver_telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
-    amount: Mapped[float] = mapped_column(Numeric(15, 2))
+    amount: Mapped[Decimal] = mapped_column(Numeric(15, 2))
     transaction_type: Mapped[WalletTransactionType] = mapped_column(Enum(WalletTransactionType))
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     report_id: Mapped[int | None] = mapped_column(ForeignKey("structured_reports.id"), nullable=True)

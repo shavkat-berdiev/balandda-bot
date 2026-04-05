@@ -11,8 +11,8 @@ from bot.config import settings
 from bot.keyboards.main import main_menu_keyboard, section_keyboard
 from bot.locales import get_text
 from db.database import async_session
-from db.enums import RegistrationRequestStatus, UserRole
-from db.models import BusinessUnit, Language, RegistrationRequest, User, UserRole as UserRoleEnum
+from db.enums import RegistrationRequestStatus
+from db.models import BusinessUnit, Language, RegistrationRequest, User, UserRole
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ async def create_admin_if_needed(telegram_id: int, full_name: str) -> User:
         user = User(
             telegram_id=telegram_id,
             full_name=full_name,
-            role=UserRoleEnum.ADMIN,
+            role=UserRole.ADMIN,
             language=Language.RU,
             active_section=BusinessUnit.RESORT,
         )
@@ -57,7 +57,7 @@ async def _notify_admins(bot: Bot, text: str):
     """Send notification to all admin users."""
     async with async_session() as session:
         result = await session.execute(
-            select(User).where(User.role == UserRoleEnum.ADMIN, User.is_active == True)
+            select(User).where(User.role == UserRole.ADMIN, User.is_active == True)
         )
         admins = result.scalars().all()
 
@@ -192,7 +192,7 @@ async def on_approve_from_bot(callback: types.CallbackQuery, state: FSMContext):
             select(User).where(User.telegram_id == callback.from_user.id)
         )
         admin = result.scalar_one_or_none()
-        if not admin or admin.role != UserRoleEnum.ADMIN:
+        if not admin or admin.role != UserRole.ADMIN:
             await callback.answer("Только администраторы", show_alert=True)
             return
 
