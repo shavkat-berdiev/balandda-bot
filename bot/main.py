@@ -139,6 +139,32 @@ async def run_migrations():
             END IF;
         END $$;
         """,
+        # Added in v0.5: RegistrationRequestStatus enum
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'registrationrequeststatus') THEN
+                CREATE TYPE registrationrequeststatus AS ENUM ('PENDING', 'APPROVED', 'REJECTED');
+            END IF;
+        END $$;
+        """,
+        # Added in v0.5: registration_requests table
+        """
+        CREATE TABLE IF NOT EXISTS registration_requests (
+            id SERIAL PRIMARY KEY,
+            telegram_id BIGINT NOT NULL,
+            full_name VARCHAR(255) NOT NULL,
+            username VARCHAR(255),
+            status registrationrequeststatus NOT NULL DEFAULT 'PENDING',
+            reviewed_by BIGINT,
+            assigned_role userrole,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            reviewed_at TIMESTAMPTZ
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_registration_requests_tid ON registration_requests (telegram_id);
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:

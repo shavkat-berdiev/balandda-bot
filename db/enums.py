@@ -114,6 +114,12 @@ class PrepaymentStatus(str, enum.Enum):
     CANCELLED = "CANCELLED"
 
 
+class RegistrationRequestStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+
+
 class WalletTransactionType(str, enum.Enum):
     CASH_IN = "CASH_IN"                  # Auto from cash income report
     TRANSFER_TO_EMPLOYEE = "TRANSFER_TO_EMPLOYEE"  # Between staff
@@ -210,6 +216,12 @@ PREPAYMENT_STATUS_LABELS = {
     PrepaymentStatus.CONFIRMED: "Подтверждён",
     PrepaymentStatus.SETTLED: "Зачтён",
     PrepaymentStatus.CANCELLED: "Отменён",
+}
+
+REGISTRATION_REQUEST_STATUS_LABELS = {
+    RegistrationRequestStatus.PENDING: "Ожидает",
+    RegistrationRequestStatus.APPROVED: "Одобрено",
+    RegistrationRequestStatus.REJECTED: "Отклонено",
 }
 
 WALLET_TRANSACTION_TYPE_LABELS = {

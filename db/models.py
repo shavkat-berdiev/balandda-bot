@@ -32,6 +32,8 @@ from db.enums import (
     PREPAYMENT_STATUS_LABELS,
     PropertyType,
     PROPERTY_TYPE_LABELS,
+    RegistrationRequestStatus,
+    REGISTRATION_REQUEST_STATUS_LABELS,
     ReportStatus,
     REPORT_STATUS_LABELS,
     RestaurantIncomeCategory,
@@ -67,6 +69,8 @@ __all__ = [
     "Prepayment",
     "WalletTransaction",
     "WalletTransactionType", "WALLET_TRANSACTION_TYPE_LABELS",
+    "RegistrationRequest",
+    "RegistrationRequestStatus", "REGISTRATION_REQUEST_STATUS_LABELS",
 ]
 
 
@@ -342,3 +346,20 @@ class WalletTransaction(Base):
     report_id: Mapped[int | None] = mapped_column(ForeignKey("structured_reports.id"), nullable=True)
     business_unit: Mapped[BusinessUnit | None] = mapped_column(Enum(BusinessUnit), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class RegistrationRequest(Base):
+    """Registration requests from unregistered Telegram users."""
+    __tablename__ = "registration_requests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    full_name: Mapped[str] = mapped_column(String(255))
+    username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[RegistrationRequestStatus] = mapped_column(
+        Enum(RegistrationRequestStatus), default=RegistrationRequestStatus.PENDING
+    )
+    reviewed_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    assigned_role: Mapped[UserRole | None] = mapped_column(Enum(UserRole), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

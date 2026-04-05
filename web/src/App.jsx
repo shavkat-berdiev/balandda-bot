@@ -14,6 +14,7 @@ import AdminStaff from './pages/AdminStaff';
 import AdminReports from './pages/AdminReports';
 import Prepayments from './pages/Prepayments';
 import Wallets from './pages/Wallets';
+import RegistrationRequests from './pages/RegistrationRequests';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -66,6 +67,7 @@ export default function App() {
         <Route path="/admin/reports" element={<AdminReports />} />
         <Route path="/prepayments" element={<Prepayments />} />
         <Route path="/wallets" element={<Wallets />} />
+        <Route path="/registration" element={<RegistrationRequests />} />
         <Route path="/login" element={<Navigate to="/" />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

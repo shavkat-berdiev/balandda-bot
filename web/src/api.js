@@ -150,4 +150,14 @@ export const api = {
     return request(`/wallets/transactions?${sp}`);
   },
   getWalletBalance: (telegramId) => request(`/wallets/balance/${telegramId}`),
+
+  // Registration requests
+  getRegistrationRequests: (params = {}) => {
+    const sp = new URLSearchParams();
+    if (params.status) sp.set('status', params.status);
+    return request(`/registration/list?${sp}`);
+  },
+  getRegistrationRoles: () => request('/registration/roles'),
+  decideRegistrationRequest: (id, data) =>
+    request(`/registration/decide/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 };

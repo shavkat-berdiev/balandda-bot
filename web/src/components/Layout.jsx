@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { BarChart3, FolderOpen, Users, ArrowLeftRight, LogOut, Menu, X, Home, Sparkles, Wine, UserCog, FileText, CreditCard, Wallet } from 'lucide-react';
+import { BarChart3, FolderOpen, Users, ArrowLeftRight, LogOut, Menu, X, Home, Sparkles, Wine, UserCog, FileText, CreditCard, Wallet, UserPlus } from 'lucide-react';
 
 const navItems = [
   { path: '/', label: 'Dashboard', icon: BarChart3 },
   { path: '/transactions', label: 'Transactions', icon: ArrowLeftRight },
   { path: '/prepayments', label: 'Предоплаты', icon: CreditCard },
   { path: '/wallets', label: 'Кошельки', icon: Wallet },
+  { path: '/registration', label: 'Заявки', icon: UserPlus },
   { path: '/categories', label: 'Categories', icon: FolderOpen },
   { path: '/users', label: 'Users', icon: Users },
 ];
