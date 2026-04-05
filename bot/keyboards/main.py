@@ -40,14 +40,14 @@ def main_menu_keyboard(lang: str = "ru", current_section: str = "resort") -> Inl
                 callback_data="action:prepayment",
             ),
             InlineKeyboardButton(
-                text="💰 Кошелёк",
-                callback_data="action:wallet",
+                text=f"💸 {get_text('btn_cash_out', lang)}",
+                callback_data="action:cash_out",
             ),
         ],
         [
             InlineKeyboardButton(
-                text=f"📋 {get_text('btn_history', lang)}",
-                callback_data="action:history",
+                text="💰 Кошелёк",
+                callback_data="action:wallet",
             ),
             InlineKeyboardButton(
                 text=f"📊 {get_text('btn_report', lang)}",
@@ -55,7 +55,13 @@ def main_menu_keyboard(lang: str = "ru", current_section: str = "resort") -> Inl
             ),
         ],
         [
+            InlineKeyboardButton(
+                text=f"📋 {get_text('btn_history', lang)}",
+                callback_data="action:history",
+            ),
             InlineKeyboardButton(text=switch_label, callback_data=switch_data),
+        ],
+        [
             InlineKeyboardButton(
                 text=f"⚙️ {get_text('btn_settings', lang)}",
                 callback_data="action:settings",

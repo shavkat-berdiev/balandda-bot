@@ -20,7 +20,7 @@ from bot.config import settings
 from bot.keyboards.main import main_menu_keyboard
 from bot.locales import get_text
 from db.database import async_session
-from db.enums import WalletTransactionType, WALLET_TRANSACTION_TYPE_LABELS, UserRole
+from db.enums import UserRole, WalletTransactionType, WALLET_TRANSACTION_TYPE_LABELS
 from db.models import User, WalletTransaction
 
 router = Router()
@@ -115,8 +115,7 @@ async def on_wallet(callback: types.CallbackQuery, state: FSMContext):
     )
 
     buttons = [
-        [InlineKeyboardButton(text="👤 Передать сотруднику", callback_data="wlt:to_employee")],
-        [InlineKeyboardButton(text="💼 Передать Шавкату", callback_data="wlt:to_shavkat")],
+        [InlineKeyboardButton(text="💼 Инкассация", callback_data="wlt:to_employee")],
         [InlineKeyboardButton(text="🏦 Сдать в банк", callback_data="wlt:to_bank")],
         [InlineKeyboardButton(
             text=f"◀️ {get_text('btn_back', lang)}",
@@ -136,22 +135,23 @@ async def on_wallet(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "wlt:to_employee", WalletStates.viewing)
 async def on_transfer_employee(callback: types.CallbackQuery, state: FSMContext):
-    """Show list of employees to transfer cash to."""
+    """Show admin users (Акбар, Шавкат) to transfer cash to."""
     async with async_session() as session:
         result = await session.execute(
             select(User).where(
                 User.is_active == True,
+                User.role == UserRole.ADMIN,
                 User.telegram_id != callback.from_user.id,
             ).order_by(User.full_name)
         )
-        users = result.scalars().all()
+        admins = result.scalars().all()
 
-    if not users:
-        await callback.answer("Нет доступных сотрудников", show_alert=True)
+    if not admins:
+        await callback.answer("Нет доступных получателей", show_alert=True)
         return
 
     buttons = []
-    for u in users:
+    for u in admins:
         buttons.append([InlineKeyboardButton(
             text=u.full_name,
             callback_data=f"wlt_emp:{u.telegram_id}",
@@ -164,7 +164,7 @@ async def on_transfer_employee(callback: types.CallbackQuery, state: FSMContext)
     )
     await state.set_state(WalletStates.choosing_recipient)
     await callback.message.edit_text(
-        "👤 Выберите сотрудника для передачи:",
+        "💼 Выберите получателя инкассации:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await callback.answer()
@@ -199,27 +199,8 @@ async def on_employee_selected(callback: types.CallbackQuery, state: FSMContext)
 
 
 # ────────────────────────────────────────────────────────────────────────
-# TRANSFER TO SHAVKAT / BANK — direct amount entry
+# CASH TO BANK — direct amount entry
 # ────────────────────────────────────────────────────────────────────────
-
-
-@router.callback_query(F.data == "wlt:to_shavkat", WalletStates.viewing)
-async def on_transfer_shavkat(callback: types.CallbackQuery, state: FSMContext):
-    """Transfer to Shavkat — ask amount."""
-    balance = await get_wallet_balance(callback.from_user.id)
-    await state.update_data(
-        transfer_type=WalletTransactionType.TRANSFER_TO_SHAVKAT.value,
-        sender_telegram_id=callback.from_user.id,
-        receiver_telegram_id=None,
-        receiver_name="Шавкат",
-    )
-    await state.set_state(WalletStates.entering_amount)
-    await callback.message.edit_text(
-        f"💼 Передача Шавкату\n"
-        f"💰 Ваш баланс: {format_amount(balance)} UZS\n\n"
-        f"Введите сумму:"
-    )
-    await callback.answer()
 
 
 @router.callback_query(F.data == "wlt:to_bank", WalletStates.viewing)
