@@ -97,6 +97,48 @@ async def run_migrations():
         """
         CREATE INDEX IF NOT EXISTS ix_prepayments_operator ON prepayments (operator_telegram_id);
         """,
+        # Added in v0.4: WalletTransactionType enum
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'wallettransactiontype') THEN
+                CREATE TYPE wallettransactiontype AS ENUM ('CASH_IN', 'TRANSFER_TO_EMPLOYEE', 'TRANSFER_TO_SHAVKAT', 'CASH_TO_BANK');
+            END IF;
+        END $$;
+        """,
+        # Added in v0.4: wallet_transactions table
+        """
+        CREATE TABLE IF NOT EXISTS wallet_transactions (
+            id SERIAL PRIMARY KEY,
+            sender_telegram_id BIGINT NOT NULL,
+            receiver_telegram_id BIGINT,
+            amount NUMERIC(15,2) NOT NULL,
+            transaction_type wallettransactiontype NOT NULL,
+            note TEXT,
+            report_id INTEGER REFERENCES structured_reports(id),
+            business_unit VARCHAR(20),
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_wallet_tx_sender ON wallet_transactions (sender_telegram_id);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_wallet_tx_receiver ON wallet_transactions (receiver_telegram_id);
+        """,
+        # Added in v0.4: PREPAYMENT value for paymentmethod enum (if missing)
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_enum
+                WHERE enumlabel = 'PREPAYMENT'
+                  AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'paymentmethod')
+            ) THEN
+                ALTER TYPE paymentmethod ADD VALUE 'PREPAYMENT';
+            END IF;
+        END $$;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:

@@ -40,8 +40,8 @@ def main_menu_keyboard(lang: str = "ru", current_section: str = "resort") -> Inl
                 callback_data="action:prepayment",
             ),
             InlineKeyboardButton(
-                text=f"💸 {get_text('btn_cash_out', lang)}",
-                callback_data="action:cash_out",
+                text="💰 Кошелёк",
+                callback_data="action:wallet",
             ),
         ],
         [

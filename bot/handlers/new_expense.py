@@ -64,6 +64,9 @@ async def build_category_keyboard(lang: str) -> InlineKeyboardMarkup:
     """Build expense category selection keyboard."""
     buttons = []
     for category in ExpenseCategory:
+        # INKASSATSIYA replaced by wallet transfers
+        if category == ExpenseCategory.INKASSATSIYA:
+            continue
         label = EXPENSE_CATEGORY_LABELS.get(category, category.value)
         buttons.append([InlineKeyboardButton(text=label, callback_data=f"exp_cat:{category.value}")])
 

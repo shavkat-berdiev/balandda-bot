@@ -138,4 +138,16 @@ export const api = {
     if (to) sp.set('end_date', to);
     return request(`/prepayments/calendar?${sp}`);
   },
+
+  // Wallets
+  getWalletsList: () => request('/wallets/list'),
+  getWalletsTransactions: (params = {}) => {
+    const sp = new URLSearchParams();
+    if (params.telegram_id) sp.set('telegram_id', params.telegram_id);
+    if (params.transaction_type) sp.set('transaction_type', params.transaction_type);
+    if (params.start_date) sp.set('start_date', params.start_date);
+    if (params.end_date) sp.set('end_date', params.end_date);
+    return request(`/wallets/transactions?${sp}`);
+  },
+  getWalletBalance: (telegramId) => request(`/wallets/balance/${telegramId}`),
 };

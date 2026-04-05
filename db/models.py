@@ -40,6 +40,8 @@ from db.enums import (
     SERVICE_TYPE_LABELS,
     TransactionType,
     UserRole,
+    WalletTransactionType,
+    WALLET_TRANSACTION_TYPE_LABELS,
 )
 
 # Re-export for backward compatibility
@@ -63,6 +65,8 @@ __all__ = [
     "Property", "ServiceItem", "MinibarItem", "StaffMember",
     "StructuredReport", "IncomeEntry", "ExpenseEntry",
     "Prepayment",
+    "WalletTransaction",
+    "WalletTransactionType", "WALLET_TRANSACTION_TYPE_LABELS",
 ]
 
 
@@ -323,3 +327,18 @@ class Prepayment(Base):
 
     property: Mapped["Property"] = relationship()
     settled_in_report: Mapped["StructuredReport | None"] = relationship()
+
+
+class WalletTransaction(Base):
+    """Cash wallet transactions — tracks cash flow between users."""
+    __tablename__ = "wallet_transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    sender_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    receiver_telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
+    amount: Mapped[float] = mapped_column(Numeric(15, 2))
+    transaction_type: Mapped[WalletTransactionType] = mapped_column(Enum(WalletTransactionType))
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    report_id: Mapped[int | None] = mapped_column(ForeignKey("structured_reports.id"), nullable=True)
+    business_unit: Mapped[BusinessUnit | None] = mapped_column(Enum(BusinessUnit), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -25,6 +25,7 @@ from bot.keyboards.main import main_menu_keyboard
 from bot.locales import get_text
 from db.database import async_session
 from db.enums import (
+    BusinessUnit,
     DiscountReason,
     DiscountType,
     DISCOUNT_REASON_LABELS,
@@ -36,6 +37,7 @@ from db.enums import (
     ReportStatus,
     RestaurantIncomeCategory,
     RESTAURANT_INCOME_LABELS,
+    WalletTransactionType,
 )
 from db.models import (
     DiscountReason as DiscountReasonEnum,
@@ -49,6 +51,7 @@ from db.models import (
     StaffMember,
     StructuredReport,
     User,
+    WalletTransaction,
 )
 
 router = Router()
@@ -80,6 +83,19 @@ async def get_user(telegram_id: int) -> User | None:
             select(User).where(User.telegram_id == telegram_id)
         )
         return result.scalar_one_or_none()
+
+
+async def _auto_wallet_cash_in(session, telegram_id: int, amount: Decimal, report_id: int, business_unit):
+    """Auto-create a CASH_IN wallet transaction when cash income is recorded."""
+    bu = BusinessUnit(business_unit) if business_unit else None
+    tx = WalletTransaction(
+        sender_telegram_id=telegram_id,
+        amount=amount,
+        transaction_type=WalletTransactionType.CASH_IN,
+        report_id=report_id,
+        business_unit=bu,
+    )
+    session.add(tx)
 
 
 async def get_or_create_draft_report(user_id: int, report_date: date, business_unit) -> StructuredReport:
@@ -772,6 +788,14 @@ async def on_accommodation_confirm(callback: types.CallbackQuery, state: FSMCont
                     prepay.status = PrepaymentStatus.SETTLED
                     prepay.settled_in_report_id = report_id
 
+        # Auto wallet CASH_IN for cash payments
+        if data["payment_method"] == PaymentMethod.CASH.value:
+            await _auto_wallet_cash_in(
+                session, callback.from_user.id,
+                Decimal(data["amount"]), report_id,
+                data.get("business_unit"),
+            )
+
         await session.commit()
 
     # Clear entry data
@@ -942,6 +966,14 @@ async def on_restaurant_income_confirm(callback: types.CallbackQuery, state: FSM
             report.total_income = (report.total_income or Decimal(0)) + Decimal(data["amount"])
             await session.merge(report)
 
+        # Auto wallet CASH_IN for cash payments
+        if data["payment_method"] == PaymentMethod.CASH.value:
+            await _auto_wallet_cash_in(
+                session, callback.from_user.id,
+                Decimal(data["amount"]), report_id,
+                data.get("business_unit"),
+            )
+
         await session.commit()
 
     # Clear entry data
@@ -1099,6 +1131,14 @@ async def on_service_confirm(callback: types.CallbackQuery, state: FSMContext):
         if report:
             report.total_income = (report.total_income or Decimal(0)) + Decimal(data["amount"])
             await session.merge(report)
+
+        # Auto wallet CASH_IN for cash payments
+        if data["payment_method"] == PaymentMethod.CASH.value:
+            await _auto_wallet_cash_in(
+                session, callback.from_user.id,
+                Decimal(data["amount"]), report_id,
+                data.get("business_unit"),
+            )
 
         await session.commit()
 
@@ -1319,6 +1359,14 @@ async def on_minibar_confirm(callback: types.CallbackQuery, state: FSMContext):
         if report:
             report.total_income = (report.total_income or Decimal(0)) + Decimal(data["amount"])
             await session.merge(report)
+
+        # Auto wallet CASH_IN for cash payments
+        if data["payment_method"] == PaymentMethod.CASH.value:
+            await _auto_wallet_cash_in(
+                session, callback.from_user.id,
+                Decimal(data["amount"]), report_id,
+                data.get("business_unit"),
+            )
 
         await session.commit()
 

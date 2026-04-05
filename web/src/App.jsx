@@ -13,6 +13,7 @@ import AdminMinibar from './pages/AdminMinibar';
 import AdminStaff from './pages/AdminStaff';
 import AdminReports from './pages/AdminReports';
 import Prepayments from './pages/Prepayments';
+import Wallets from './pages/Wallets';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -64,6 +65,7 @@ export default function App() {
         <Route path="/admin/staff" element={<AdminStaff />} />
         <Route path="/admin/reports" element={<AdminReports />} />
         <Route path="/prepayments" element={<Prepayments />} />
+        <Route path="/wallets" element={<Wallets />} />
         <Route path="/login" element={<Navigate to="/" />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>

@@ -114,6 +114,13 @@ class PrepaymentStatus(str, enum.Enum):
     CANCELLED = "CANCELLED"
 
 
+class WalletTransactionType(str, enum.Enum):
+    CASH_IN = "CASH_IN"                  # Auto from cash income report
+    TRANSFER_TO_EMPLOYEE = "TRANSFER_TO_EMPLOYEE"  # Between staff
+    TRANSFER_TO_SHAVKAT = "TRANSFER_TO_SHAVKAT"    # Final dest: owner
+    CASH_TO_BANK = "CASH_TO_BANK"        # Final dest: bank
+
+
 # ── Labels for display ──────────────────────────────────────────────
 
 PAYMENT_METHOD_LABELS = {
@@ -203,4 +210,11 @@ PREPAYMENT_STATUS_LABELS = {
     PrepaymentStatus.CONFIRMED: "Подтверждён",
     PrepaymentStatus.SETTLED: "Зачтён",
     PrepaymentStatus.CANCELLED: "Отменён",
+}
+
+WALLET_TRANSACTION_TYPE_LABELS = {
+    WalletTransactionType.CASH_IN: "Приход наличных",
+    WalletTransactionType.TRANSFER_TO_EMPLOYEE: "Передача сотруднику",
+    WalletTransactionType.TRANSFER_TO_SHAVKAT: "Передано Шавкату",
+    WalletTransactionType.CASH_TO_BANK: "Сдано в банк",
 }
