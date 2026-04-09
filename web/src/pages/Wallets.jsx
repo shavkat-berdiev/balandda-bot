@@ -200,6 +200,7 @@ export default function Wallets() {
                   <th className="px-6 py-3 font-medium">Отправитель</th>
                   <th className="px-6 py-3 font-medium">Получатель</th>
                   <th className="px-6 py-3 font-medium text-right">Сумма</th>
+                  <th className="px-6 py-3 font-medium">Статус</th>
                   <th className="px-6 py-3 font-medium">Комментарий</th>
                 </tr>
               </thead>
@@ -220,6 +221,18 @@ export default function Wallets() {
                       <td className="px-6 py-3 text-gray-600">{tx.receiver_name}</td>
                       <td className="px-6 py-3 text-right font-medium text-gray-900 whitespace-nowrap">
                         {formatAmount(tx.amount)} UZS
+                      </td>
+                      <td className="px-6 py-3">
+                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                          tx.status === 'COMPLETED' ? 'bg-green-100 text-green-800' :
+                          tx.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
+                          tx.status === 'CANCELLED' ? 'bg-red-100 text-red-800' :
+                          'bg-green-100 text-green-800'
+                        }`}>
+                          {tx.status === 'COMPLETED' ? '✅' :
+                           tx.status === 'PENDING' ? '⏳' :
+                           tx.status === 'CANCELLED' ? '❌' : '✅'}
+                        </span>
                       </td>
                       <td className="px-6 py-3 text-gray-500 max-w-[200px] truncate">
                         {tx.note || ''}

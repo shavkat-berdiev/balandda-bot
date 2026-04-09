@@ -128,6 +128,12 @@ class WalletTransactionType(str, enum.Enum):
     CASH_TO_BANK = "CASH_TO_BANK"        # Final dest: bank
 
 
+class WalletTransactionStatus(str, enum.Enum):
+    PENDING = "PENDING"        # Awaiting receiver acceptance
+    COMPLETED = "COMPLETED"    # Accepted / auto-completed
+    CANCELLED = "CANCELLED"    # Declined by receiver
+
+
 # ── Labels for display ──────────────────────────────────────────────
 
 PAYMENT_METHOD_LABELS = {

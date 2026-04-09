@@ -1,10 +1,12 @@
-"""Wallet handler — cash balance tracking and transfers.
+"""Wallet handler — cash balance tracking and transfers with receiver acceptance.
 
 Flow:
 1. User taps "💰 Кошелёк" → show balance + action buttons
-2. Actions: Transfer to employee, Transfer to Shavkat, Cash to bank
+2. Actions: Transfer to employee, Cash to bank
 3. Transfer flow: select recipient → enter amount → optional note → confirm
-4. Auto CASH_IN happens in new_report.py when cash income is saved
+4. On confirm: create PENDING transaction, deduct from sender, send accept/decline to receiver
+5. Receiver accepts → COMPLETED; Receiver declines → CANCELLED, money returns to sender
+6. Auto CASH_IN happens in new_report.py when cash income is saved (always COMPLETED)
 """
 
 import logging
@@ -14,13 +16,18 @@ from aiogram import Bot, F, Router, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from sqlalchemy import select, func, case, or_
+from sqlalchemy import select, func, case, or_, and_
 
 from bot.keyboards.main import main_menu_keyboard
 from bot.locales import get_text
 from bot.notifications import notify_wallet_transfer
 from db.database import async_session
-from db.enums import UserRole, WalletTransactionType, WALLET_TRANSACTION_TYPE_LABELS
+from db.enums import (
+    UserRole,
+    WalletTransactionType,
+    WalletTransactionStatus,
+    WALLET_TRANSACTION_TYPE_LABELS,
+)
 from db.models import User, WalletTransaction
 
 router = Router()
@@ -45,25 +52,36 @@ def format_amount(amount: float | Decimal) -> str:
 async def get_wallet_balance(telegram_id: int) -> Decimal:
     """Calculate current wallet balance for a user.
 
-    Balance = SUM(CASH_IN) + SUM(received transfers) - SUM(sent transfers) - SUM(final destinations)
+    Balance = SUM(CASH_IN) + SUM(received COMPLETED transfers)
+            - SUM(sent transfers that are PENDING or COMPLETED)
+            - SUM(COMPLETED final destinations)
+
+    PENDING outgoing deducts from sender (money is frozen).
+    Only COMPLETED incoming adds to receiver.
     """
     async with async_session() as session:
-        # Incoming: CASH_IN + transfers received from others
+        # Incoming: CASH_IN (always COMPLETED) + COMPLETED transfers received
         incoming = await session.execute(
             select(func.coalesce(func.sum(WalletTransaction.amount), 0)).where(
                 or_(
-                    # Cash in from reports
-                    (WalletTransaction.sender_telegram_id == telegram_id) &
-                    (WalletTransaction.transaction_type == WalletTransactionType.CASH_IN),
-                    # Transfers received from other employees
-                    (WalletTransaction.receiver_telegram_id == telegram_id) &
-                    (WalletTransaction.transaction_type == WalletTransactionType.TRANSFER_TO_EMPLOYEE),
+                    # Cash in from reports (always COMPLETED)
+                    and_(
+                        WalletTransaction.sender_telegram_id == telegram_id,
+                        WalletTransaction.transaction_type == WalletTransactionType.CASH_IN,
+                        WalletTransaction.status == WalletTransactionStatus.COMPLETED,
+                    ),
+                    # Transfers received from other employees — only COMPLETED
+                    and_(
+                        WalletTransaction.receiver_telegram_id == telegram_id,
+                        WalletTransaction.transaction_type == WalletTransactionType.TRANSFER_TO_EMPLOYEE,
+                        WalletTransaction.status == WalletTransactionStatus.COMPLETED,
+                    ),
                 )
             )
         )
         total_in = Decimal(str(incoming.scalar()))
 
-        # Outgoing: transfers sent to employees, to Shavkat, to bank
+        # Outgoing: PENDING + COMPLETED transfers sent (money is frozen/gone)
         outgoing = await session.execute(
             select(func.coalesce(func.sum(WalletTransaction.amount), 0)).where(
                 WalletTransaction.sender_telegram_id == telegram_id,
@@ -72,12 +90,15 @@ async def get_wallet_balance(telegram_id: int) -> Decimal:
                     WalletTransactionType.TRANSFER_TO_SHAVKAT,
                     WalletTransactionType.CASH_TO_BANK,
                 ]),
+                WalletTransaction.status.in_([
+                    WalletTransactionStatus.PENDING,
+                    WalletTransactionStatus.COMPLETED,
+                ]),
             )
         )
         total_out = Decimal(str(outgoing.scalar()))
 
     return total_in - total_out
-
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -101,23 +122,224 @@ async def on_wallet(callback: types.CallbackQuery, state: FSMContext):
     lang = user.language.value.lower()
     balance = await get_wallet_balance(callback.from_user.id)
 
+    # Check for pending incoming transfers
+    async with async_session() as session:
+        pending_result = await session.execute(
+            select(func.count()).where(
+                WalletTransaction.receiver_telegram_id == callback.from_user.id,
+                WalletTransaction.status == WalletTransactionStatus.PENDING,
+            )
+        )
+        pending_count = pending_result.scalar()
+
     text = (
         f"💰 <b>Кошелёк</b>\n\n"
         f"Баланс: <b>{format_amount(balance)} UZS</b>"
     )
+    if pending_count:
+        text += f"\n\n⏳ У вас <b>{pending_count}</b> входящих переводов на подтверждение"
 
     buttons = [
         [InlineKeyboardButton(text="💼 Инкассация", callback_data="wlt:to_employee")],
         [InlineKeyboardButton(text="🏦 Сдать в банк", callback_data="wlt:to_bank")],
-        [InlineKeyboardButton(
-            text=f"◀️ {get_text('btn_back', lang)}",
-            callback_data="action:back_menu",
-        )],
     ]
+    if pending_count:
+        buttons.insert(0, [InlineKeyboardButton(
+            text=f"📥 Входящие ({pending_count})",
+            callback_data="wlt:pending_inbox",
+        )])
+    buttons.append([InlineKeyboardButton(
+        text=f"◀️ {get_text('btn_back', lang)}",
+        callback_data="action:back_menu",
+    )])
 
     await state.set_state(WalletStates.viewing)
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     await callback.answer()
+
+
+# ────────────────────────────────────────────────────────────────────────
+# PENDING INBOX — show incoming transfers
+# ────────────────────────────────────────────────────────────────────────
+
+
+@router.callback_query(F.data == "wlt:pending_inbox", WalletStates.viewing)
+async def on_pending_inbox(callback: types.CallbackQuery, state: FSMContext):
+    """Show list of pending incoming transfers."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(WalletTransaction).where(
+                WalletTransaction.receiver_telegram_id == callback.from_user.id,
+                WalletTransaction.status == WalletTransactionStatus.PENDING,
+            ).order_by(WalletTransaction.created_at.desc())
+        )
+        pending_txs = result.scalars().all()
+
+        # Get sender names
+        sender_ids = {tx.sender_telegram_id for tx in pending_txs}
+        if sender_ids:
+            users_result = await session.execute(
+                select(User).where(User.telegram_id.in_(sender_ids))
+            )
+            user_map = {u.telegram_id: u.full_name for u in users_result.scalars().all()}
+        else:
+            user_map = {}
+
+    if not pending_txs:
+        await callback.answer("Нет входящих переводов", show_alert=True)
+        return
+
+    text = "📥 <b>Входящие переводы</b>\n\n"
+    buttons = []
+    for tx in pending_txs:
+        sender_name = user_map.get(tx.sender_telegram_id, "?")
+        tx_label = WALLET_TRANSACTION_TYPE_LABELS.get(tx.transaction_type, tx.transaction_type.value)
+        note_text = f" — {tx.note}" if tx.note else ""
+        text += f"• {sender_name}: <b>{format_amount(tx.amount)} UZS</b> ({tx_label}){note_text}\n"
+        buttons.append([
+            InlineKeyboardButton(
+                text=f"✅ {sender_name} — {format_amount(tx.amount)}",
+                callback_data=f"wlt_accept:{tx.id}",
+            ),
+            InlineKeyboardButton(
+                text="❌",
+                callback_data=f"wlt_decline:{tx.id}",
+            ),
+        ])
+
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="action:wallet")])
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+# ────────────────────────────────────────────────────────────────────────
+# ACCEPT / DECLINE pending transfers
+# ────────────────────────────────────────────────────────────────────────
+
+
+@router.callback_query(F.data.startswith("wlt_accept:"))
+async def on_accept_transfer(callback: types.CallbackQuery, state: FSMContext):
+    """Receiver accepts a pending transfer."""
+    tx_id = int(callback.data.split(":")[1])
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(WalletTransaction).where(WalletTransaction.id == tx_id)
+        )
+        tx = result.scalar_one_or_none()
+
+        if not tx or tx.status != WalletTransactionStatus.PENDING:
+            await callback.answer("Этот перевод уже обработан", show_alert=True)
+            return
+
+        if tx.receiver_telegram_id != callback.from_user.id:
+            await callback.answer("Это не ваш перевод", show_alert=True)
+            return
+
+        tx.status = WalletTransactionStatus.COMPLETED
+        await session.commit()
+
+        # Get names for notification
+        sender_result = await session.execute(
+            select(User).where(User.telegram_id == tx.sender_telegram_id)
+        )
+        sender = sender_result.scalar_one_or_none()
+        receiver_result = await session.execute(
+            select(User).where(User.telegram_id == tx.receiver_telegram_id)
+        )
+        receiver = receiver_result.scalar_one_or_none()
+
+    sender_name = sender.full_name if sender else "?"
+    receiver_name = receiver.full_name if receiver else "?"
+    tx_label = WALLET_TRANSACTION_TYPE_LABELS.get(tx.transaction_type, tx.transaction_type.value)
+
+    # Notify sender
+    try:
+        await callback.bot.send_message(
+            tx.sender_telegram_id,
+            f"✅ <b>Перевод принят</b>\n\n"
+            f"Получатель {receiver_name} принял вашу инкассацию\n"
+            f"Сумма: {format_amount(tx.amount)} UZS",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"Failed to notify sender {tx.sender_telegram_id}: {e}")
+
+    # Notify owners
+    await notify_wallet_transfer(
+        callback.bot, sender_name, f"{tx_label} ✅",
+        receiver_name, float(tx.amount), tx.note,
+    )
+
+    await callback.answer("✅ Перевод принят!")
+
+    # Refresh inbox
+    await on_wallet(callback, state)
+
+
+@router.callback_query(F.data.startswith("wlt_decline:"))
+async def on_decline_transfer(callback: types.CallbackQuery, state: FSMContext):
+    """Receiver declines a pending transfer — money returns to sender."""
+    tx_id = int(callback.data.split(":")[1])
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(WalletTransaction).where(WalletTransaction.id == tx_id)
+        )
+        tx = result.scalar_one_or_none()
+
+        if not tx or tx.status != WalletTransactionStatus.PENDING:
+            await callback.answer("Этот перевод уже обработан", show_alert=True)
+            return
+
+        if tx.receiver_telegram_id != callback.from_user.id:
+            await callback.answer("Это не ваш перевод", show_alert=True)
+            return
+
+        tx.status = WalletTransactionStatus.CANCELLED
+        await session.commit()
+
+        # Get names
+        sender_result = await session.execute(
+            select(User).where(User.telegram_id == tx.sender_telegram_id)
+        )
+        sender = sender_result.scalar_one_or_none()
+        receiver_result = await session.execute(
+            select(User).where(User.telegram_id == tx.receiver_telegram_id)
+        )
+        receiver = receiver_result.scalar_one_or_none()
+
+    sender_name = sender.full_name if sender else "?"
+    receiver_name = receiver.full_name if receiver else "?"
+
+    # Notify sender that transfer was declined
+    try:
+        await callback.bot.send_message(
+            tx.sender_telegram_id,
+            f"❌ <b>Перевод отклонён</b>\n\n"
+            f"Получатель {receiver_name} отклонил инкассацию\n"
+            f"Сумма: {format_amount(tx.amount)} UZS\n\n"
+            f"Средства возвращены в ваш кошелёк.",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"Failed to notify sender {tx.sender_telegram_id}: {e}")
+
+    # Notify owners
+    tx_label = WALLET_TRANSACTION_TYPE_LABELS.get(tx.transaction_type, tx.transaction_type.value)
+    await notify_wallet_transfer(
+        callback.bot, sender_name, f"{tx_label} ❌ отклонён",
+        receiver_name, float(tx.amount), tx.note,
+    )
+
+    await callback.answer("❌ Перевод отклонён")
+
+    # Refresh inbox
+    await on_wallet(callback, state)
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -127,23 +349,23 @@ async def on_wallet(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "wlt:to_employee", WalletStates.viewing)
 async def on_transfer_employee(callback: types.CallbackQuery, state: FSMContext):
-    """Show admin users (Акбар, Шавкат) to transfer cash to."""
+    """Show users to transfer cash to (admins + owner)."""
     async with async_session() as session:
         result = await session.execute(
             select(User).where(
                 User.is_active == True,
-                User.role == UserRole.ADMIN,
+                User.role.in_([UserRole.ADMIN, UserRole.OWNER]),
                 User.telegram_id != callback.from_user.id,
             ).order_by(User.full_name)
         )
-        admins = result.scalars().all()
+        recipients = result.scalars().all()
 
-    if not admins:
+    if not recipients:
         await callback.answer("Нет доступных получателей", show_alert=True)
         return
 
     buttons = []
-    for u in admins:
+    for u in recipients:
         buttons.append([InlineKeyboardButton(
             text=u.full_name,
             callback_data=f"wlt_emp:{u.telegram_id}",
@@ -294,6 +516,9 @@ async def _show_confirmation(message: types.Message, state: FSMContext, edit: bo
     )
     if note:
         summary += f"Комментарий: {note}\n"
+
+    if tx_type == WalletTransactionType.TRANSFER_TO_EMPLOYEE:
+        summary += "\n⏳ Получатель должен будет подтвердить получение."
     summary += "\nВсё верно?"
 
     buttons = [
@@ -318,7 +543,11 @@ async def _show_confirmation(message: types.Message, state: FSMContext, edit: bo
 
 @router.callback_query(F.data == "wlt:confirm", WalletStates.confirming)
 async def on_confirm_transfer(callback: types.CallbackQuery, state: FSMContext):
-    """Save wallet transaction and notify admin."""
+    """Save wallet transaction.
+
+    - TRANSFER_TO_EMPLOYEE → PENDING (awaiting receiver acceptance)
+    - CASH_TO_BANK / TRANSFER_TO_SHAVKAT → COMPLETED immediately
+    """
     data = await state.get_data()
     tx_type = WalletTransactionType(data["transfer_type"])
     amount = Decimal(data["amount"])
@@ -329,20 +558,30 @@ async def on_confirm_transfer(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("❌ Недостаточно средств!", show_alert=True)
         return
 
+    # Determine status
+    needs_acceptance = tx_type in (
+        WalletTransactionType.TRANSFER_TO_EMPLOYEE,
+        WalletTransactionType.TRANSFER_TO_SHAVKAT,
+    )
+    status = WalletTransactionStatus.PENDING if needs_acceptance else WalletTransactionStatus.COMPLETED
+
     async with async_session() as session:
         tx = WalletTransaction(
             sender_telegram_id=data["sender_telegram_id"],
             receiver_telegram_id=data.get("receiver_telegram_id"),
             amount=amount,
             transaction_type=tx_type,
+            status=status,
             note=data.get("note") or None,
         )
         session.add(tx)
         await session.commit()
+        tx_id = tx.id
 
     await state.clear()
+    await callback.answer()
 
-    # Get sender name for notification
+    # Get sender name
     async with async_session() as session:
         result = await session.execute(
             select(User).where(User.telegram_id == data["sender_telegram_id"])
@@ -352,25 +591,70 @@ async def on_confirm_transfer(callback: types.CallbackQuery, state: FSMContext):
     sender_name = sender.full_name if sender else "?"
     tx_label = WALLET_TRANSACTION_TYPE_LABELS.get(tx_type, tx_type.value)
     receiver_name = data.get("receiver_name", "—")
-    note_text = f"\nКомментарий: {data['note']}" if data.get("note") else ""
 
-    # Notify all owners
-    await notify_wallet_transfer(
-        callback.bot, sender_name, tx_label, receiver_name,
-        float(amount), data.get("note"),
-    )
+    if needs_acceptance:
+        # Send accept/decline to receiver
+        receiver_tid = data.get("receiver_telegram_id")
+        if receiver_tid:
+            note_text = f"\n📝 {data['note']}" if data.get("note") else ""
+            try:
+                await callback.bot.send_message(
+                    receiver_tid,
+                    f"📥 <b>Входящий перевод</b>\n\n"
+                    f"👤 Отправитель: {sender_name}\n"
+                    f"💰 Сумма: <b>{format_amount(amount)} UZS</b>\n"
+                    f"📋 {tx_label}{note_text}\n\n"
+                    f"Подтвердите получение:",
+                    parse_mode="HTML",
+                    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="✅ Принять",
+                                callback_data=f"wlt_accept:{tx_id}",
+                            ),
+                            InlineKeyboardButton(
+                                text="❌ Отклонить",
+                                callback_data=f"wlt_decline:{tx_id}",
+                            ),
+                        ]
+                    ]),
+                )
+            except Exception as e:
+                logger.error(f"Failed to send acceptance request to {receiver_tid}: {e}")
 
-    # Return to main menu
-    if sender:
-        lang = sender.language.value.lower()
-        section = sender.active_section.value.lower()
-        section_name = get_text(f"section_{section}", lang)
-        await callback.message.edit_text(
-            f"✅ {tx_label}: {format_amount(amount)} UZS\n\n"
-            f"{get_text('main_menu', lang, section=section_name)}",
-            reply_markup=main_menu_keyboard(lang, current_section=section),
+        # Notify owners about pending transfer
+        await notify_wallet_transfer(
+            callback.bot, sender_name, f"{tx_label} ⏳",
+            receiver_name, float(amount), data.get("note"),
         )
-    await callback.answer()
+
+        # Show sender confirmation
+        if sender:
+            lang = sender.language.value.lower()
+            section = sender.active_section.value.lower()
+            section_name = get_text(f"section_{section}", lang)
+            await callback.message.edit_text(
+                f"⏳ {tx_label}: {format_amount(amount)} UZS\n"
+                f"Ожидает подтверждения от {receiver_name}\n\n"
+                f"{get_text('main_menu', lang, section=section_name)}",
+                reply_markup=main_menu_keyboard(lang, current_section=section),
+            )
+    else:
+        # Completed immediately (CASH_TO_BANK)
+        await notify_wallet_transfer(
+            callback.bot, sender_name, tx_label,
+            receiver_name, float(amount), data.get("note"),
+        )
+
+        if sender:
+            lang = sender.language.value.lower()
+            section = sender.active_section.value.lower()
+            section_name = get_text(f"section_{section}", lang)
+            await callback.message.edit_text(
+                f"✅ {tx_label}: {format_amount(amount)} UZS\n\n"
+                f"{get_text('main_menu', lang, section=section_name)}",
+                reply_markup=main_menu_keyboard(lang, current_section=section),
+            )
 
 
 # ────────────────────────────────────────────────────────────────────────

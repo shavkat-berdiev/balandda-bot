@@ -4,7 +4,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth import get_current_user, is_owner
@@ -13,6 +13,7 @@ from db.enums import (
     PaymentMethod,
     PAYMENT_METHOD_LABELS,
     WalletTransactionType,
+    WalletTransactionStatus,
     WALLET_TRANSACTION_TYPE_LABELS,
 )
 from db.models import IncomeEntry, StructuredReport, User, WalletTransaction
@@ -21,21 +22,32 @@ router = APIRouter()
 
 
 async def _calculate_balance(session: AsyncSession, telegram_id: int) -> float:
-    """Calculate cash wallet balance for a user."""
-    # Incoming: CASH_IN + transfers received
+    """Calculate cash wallet balance for a user.
+
+    PENDING outgoing deducts from sender (money is frozen).
+    Only COMPLETED incoming adds to receiver.
+    CANCELLED transactions are ignored entirely.
+    """
+    # Incoming: CASH_IN (COMPLETED) + COMPLETED transfers received
     incoming = await session.execute(
         select(func.coalesce(func.sum(WalletTransaction.amount), 0)).where(
             or_(
-                (WalletTransaction.sender_telegram_id == telegram_id) &
-                (WalletTransaction.transaction_type == WalletTransactionType.CASH_IN),
-                (WalletTransaction.receiver_telegram_id == telegram_id) &
-                (WalletTransaction.transaction_type == WalletTransactionType.TRANSFER_TO_EMPLOYEE),
+                and_(
+                    WalletTransaction.sender_telegram_id == telegram_id,
+                    WalletTransaction.transaction_type == WalletTransactionType.CASH_IN,
+                    WalletTransaction.status == WalletTransactionStatus.COMPLETED,
+                ),
+                and_(
+                    WalletTransaction.receiver_telegram_id == telegram_id,
+                    WalletTransaction.transaction_type == WalletTransactionType.TRANSFER_TO_EMPLOYEE,
+                    WalletTransaction.status == WalletTransactionStatus.COMPLETED,
+                ),
             )
         )
     )
     total_in = float(incoming.scalar())
 
-    # Outgoing: sent transfers, to Shavkat, to bank
+    # Outgoing: PENDING + COMPLETED sent transfers (frozen or gone)
     outgoing = await session.execute(
         select(func.coalesce(func.sum(WalletTransaction.amount), 0)).where(
             WalletTransaction.sender_telegram_id == telegram_id,
@@ -43,6 +55,10 @@ async def _calculate_balance(session: AsyncSession, telegram_id: int) -> float:
                 WalletTransactionType.TRANSFER_TO_EMPLOYEE,
                 WalletTransactionType.TRANSFER_TO_SHAVKAT,
                 WalletTransactionType.CASH_TO_BANK,
+            ]),
+            WalletTransaction.status.in_([
+                WalletTransactionStatus.PENDING,
+                WalletTransactionStatus.COMPLETED,
             ]),
         )
     )
@@ -212,6 +228,7 @@ async def list_transactions(
             "transaction_type_label": WALLET_TRANSACTION_TYPE_LABELS.get(
                 tx.transaction_type, tx.transaction_type.value
             ),
+            "status": tx.status.value if hasattr(tx, 'status') and tx.status else "COMPLETED",
             "note": tx.note,
             "business_unit": tx.business_unit.value if tx.business_unit else None,
             "created_at": tx.created_at.isoformat() if tx.created_at else None,

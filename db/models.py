@@ -44,6 +44,7 @@ from db.enums import (
     TransactionType,
     UserRole,
     WalletTransactionType,
+    WalletTransactionStatus,
     WALLET_TRANSACTION_TYPE_LABELS,
 )
 
@@ -343,6 +344,10 @@ class WalletTransaction(Base):
     receiver_telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, index=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(15, 2))
     transaction_type: Mapped[WalletTransactionType] = mapped_column(Enum(WalletTransactionType))
+    status: Mapped[WalletTransactionStatus] = mapped_column(
+        Enum(WalletTransactionStatus), default=WalletTransactionStatus.COMPLETED,
+        server_default="COMPLETED",
+    )
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     report_id: Mapped[int | None] = mapped_column(ForeignKey("structured_reports.id"), nullable=True)
     business_unit: Mapped[BusinessUnit | None] = mapped_column(Enum(BusinessUnit), nullable=True)

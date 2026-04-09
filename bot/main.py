@@ -184,6 +184,28 @@ async def run_migrations():
         WHERE (LOWER(full_name) LIKE '%shavkat%' OR LOWER(full_name) LIKE '%шавкат%')
           AND role = 'ADMIN';
         """,
+        # Added in v0.6.2: WalletTransactionStatus enum + status column
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'wallettransactionstatus') THEN
+                CREATE TYPE wallettransactionstatus AS ENUM ('PENDING', 'COMPLETED', 'CANCELLED');
+            END IF;
+        END $$;
+        """,
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'wallet_transactions'
+                  AND column_name = 'status'
+            ) THEN
+                ALTER TABLE wallet_transactions
+                ADD COLUMN status wallettransactionstatus NOT NULL DEFAULT 'COMPLETED';
+            END IF;
+        END $$;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:
