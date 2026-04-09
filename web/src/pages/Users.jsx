@@ -3,6 +3,7 @@ import { Plus, UserCheck, UserX, Check, X } from 'lucide-react';
 import { api } from '../api';
 
 const ROLES = [
+  { value: 'OWNER', label: 'Владелец' },
   { value: 'ADMIN', label: 'Администратор' },
   { value: 'RESORT_MANAGER', label: 'Менеджер курорта' },
   { value: 'RESTAURANT_MANAGER', label: 'Менеджер ресторана' },

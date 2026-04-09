@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.auth import get_current_user
+from api.auth import get_current_user, require_admin
 from db.database import get_session
 from db.enums import (
     RegistrationRequestStatus,
@@ -93,7 +93,9 @@ async def decide_request(
     user: dict = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Approve or reject a registration request."""
+    """Approve or reject a registration request. Admin/Owner only."""
+    require_admin(user)
+
     req = await session.get(RegistrationRequest, request_id)
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")

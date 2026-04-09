@@ -7,16 +7,21 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.auth import get_current_user
+from api.auth import get_current_user, is_owner
 from db.database import get_session
-from db.enums import WalletTransactionType, WALLET_TRANSACTION_TYPE_LABELS
-from db.models import User, WalletTransaction
+from db.enums import (
+    PaymentMethod,
+    PAYMENT_METHOD_LABELS,
+    WalletTransactionType,
+    WALLET_TRANSACTION_TYPE_LABELS,
+)
+from db.models import IncomeEntry, StructuredReport, User, WalletTransaction
 
 router = APIRouter()
 
 
 async def _calculate_balance(session: AsyncSession, telegram_id: int) -> float:
-    """Calculate wallet balance for a user."""
+    """Calculate cash wallet balance for a user."""
     # Incoming: CASH_IN + transfers received
     incoming = await session.execute(
         select(func.coalesce(func.sum(WalletTransaction.amount), 0)).where(
@@ -46,7 +51,7 @@ async def _calculate_balance(session: AsyncSession, telegram_id: int) -> float:
     return total_in - total_out
 
 
-# ── List all wallets (balances) ──
+# ── Cash wallets (per user) ──
 
 
 @router.get("/list")
@@ -54,7 +59,7 @@ async def list_wallets(
     user: dict = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """List all users with their current wallet balances."""
+    """List all users with their current cash wallet balances."""
     result = await session.execute(
         select(User).where(User.is_active == True).order_by(User.full_name)
     )
@@ -71,6 +76,65 @@ async def list_wallets(
         })
 
     return {"wallets": wallets}
+
+
+# ── Central payment-type wallets (owner only) ──
+
+
+@router.get("/central")
+async def central_wallets(
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
+    business_unit: Optional[str] = Query(None),
+    user: dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Get total income per payment method (central wallets). Owner only."""
+    if not is_owner(user):
+        return {"wallets": [], "restricted": True}
+
+    # Build filters
+    filters = []
+    if start_date:
+        filters.append(StructuredReport.report_date >= date.fromisoformat(start_date))
+    if end_date:
+        filters.append(StructuredReport.report_date <= date.fromisoformat(end_date))
+    if business_unit:
+        filters.append(StructuredReport.business_unit == business_unit)
+
+    query = (
+        select(
+            IncomeEntry.payment_method,
+            func.sum(IncomeEntry.amount).label("total"),
+            func.count(IncomeEntry.id).label("count"),
+        )
+        .join(StructuredReport, IncomeEntry.report_id == StructuredReport.id)
+        .group_by(IncomeEntry.payment_method)
+    )
+
+    if filters:
+        query = query.where(*filters)
+
+    result = await session.execute(query)
+    rows = result.all()
+
+    wallets = []
+    grand_total = 0
+    for row in rows:
+        pm = row.payment_method
+        total = float(row.total or 0)
+        grand_total += total
+        wallets.append({
+            "payment_method": pm.value if hasattr(pm, 'value') else str(pm),
+            "label": PAYMENT_METHOD_LABELS.get(pm, str(pm)),
+            "total": total,
+            "count": row.count,
+        })
+
+    # Sort by total descending
+    wallets.sort(key=lambda w: w["total"], reverse=True)
+
+    return {"wallets": wallets, "grand_total": grand_total}
 
 
 # ── Transaction history ──
@@ -168,7 +232,6 @@ async def get_balance(
     """Get wallet balance for a specific user."""
     balance = await _calculate_balance(session, telegram_id)
 
-    # Get user info
     result = await session.execute(
         select(User).where(User.telegram_id == telegram_id)
     )

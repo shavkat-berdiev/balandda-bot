@@ -8,6 +8,15 @@ const TX_TYPE_COLORS = {
   CASH_TO_BANK: { bg: 'bg-gray-100', text: 'text-gray-800' },
 };
 
+const PM_COLORS = {
+  CASH: { bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-800', icon: '💵' },
+  CARD_TRANSFER: { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-800', icon: '💳' },
+  TERMINAL_VISA: { bg: 'bg-indigo-50', border: 'border-indigo-200', text: 'text-indigo-800', icon: '🏧' },
+  TERMINAL_UZCARD: { bg: 'bg-purple-50', border: 'border-purple-200', text: 'text-purple-800', icon: '🏧' },
+  PAYME: { bg: 'bg-cyan-50', border: 'border-cyan-200', text: 'text-cyan-800', icon: '📱' },
+  PREPAYMENT: { bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-800', icon: '📋' },
+};
+
 function formatAmount(n) {
   return Number(n).toLocaleString('ru-RU').replace(/,/g, ' ');
 }
@@ -23,6 +32,9 @@ function formatDateTime(iso) {
 
 export default function Wallets() {
   const [wallets, setWallets] = useState([]);
+  const [centralWallets, setCentralWallets] = useState([]);
+  const [centralTotal, setCentralTotal] = useState(0);
+  const [centralRestricted, setCentralRestricted] = useState(false);
   const [transactions, setTransactions] = useState([]);
   const [loading, setLoading] = useState(true);
   const [txLoading, setTxLoading] = useState(false);
@@ -30,23 +42,29 @@ export default function Wallets() {
   const [filterType, setFilterType] = useState('');
 
   useEffect(() => {
-    loadWallets();
-    loadTransactions();
+    loadData();
   }, []);
 
   useEffect(() => {
     loadTransactions();
   }, [filterUser, filterType]);
 
-  async function loadWallets() {
+  async function loadData() {
     try {
-      const data = await api.getWalletsList();
-      setWallets(data.wallets || []);
+      const [walletData, centralData] = await Promise.all([
+        api.getWalletsList(),
+        api.getCentralWallets(),
+      ]);
+      setWallets(walletData.wallets || []);
+      setCentralWallets(centralData.wallets || []);
+      setCentralTotal(centralData.grand_total || 0);
+      setCentralRestricted(centralData.restricted || false);
     } catch (err) {
       console.error('Failed to load wallets:', err);
     } finally {
       setLoading(false);
     }
+    loadTransactions();
   }
 
   async function loadTransactions() {
@@ -76,48 +94,73 @@ export default function Wallets() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-900">Кошельки</h1>
-      </div>
+      <h1 className="text-2xl font-bold text-gray-900">Кошельки</h1>
 
-      {/* Summary card */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <div className="text-sm text-gray-500 mb-1">Общая касса (наличные на руках)</div>
-        <div className="text-3xl font-bold text-gray-900">{formatAmount(totalCash)} UZS</div>
-      </div>
-
-      {/* Wallet balances grid */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {wallets.map((w) => (
-          <div
-            key={w.telegram_id}
-            className={`bg-white rounded-xl shadow-sm border p-5 cursor-pointer transition hover:shadow-md ${
-              filterUser === String(w.telegram_id) ? 'border-blue-400 ring-2 ring-blue-100' : 'border-gray-200'
-            }`}
-            onClick={() => setFilterUser(
-              filterUser === String(w.telegram_id) ? '' : String(w.telegram_id)
-            )}
-          >
-            <div className="flex items-center gap-3 mb-3">
-              <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-semibold text-sm">
-                {w.full_name?.charAt(0) || '?'}
-              </div>
-              <div>
-                <div className="font-medium text-gray-900">{w.full_name}</div>
-                <div className="text-xs text-gray-500">{w.role}</div>
-              </div>
-            </div>
-            <div className={`text-xl font-bold ${w.balance >= 0 ? 'text-green-700' : 'text-red-600'}`}>
-              {formatAmount(w.balance)} UZS
-            </div>
+      {/* Central payment wallets (owner only) */}
+      {!centralRestricted && centralWallets.length > 0 && (
+        <div>
+          <h2 className="text-lg font-semibold text-gray-800 mb-3">Центральные кошельки</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-2">
+            {centralWallets.map((w) => {
+              const colors = PM_COLORS[w.payment_method] || PM_COLORS.CASH;
+              return (
+                <div key={w.payment_method} className={`rounded-xl border ${colors.border} ${colors.bg} p-5`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xl">{colors.icon}</span>
+                    <span className={`font-medium ${colors.text}`}>{w.label}</span>
+                  </div>
+                  <div className="text-2xl font-bold text-gray-900">{formatAmount(w.total)} UZS</div>
+                  <div className="text-xs text-gray-500 mt-1">{w.count} операций</div>
+                </div>
+              );
+            })}
           </div>
-        ))}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 flex items-center justify-between">
+            <span className="text-sm text-gray-500">Общий оборот</span>
+            <span className="text-xl font-bold text-gray-900">{formatAmount(centralTotal)} UZS</span>
+          </div>
+        </div>
+      )}
+
+      {/* Cash wallets per user */}
+      <div>
+        <h2 className="text-lg font-semibold text-gray-800 mb-3">Касса (наличные по сотрудникам)</h2>
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 mb-4 flex items-center justify-between">
+          <span className="text-sm text-gray-500">Итого наличных на руках</span>
+          <span className="text-xl font-bold text-gray-900">{formatAmount(totalCash)} UZS</span>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {wallets.map((w) => (
+            <div
+              key={w.telegram_id}
+              className={`bg-white rounded-xl shadow-sm border p-5 cursor-pointer transition hover:shadow-md ${
+                filterUser === String(w.telegram_id) ? 'border-blue-400 ring-2 ring-blue-100' : 'border-gray-200'
+              }`}
+              onClick={() => setFilterUser(
+                filterUser === String(w.telegram_id) ? '' : String(w.telegram_id)
+              )}
+            >
+              <div className="flex items-center gap-3 mb-3">
+                <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-semibold text-sm">
+                  {w.full_name?.charAt(0) || '?'}
+                </div>
+                <div>
+                  <div className="font-medium text-gray-900">{w.full_name}</div>
+                  <div className="text-xs text-gray-500">{w.role}</div>
+                </div>
+              </div>
+              <div className={`text-xl font-bold ${w.balance >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                {formatAmount(w.balance)} UZS
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Transaction history */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
         <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between flex-wrap gap-3">
-          <h2 className="text-lg font-semibold text-gray-900">История операций</h2>
+          <h2 className="text-lg font-semibold text-gray-900">История операций (касса)</h2>
           <div className="flex gap-2">
             <select
               value={filterType}

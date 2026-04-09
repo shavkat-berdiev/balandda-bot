@@ -55,7 +55,7 @@ export default function App() {
   return (
     <Layout user={user} onLogout={handleLogout}>
       <Routes>
-        <Route path="/" element={<Dashboard />} />
+        <Route path="/" element={<Dashboard user={user} />} />
         <Route path="/categories" element={<Categories />} />
         <Route path="/users" element={<Users />} />
         <Route path="/transactions" element={<Transactions />} />
@@ -64,7 +64,7 @@ export default function App() {
         <Route path="/admin/services" element={<AdminServices />} />
         <Route path="/admin/minibar" element={<AdminMinibar />} />
         <Route path="/admin/staff" element={<AdminStaff />} />
-        <Route path="/admin/reports" element={<AdminReports />} />
+        <Route path="/admin/reports" element={<AdminReports user={user} />} />
         <Route path="/prepayments" element={<Prepayments />} />
         <Route path="/wallets" element={<Wallets />} />
         <Route path="/registration" element={<RegistrationRequests />} />

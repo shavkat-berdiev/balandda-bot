@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.auth import get_current_user
+from api.auth import get_current_user, require_admin
 from db.database import get_session
 from db.models import BusinessUnit, Language, User, UserRole
 
@@ -43,8 +43,7 @@ async def list_users(
     user: dict = Depends(get_current_user),
 ):
     """List all users (admin only)."""
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
+    require_admin(user)
 
     result = await session.execute(select(User).order_by(User.created_at))
     users = result.scalars().all()
@@ -70,8 +69,7 @@ async def create_user(
     user: dict = Depends(get_current_user),
 ):
     """Add a new manager user (admin only)."""
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
+    require_admin(user)
 
     # Check if telegram_id already exists
     result = await session.execute(
@@ -111,8 +109,7 @@ async def update_user(
     user: dict = Depends(get_current_user),
 ):
     """Update a user's role or status (admin only)."""
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
+    require_admin(user)
 
     result = await session.execute(select(User).where(User.id == user_id))
     target = result.scalar_one_or_none()

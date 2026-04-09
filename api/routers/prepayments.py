@@ -9,7 +9,7 @@ from sqlalchemy import select, func, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from api.auth import get_current_user
+from api.auth import get_current_user, require_admin
 from db.database import get_session
 from db.enums import PrepaymentStatus, PREPAYMENT_STATUS_LABELS, PaymentMethod, PAYMENT_METHOD_LABELS
 from db.models import Prepayment, Property
@@ -96,8 +96,7 @@ async def update_prepayment_status(
     session: AsyncSession = Depends(get_session),
 ):
     """Update prepayment status (admin only)."""
-    if user.get("role") not in ("ADMIN", "admin"):
-        raise HTTPException(403, "Admin access required")
+    require_admin(user)
 
     result = await session.execute(
         select(Prepayment).where(Prepayment.id == prepayment_id)

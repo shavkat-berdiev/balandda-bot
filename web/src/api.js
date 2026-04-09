@@ -57,13 +57,13 @@ export const api = {
 
   // Analytics Dashboard
   getDailyReports: (from, to) =>
-    request(`/daily-reports/list?from_date=${from}&to_date=${to}`),
+    request(`/daily-reports/list?start_date=${from}&end_date=${to}`),
   getReportDetail: (id) =>
     request(`/daily-reports/detail/${id}`),
   getBreakdown: (from, to) =>
-    request(`/daily-reports/breakdown?from_date=${from}&to_date=${to}`),
+    request(`/daily-reports/breakdown?start_date=${from}&end_date=${to}`),
   getStructuredReports: (from, to) =>
-    request(`/structured-reports/list?from_date=${from}&to_date=${to}`),
+    request(`/structured-reports/list?start_date=${from}&end_date=${to}`),
   getProperties: () =>
     request('/properties'),
   getHealth: () =>
@@ -114,6 +114,13 @@ export const api = {
     if (params.limit) sp.set('limit', params.limit);
     return request(`/structured/transactions?${sp}`);
   },
+  // Report editing (owner only)
+  updateReport: (id, data) => request(`/structured/report/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  updateIncomeEntry: (id, data) => request(`/structured/income-entry/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  updateExpenseEntry: (id, data) => request(`/structured/expense-entry/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteIncomeEntry: (id) => request(`/structured/income-entry/${id}`, { method: 'DELETE' }),
+  deleteExpenseEntry: (id) => request(`/structured/expense-entry/${id}`, { method: 'DELETE' }),
+
   getStructuredBreakdown: (unit, from, to) => {
     const params = new URLSearchParams({ business_unit: unit });
     if (from) params.set('start_date', from);
@@ -150,6 +157,13 @@ export const api = {
     return request(`/wallets/transactions?${sp}`);
   },
   getWalletBalance: (telegramId) => request(`/wallets/balance/${telegramId}`),
+  getCentralWallets: (params = {}) => {
+    const sp = new URLSearchParams();
+    if (params.start_date) sp.set('start_date', params.start_date);
+    if (params.end_date) sp.set('end_date', params.end_date);
+    if (params.business_unit) sp.set('business_unit', params.business_unit);
+    return request(`/wallets/central?${sp}`);
+  },
 
   // Registration requests
   getRegistrationRequests: (params = {}) => {

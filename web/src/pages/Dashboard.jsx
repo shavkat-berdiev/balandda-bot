@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { TrendingUp, TrendingDown, DollarSign, ArrowUpDown, Calendar, FileText } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, ArrowUpDown, Calendar, FileText, Wallet } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Legend, Area, AreaChart,
@@ -35,7 +35,25 @@ const PRESETS = [
   { key: '90d', label: '90 дней', from: () => daysAgo(90), to: () => today() },
 ];
 
-export default function Dashboard() {
+const WALLET_ICONS = {
+  CASH: '💵',
+  CARD_TRANSFER: '💳',
+  TERMINAL_VISA: '🏧',
+  TERMINAL_UZCARD: '🏧',
+  PAYME: '📱',
+  PREPAYMENT: '📋',
+};
+
+const WALLET_COLORS = {
+  CASH: 'border-green-200 bg-green-50',
+  CARD_TRANSFER: 'border-blue-200 bg-blue-50',
+  TERMINAL_VISA: 'border-indigo-200 bg-indigo-50',
+  TERMINAL_UZCARD: 'border-purple-200 bg-purple-50',
+  PAYME: 'border-cyan-200 bg-cyan-50',
+  PREPAYMENT: 'border-yellow-200 bg-yellow-50',
+};
+
+export default function Dashboard({ user }) {
   const [section, setSection] = useState('RESORT');
   const [activePreset, setActivePreset] = useState('7d');
   const [dateFrom, setDateFrom] = useState(daysAgo(7));
@@ -47,6 +65,12 @@ export default function Dashboard() {
   const [trend7, setTrend7] = useState([]);
   const [trend30, setTrend30] = useState([]);
 
+  // Wallet data (owner only)
+  const [centralWallets, setCentralWallets] = useState([]);
+  const [centralTotal, setCentralTotal] = useState(0);
+  const [cashWallets, setCashWallets] = useState([]);
+  const isOwner = user?.role?.toUpperCase() === 'OWNER';
+
   useEffect(() => {
     loadData();
   }, [section, dateFrom, dateTo]);
@@ -55,6 +79,11 @@ export default function Dashboard() {
   useEffect(() => {
     loadTrends();
   }, [section]);
+
+  // Load wallet data for owner
+  useEffect(() => {
+    if (isOwner) loadWallets();
+  }, [isOwner, section]);
 
   async function loadData() {
     setLoading(true);
@@ -65,6 +94,20 @@ export default function Dashboard() {
       console.error('Failed to load dashboard:', err);
     }
     setLoading(false);
+  }
+
+  async function loadWallets() {
+    try {
+      const [central, cash] = await Promise.all([
+        api.getCentralWallets({ business_unit: section }),
+        api.getWalletsList(),
+      ]);
+      setCentralWallets(central.wallets || []);
+      setCentralTotal(central.grand_total || 0);
+      setCashWallets(cash.wallets || []);
+    } catch (err) {
+      console.error('Failed to load wallets:', err);
+    }
   }
 
   async function loadTrends() {
@@ -273,6 +316,62 @@ export default function Dashboard() {
                   <Bar dataKey="value" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
                 </BarChart>
               </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Wallet stats (owner only) */}
+          {isOwner && centralWallets.length > 0 && (
+            <div className="mb-6">
+              <div className="flex items-center gap-2 mb-4">
+                <Wallet size={20} className="text-gray-600" />
+                <h2 className="text-lg font-semibold text-gray-800">Кошельки</h2>
+              </div>
+
+              {/* Central payment wallets */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 mb-3">
+                {centralWallets.map((w) => (
+                  <div key={w.payment_method}
+                    className={`rounded-xl border p-4 ${WALLET_COLORS[w.payment_method] || 'border-gray-200 bg-gray-50'}`}>
+                    <div className="flex items-center gap-1.5 mb-1.5">
+                      <span className="text-lg">{WALLET_ICONS[w.payment_method] || '💰'}</span>
+                      <span className="text-xs font-medium text-gray-600 truncate">{w.label}</span>
+                    </div>
+                    <div className="text-sm font-bold text-gray-900">{formatUZS(w.total)}</div>
+                    <div className="text-xs text-gray-500">{w.count} оп.</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Grand total */}
+              <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between mb-4">
+                <span className="text-sm text-gray-500">Общий оборот ({section === 'RESORT' ? 'Курорт' : 'Ресторан'})</span>
+                <span className="text-lg font-bold text-gray-900">{formatUZS(centralTotal)}</span>
+              </div>
+
+              {/* Cash wallets per user */}
+              {cashWallets.length > 0 && (
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-700 mb-2">Касса (наличные на руках)</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                    {cashWallets.map((w) => (
+                      <div key={w.telegram_id} className="bg-white rounded-xl border border-gray-200 p-4">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-semibold text-xs">
+                            {w.full_name?.charAt(0) || '?'}
+                          </div>
+                          <div className="text-xs">
+                            <div className="font-medium text-gray-900 truncate">{w.full_name}</div>
+                            <div className="text-gray-500">{w.role}</div>
+                          </div>
+                        </div>
+                        <div className={`text-sm font-bold ${w.balance >= 0 ? 'text-green-700' : 'text-red-600'}`}>
+                          {formatUZS(w.balance)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </>

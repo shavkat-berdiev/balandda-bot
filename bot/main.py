@@ -165,6 +165,25 @@ async def run_migrations():
         """
         CREATE INDEX IF NOT EXISTS ix_registration_requests_tid ON registration_requests (telegram_id);
         """,
+        # Added in v0.6: OWNER role
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_enum
+                WHERE enumlabel = 'OWNER'
+                  AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'userrole')
+            ) THEN
+                ALTER TYPE userrole ADD VALUE 'OWNER' BEFORE 'ADMIN';
+            END IF;
+        END $$;
+        """,
+        # Set Shavkat as OWNER (by name pattern)
+        """
+        UPDATE users SET role = 'OWNER'
+        WHERE (LOWER(full_name) LIKE '%shavkat%' OR LOWER(full_name) LIKE '%шавкат%')
+          AND role = 'ADMIN';
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:

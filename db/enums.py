@@ -14,6 +14,7 @@ class TransactionType(str, enum.Enum):
 
 
 class UserRole(str, enum.Enum):
+    OWNER = "OWNER"
     ADMIN = "ADMIN"
     RESORT_MANAGER = "RESORT_MANAGER"
     RESTAURANT_MANAGER = "RESTAURANT_MANAGER"

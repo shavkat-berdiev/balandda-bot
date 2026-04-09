@@ -88,3 +88,26 @@ async def get_current_user(
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
     return payload
+
+
+def is_admin(user: dict) -> bool:
+    """Check if user has admin or owner role (case-insensitive)."""
+    role = (user.get("role") or "").upper()
+    return role in ("ADMIN", "OWNER")
+
+
+def is_owner(user: dict) -> bool:
+    """Check if user has owner (superuser) role."""
+    return (user.get("role") or "").upper() == "OWNER"
+
+
+def require_admin(user: dict):
+    """Raise 403 if not admin/owner."""
+    if not is_admin(user):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+
+def require_owner(user: dict):
+    """Raise 403 if not owner."""
+    if not is_owner(user):
+        raise HTTPException(status_code=403, detail="Owner access required")

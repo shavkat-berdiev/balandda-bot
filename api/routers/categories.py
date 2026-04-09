@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.auth import get_current_user
+from api.auth import get_current_user, require_admin
 from db.database import get_session
 from db.models import BusinessUnit, Category, TransactionType
 
@@ -63,8 +63,7 @@ async def create_category(
     user: dict = Depends(get_current_user),
 ):
     """Create a new category (admin only)."""
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
+    require_admin(user)
 
     category = Category(**data.model_dump())
     session.add(category)
@@ -81,8 +80,7 @@ async def update_category(
     user: dict = Depends(get_current_user),
 ):
     """Update a category (admin only)."""
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
+    require_admin(user)
 
     result = await session.execute(select(Category).where(Category.id == category_id))
     category = result.scalar_one_or_none()
@@ -104,8 +102,7 @@ async def delete_category(
     user: dict = Depends(get_current_user),
 ):
     """Deactivate a category (admin only). Doesn't delete to preserve history."""
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
+    require_admin(user)
 
     result = await session.execute(select(Category).where(Category.id == category_id))
     category = result.scalar_one_or_none()

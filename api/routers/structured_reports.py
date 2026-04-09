@@ -9,12 +9,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from api.auth import get_current_user
+from api.auth import get_current_user, require_owner
 from db.database import get_session
 from db.enums import (
     DISCOUNT_REASON_LABELS,
     EXPENSE_CATEGORY_LABELS,
+    ExpenseCategory,
     PAYMENT_METHOD_LABELS,
+    PaymentMethod,
     PROPERTY_TYPE_LABELS,
     SERVICE_TYPE_LABELS,
 )
@@ -665,3 +667,194 @@ async def structured_dashboard(
         "by_service": dict_to_chart(by_service),
         "daily_totals": sorted(daily_data.values(), key=lambda x: x["date"]),
     }
+
+
+# ── Report editing endpoints (owner only) ─────────────────────────
+
+
+class ReportUpdateRequest(BaseModel):
+    report_date: Optional[date] = None
+    business_unit: Optional[str] = None
+    note: Optional[str] = None
+
+
+class IncomeEntryUpdateRequest(BaseModel):
+    amount: Optional[float] = None
+    payment_method: Optional[str] = None
+    quantity: Optional[int] = None
+    num_days: Optional[int] = None
+    note: Optional[str] = None
+
+
+class ExpenseEntryUpdateRequest(BaseModel):
+    amount: Optional[float] = None
+    expense_category: Optional[str] = None
+    description: Optional[str] = None
+    note: Optional[str] = None
+
+
+@router.put("/report/{report_id}")
+async def update_report(
+    report_id: int,
+    body: ReportUpdateRequest,
+    user: dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Edit report metadata (date, business unit, note). Owner only."""
+    require_owner(user)
+
+    result = await session.execute(
+        select(StructuredReport).where(StructuredReport.id == report_id)
+    )
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    if body.report_date is not None:
+        report.report_date = body.report_date
+    if body.business_unit is not None:
+        try:
+            report.business_unit = BusinessUnit(body.business_unit)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid business_unit: {body.business_unit}")
+    if body.note is not None:
+        report.note = body.note
+
+    await session.commit()
+    return {"ok": True, "id": report.id}
+
+
+@router.put("/income-entry/{entry_id}")
+async def update_income_entry(
+    entry_id: int,
+    body: IncomeEntryUpdateRequest,
+    user: dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Edit an income entry. Owner only. Recalculates report total."""
+    require_owner(user)
+
+    result = await session.execute(
+        select(IncomeEntry).where(IncomeEntry.id == entry_id)
+    )
+    entry = result.scalar_one_or_none()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Income entry not found")
+
+    old_amount = float(entry.amount)
+
+    if body.amount is not None:
+        entry.amount = body.amount
+    if body.payment_method is not None:
+        try:
+            entry.payment_method = PaymentMethod(body.payment_method)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid payment_method: {body.payment_method}")
+    if body.quantity is not None:
+        entry.quantity = body.quantity
+    if body.num_days is not None:
+        entry.num_days = body.num_days
+    if body.note is not None:
+        entry.note = body.note
+
+    # Recalculate report total
+    new_amount = float(entry.amount)
+    report = await session.get(StructuredReport, entry.report_id)
+    if report:
+        report.total_income = float(report.total_income or 0) - old_amount + new_amount
+
+    await session.commit()
+    return {"ok": True, "id": entry.id, "report_id": entry.report_id}
+
+
+@router.put("/expense-entry/{entry_id}")
+async def update_expense_entry(
+    entry_id: int,
+    body: ExpenseEntryUpdateRequest,
+    user: dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Edit an expense entry. Owner only. Recalculates report total."""
+    require_owner(user)
+
+    result = await session.execute(
+        select(ExpenseEntry).where(ExpenseEntry.id == entry_id)
+    )
+    entry = result.scalar_one_or_none()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Expense entry not found")
+
+    old_amount = float(entry.amount)
+
+    if body.amount is not None:
+        entry.amount = body.amount
+    if body.expense_category is not None:
+        try:
+            entry.expense_category = ExpenseCategory(body.expense_category)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid expense_category: {body.expense_category}")
+    if body.description is not None:
+        entry.description = body.description
+    if body.note is not None:
+        entry.note = body.note
+
+    # Recalculate report total
+    new_amount = float(entry.amount)
+    report = await session.get(StructuredReport, entry.report_id)
+    if report:
+        report.total_expense = float(report.total_expense or 0) - old_amount + new_amount
+
+    await session.commit()
+    return {"ok": True, "id": entry.id, "report_id": entry.report_id}
+
+
+@router.delete("/income-entry/{entry_id}")
+async def delete_income_entry(
+    entry_id: int,
+    user: dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete an income entry. Owner only. Recalculates report total."""
+    require_owner(user)
+
+    result = await session.execute(
+        select(IncomeEntry).where(IncomeEntry.id == entry_id)
+    )
+    entry = result.scalar_one_or_none()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Income entry not found")
+
+    # Update report total
+    report = await session.get(StructuredReport, entry.report_id)
+    if report:
+        report.total_income = float(report.total_income or 0) - float(entry.amount)
+
+    await session.delete(entry)
+    await session.commit()
+    return {"ok": True, "report_id": report.id if report else None}
+
+
+@router.delete("/expense-entry/{entry_id}")
+async def delete_expense_entry(
+    entry_id: int,
+    user: dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Delete an expense entry. Owner only. Recalculates report total."""
+    require_owner(user)
+
+    result = await session.execute(
+        select(ExpenseEntry).where(ExpenseEntry.id == entry_id)
+    )
+    entry = result.scalar_one_or_none()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Expense entry not found")
+
+    # Update report total
+    report = await session.get(StructuredReport, entry.report_id)
+    if report:
+        report.total_expense = float(report.total_expense or 0) - float(entry.amount)
+
+    await session.delete(entry)
+    await session.commit()
+    return {"ok": True, "report_id": report.id if report else None}

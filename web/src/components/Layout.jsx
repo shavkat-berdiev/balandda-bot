@@ -25,6 +25,8 @@ export default function Layout({ user, onLogout, children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const roleLabels = {
+    owner: 'Owner',
+    OWNER: 'Владелец',
     admin: 'Administrator',
     ADMIN: 'Администратор',
     resort_manager: 'Resort Manager',
