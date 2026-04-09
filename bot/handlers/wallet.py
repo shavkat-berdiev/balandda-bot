@@ -16,9 +16,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select, func, case, or_
 
-from bot.config import settings
 from bot.keyboards.main import main_menu_keyboard
 from bot.locales import get_text
+from bot.notifications import notify_wallet_transfer
 from db.database import async_session
 from db.enums import UserRole, WalletTransactionType, WALLET_TRANSACTION_TYPE_LABELS
 from db.models import User, WalletTransaction
@@ -78,14 +78,6 @@ async def get_wallet_balance(telegram_id: int) -> Decimal:
 
     return total_in - total_out
 
-
-async def _notify_admin(bot: Bot, text: str):
-    """Send notification to admin."""
-    if settings.admin_user_id:
-        try:
-            await bot.send_message(settings.admin_user_id, text)
-        except Exception as e:
-            logger.error(f"Failed to notify admin: {e}")
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -362,15 +354,11 @@ async def on_confirm_transfer(callback: types.CallbackQuery, state: FSMContext):
     receiver_name = data.get("receiver_name", "—")
     note_text = f"\nКомментарий: {data['note']}" if data.get("note") else ""
 
-    # Notify admin
-    admin_text = (
-        f"💰 <b>Операция кошелька</b>\n\n"
-        f"Отправитель: {sender_name}\n"
-        f"Операция: {tx_label}\n"
-        f"Получатель: {receiver_name}\n"
-        f"Сумма: {format_amount(amount)} UZS{note_text}"
+    # Notify all owners
+    await notify_wallet_transfer(
+        callback.bot, sender_name, tx_label, receiver_name,
+        float(amount), data.get("note"),
     )
-    await _notify_admin(callback.bot, admin_text)
 
     # Return to main menu
     if sender:

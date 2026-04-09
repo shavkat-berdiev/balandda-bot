@@ -23,6 +23,7 @@ from sqlalchemy import and_, select
 
 from bot.keyboards.main import main_menu_keyboard
 from bot.locales import get_text
+from bot.notifications import notify_income_entry, notify_report_submitted
 from db.database import async_session
 from db.enums import (
     BusinessUnit,
@@ -798,6 +799,18 @@ async def on_accommodation_confirm(callback: types.CallbackQuery, state: FSMCont
 
         await session.commit()
 
+    # Notify owner about new entry
+    user = await get_user(callback.from_user.id)
+    pm_label = PAYMENT_METHOD_LABELS.get(PaymentMethod(data["payment_method"]), data["payment_method"])
+    await notify_income_entry(
+        callback.bot,
+        user_name=user.full_name if user else "?",
+        entry_name=data.get("property_name", "Проживание"),
+        amount=float(data["amount"]),
+        payment_label=pm_label,
+        business_unit=data.get("business_unit", "RESORT"),
+    )
+
     # Clear entry data
     await state.update_data(
         current_property=None,
@@ -976,6 +989,19 @@ async def on_restaurant_income_confirm(callback: types.CallbackQuery, state: FSM
 
         await session.commit()
 
+    # Notify owner
+    user = await get_user(callback.from_user.id)
+    cat_label = RESTAURANT_INCOME_LABELS.get(RestaurantIncomeCategory(data["restaurant_category"]), data["restaurant_category"])
+    pm_label = PAYMENT_METHOD_LABELS.get(PaymentMethod(data["payment_method"]), data["payment_method"])
+    await notify_income_entry(
+        callback.bot,
+        user_name=user.full_name if user else "?",
+        entry_name=f"Ресторан: {cat_label}",
+        amount=float(data["amount"]),
+        payment_label=pm_label,
+        business_unit=data.get("business_unit", "RESTAURANT"),
+    )
+
     # Clear entry data
     await state.update_data(
         restaurant_category=None, restaurant_category_label=None,
@@ -1141,6 +1167,18 @@ async def on_service_confirm(callback: types.CallbackQuery, state: FSMContext):
             )
 
         await session.commit()
+
+    # Notify owner
+    user = await get_user(callback.from_user.id)
+    pm_label = PAYMENT_METHOD_LABELS.get(PaymentMethod(data["payment_method"]), data["payment_method"])
+    await notify_income_entry(
+        callback.bot,
+        user_name=user.full_name if user else "?",
+        entry_name=f"Услуга: {data.get('service_name', '?')}",
+        amount=float(data["amount"]),
+        payment_label=pm_label,
+        business_unit=data.get("business_unit", "RESORT"),
+    )
 
     await state.update_data(current_service=None)
     await state.set_state(NewReportStates.choosing_action)
@@ -1370,6 +1408,18 @@ async def on_minibar_confirm(callback: types.CallbackQuery, state: FSMContext):
 
         await session.commit()
 
+    # Notify owner
+    user = await get_user(callback.from_user.id)
+    pm_label = PAYMENT_METHOD_LABELS.get(PaymentMethod(data["payment_method"]), data["payment_method"])
+    await notify_income_entry(
+        callback.bot,
+        user_name=user.full_name if user else "?",
+        entry_name=f"Мини-бар: {data.get('minibar_name', '?')}",
+        amount=float(data["amount"]),
+        payment_label=pm_label,
+        business_unit=data.get("business_unit", "RESORT"),
+    )
+
     await state.update_data(current_minibar=None, quantity=None)
     await state.set_state(NewReportStates.choosing_action)
     keyboard = await build_report_action_menu(lang, business_unit=data.get("business_unit", "RESORT"))
@@ -1482,10 +1532,28 @@ async def on_finalize(callback: types.CallbackQuery, state: FSMContext):
     lang = data.get("lang", "ru")
     report_id = data["report_id"]
 
+    report_data = {}
     async with async_session() as session:
-        report = await session.get(StructuredReport, report_id)
+        from sqlalchemy.orm import selectinload
+        result = await session.execute(
+            select(StructuredReport)
+            .where(StructuredReport.id == report_id)
+            .options(
+                selectinload(StructuredReport.income_entries),
+                selectinload(StructuredReport.expense_entries),
+            )
+        )
+        report = result.scalar_one_or_none()
         if report:
             report.status = ReportStatusEnum.SUBMITTED
+            report_data = {
+                "date": report.report_date.strftime("%d.%m.%Y"),
+                "bu": report.business_unit.value,
+                "income": float(report.total_income or 0),
+                "expense": float(report.total_expense or 0),
+                "inc_count": len(report.income_entries),
+                "exp_count": len(report.expense_entries),
+            }
             await session.merge(report)
             await session.commit()
 
@@ -1499,6 +1567,19 @@ async def on_finalize(callback: types.CallbackQuery, state: FSMContext):
             f"✅ Отчёт отправлен!\n\n{get_text('main_menu', lang, section=section_name)}",
             reply_markup=main_menu_keyboard(lang, current_section=user.active_section.value.lower()),
         )
+
+        # Notify owner
+        if report_data:
+            await notify_report_submitted(
+                callback.bot,
+                user_name=user.full_name,
+                report_date=report_data["date"],
+                business_unit=report_data["bu"],
+                total_income=report_data["income"],
+                total_expense=report_data["expense"],
+                income_count=report_data["inc_count"],
+                expense_count=report_data["exp_count"],
+            )
     await callback.answer()
 
 

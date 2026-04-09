@@ -19,6 +19,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import select
 
 from bot.locales import get_text
+from bot.notifications import notify_expense_entry
 from db.database import async_session
 from db.enums import (
     ExpenseCategory,
@@ -336,6 +337,18 @@ async def on_confirm_expense(callback: types.CallbackQuery, state: FSMContext):
             await session.merge(report)
 
         await session.commit()
+
+    # Notify owner
+    user = await get_user(callback.from_user.id)
+    cat_label = EXPENSE_CATEGORY_LABELS.get(ExpenseCategory(data["expense_category"]), data["expense_category"])
+    await notify_expense_entry(
+        callback.bot,
+        user_name=user.full_name if user else "?",
+        category_label=cat_label,
+        amount=float(data["amount"]),
+        description=data.get("description", ""),
+        business_unit=data.get("business_unit", "RESORT"),
+    )
 
     await callback.answer("✅ Расход добавлен")
 

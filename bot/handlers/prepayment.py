@@ -25,6 +25,7 @@ from sqlalchemy import select
 
 from bot.keyboards.main import main_menu_keyboard
 from bot.locales import get_text
+from bot.notifications import notify_prepayment_created
 from db.database import async_session
 from db.enums import PaymentMethod, PAYMENT_METHOD_LABELS, PrepaymentStatus
 from db.models import (
@@ -626,6 +627,19 @@ async def on_prepay_confirm(callback: types.CallbackQuery, state: FSMContext):
         f"{get_text('main_menu', lang, section=section_name)}",
         reply_markup=main_menu_keyboard(lang, current_section=section),
     )
+
+    # Notify owner
+    await notify_prepayment_created(
+        callback.bot,
+        operator_name=user.full_name if user else "?",
+        guest_name=data['guest_name'],
+        property_name=data.get('property_name', '?'),
+        check_in=checkin.strftime('%d.%m'),
+        check_out=checkout.strftime('%d.%m'),
+        amount=float(data['amount']),
+        payment_method=data.get('payment_method', '?'),
+    )
+
     await callback.answer()
 
 
