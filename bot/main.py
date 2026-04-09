@@ -209,6 +209,47 @@ async def run_migrations():
             END IF;
         END $$;
         """,
+        # Added in v0.7: PURCHASER role
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_enum
+                WHERE enumlabel = 'PURCHASER'
+                  AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'userrole')
+            ) THEN
+                ALTER TYPE userrole ADD VALUE 'PURCHASER';
+            END IF;
+        END $$;
+        """,
+        # Added in v0.7: PURCHASE wallet transaction type
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_enum
+                WHERE enumlabel = 'PURCHASE'
+                  AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'wallettransactiontype')
+            ) THEN
+                ALTER TYPE wallettransactiontype ADD VALUE 'PURCHASE';
+            END IF;
+        END $$;
+        """,
+        # Added in v0.7: PurchaseCategory enum
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'purchasecategory') THEN
+                CREATE TYPE purchasecategory AS ENUM (
+                    'VEGETABLES_FRUITS', 'MEAT_PRODUCTS', 'DAIRY_CHEESE',
+                    'CONSTRUCTION_MATERIALS', 'HOUSEHOLD_SUPPLIES_REST', 'POOL_SUPPLIES_REST',
+                    'OTHER_RESTAURANT',
+                    'CLEANING_SUPPLIES', 'HOUSEHOLD_SUPPLIES', 'POOL_SUPPLIES',
+                    'EQUIPMENT', 'SAUNA_PARTS', 'TABLEWARE', 'OTHER_RESORT'
+                );
+            END IF;
+        END $$;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in enum_additions:
@@ -222,6 +263,35 @@ async def run_migrations():
         UPDATE users SET role = 'OWNER'
         WHERE (LOWER(full_name) LIKE '%shavkat%' OR LOWER(full_name) LIKE '%шавкат%')
           AND role = 'ADMIN';
+        """,
+        # Added in v0.7: purchase_reports table
+        """
+        CREATE TABLE IF NOT EXISTS purchase_reports (
+            id SERIAL PRIMARY KEY,
+            user_telegram_id BIGINT NOT NULL,
+            report_date DATE NOT NULL,
+            business_unit businessunit NOT NULL,
+            status reportstatus NOT NULL DEFAULT 'DRAFT',
+            total_amount NUMERIC(15,2) NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_purchase_reports_user ON purchase_reports (user_telegram_id);
+        """,
+        # Added in v0.7: purchase_entries table
+        """
+        CREATE TABLE IF NOT EXISTS purchase_entries (
+            id SERIAL PRIMARY KEY,
+            report_id INTEGER NOT NULL REFERENCES purchase_reports(id),
+            category purchasecategory NOT NULL,
+            amount NUMERIC(15,2) NOT NULL,
+            description TEXT NOT NULL DEFAULT '',
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_purchase_entries_report ON purchase_entries (report_id);
         """,
     ]
     async with engine.begin() as conn:

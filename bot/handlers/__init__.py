@@ -9,6 +9,7 @@ from bot.handlers.language import router as language_router
 from bot.handlers.new_expense import router as new_expense_router
 from bot.handlers.new_report import router as new_report_router
 from bot.handlers.prepayment import router as prepayment_router
+from bot.handlers.purchase import router as purchase_router
 from bot.handlers.report import router as report_router
 from bot.handlers.start import router as start_router
 from bot.handlers.wallet import router as wallet_router
@@ -34,6 +35,7 @@ main_router.include_router(start_router)
 main_router.include_router(new_report_router)   # Structured report flow
 main_router.include_router(new_expense_router)   # Expense entry flow
 main_router.include_router(prepayment_router)    # Quick prepayment flow
+main_router.include_router(purchase_router)      # Purchase report flow
 main_router.include_router(wallet_router)        # Wallet / cash transfers
 main_router.include_router(cash_flow_router)
 main_router.include_router(history_router)

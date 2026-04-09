@@ -89,6 +89,7 @@ async def get_wallet_balance(telegram_id: int) -> Decimal:
                     WalletTransactionType.TRANSFER_TO_EMPLOYEE,
                     WalletTransactionType.TRANSFER_TO_SHAVKAT,
                     WalletTransactionType.CASH_TO_BANK,
+                    WalletTransactionType.PURCHASE,
                 ]),
                 WalletTransaction.status.in_([
                     WalletTransactionStatus.PENDING,
@@ -453,18 +454,6 @@ async def on_amount_entered(message: types.Message, state: FSMContext):
         await message.answer("❌ Введите корректную сумму (только цифры)")
         return
 
-    data = await state.get_data()
-    sender_tid = data["sender_telegram_id"]
-    balance = await get_wallet_balance(sender_tid)
-
-    if amount > balance:
-        await message.answer(
-            f"❌ Недостаточно средств.\n"
-            f"Баланс: {format_amount(balance)} UZS\n"
-            f"Запрос: {format_amount(amount)} UZS"
-        )
-        return
-
     await state.update_data(amount=str(amount))
 
     # Ask for optional note
@@ -551,12 +540,6 @@ async def on_confirm_transfer(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     tx_type = WalletTransactionType(data["transfer_type"])
     amount = Decimal(data["amount"])
-
-    # Double-check balance
-    balance = await get_wallet_balance(data["sender_telegram_id"])
-    if amount > balance:
-        await callback.answer("❌ Недостаточно средств!", show_alert=True)
-        return
 
     # Determine status
     needs_acceptance = tx_type in (

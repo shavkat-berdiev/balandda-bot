@@ -19,6 +19,7 @@ class UserRole(str, enum.Enum):
     RESORT_MANAGER = "RESORT_MANAGER"
     RESTAURANT_MANAGER = "RESTAURANT_MANAGER"
     OPERATOR = "OPERATOR"
+    PURCHASER = "PURCHASER"
 
 
 class Language(str, enum.Enum):
@@ -121,11 +122,31 @@ class RegistrationRequestStatus(str, enum.Enum):
     REJECTED = "REJECTED"
 
 
+class PurchaseCategory(str, enum.Enum):
+    # Restaurant categories
+    VEGETABLES_FRUITS = "VEGETABLES_FRUITS"
+    MEAT_PRODUCTS = "MEAT_PRODUCTS"
+    DAIRY_CHEESE = "DAIRY_CHEESE"
+    CONSTRUCTION_MATERIALS = "CONSTRUCTION_MATERIALS"
+    HOUSEHOLD_SUPPLIES_REST = "HOUSEHOLD_SUPPLIES_REST"
+    POOL_SUPPLIES_REST = "POOL_SUPPLIES_REST"
+    OTHER_RESTAURANT = "OTHER_RESTAURANT"
+    # Resort categories
+    CLEANING_SUPPLIES = "CLEANING_SUPPLIES"
+    HOUSEHOLD_SUPPLIES = "HOUSEHOLD_SUPPLIES"
+    POOL_SUPPLIES = "POOL_SUPPLIES"
+    EQUIPMENT = "EQUIPMENT"
+    SAUNA_PARTS = "SAUNA_PARTS"
+    TABLEWARE = "TABLEWARE"
+    OTHER_RESORT = "OTHER_RESORT"
+
+
 class WalletTransactionType(str, enum.Enum):
     CASH_IN = "CASH_IN"                  # Auto from cash income report
     TRANSFER_TO_EMPLOYEE = "TRANSFER_TO_EMPLOYEE"  # Between staff
     TRANSFER_TO_SHAVKAT = "TRANSFER_TO_SHAVKAT"    # Final dest: owner
     CASH_TO_BANK = "CASH_TO_BANK"        # Final dest: bank
+    PURCHASE = "PURCHASE"                # Deduction for purchase
 
 
 class WalletTransactionStatus(str, enum.Enum):
@@ -231,9 +252,47 @@ REGISTRATION_REQUEST_STATUS_LABELS = {
     RegistrationRequestStatus.REJECTED: "Отклонено",
 }
 
+PURCHASE_CATEGORY_LABELS = {
+    PurchaseCategory.VEGETABLES_FRUITS: "Овощи и фрукты",
+    PurchaseCategory.MEAT_PRODUCTS: "Мясные изделия",
+    PurchaseCategory.DAIRY_CHEESE: "Молочка и сыры",
+    PurchaseCategory.CONSTRUCTION_MATERIALS: "Строй материалы",
+    PurchaseCategory.HOUSEHOLD_SUPPLIES_REST: "Хоз материалы",
+    PurchaseCategory.POOL_SUPPLIES_REST: "Средства бассейна",
+    PurchaseCategory.OTHER_RESTAURANT: "Прочее",
+    PurchaseCategory.CLEANING_SUPPLIES: "Моющие средства",
+    PurchaseCategory.HOUSEHOLD_SUPPLIES: "Хоз материалы",
+    PurchaseCategory.POOL_SUPPLIES: "Средства бассейна",
+    PurchaseCategory.EQUIPMENT: "Техника",
+    PurchaseCategory.SAUNA_PARTS: "Запчасти Сауны",
+    PurchaseCategory.TABLEWARE: "Посуда",
+    PurchaseCategory.OTHER_RESORT: "Прочее",
+}
+
+PURCHASE_CATEGORIES_RESTAURANT = [
+    PurchaseCategory.VEGETABLES_FRUITS,
+    PurchaseCategory.MEAT_PRODUCTS,
+    PurchaseCategory.DAIRY_CHEESE,
+    PurchaseCategory.CONSTRUCTION_MATERIALS,
+    PurchaseCategory.HOUSEHOLD_SUPPLIES_REST,
+    PurchaseCategory.POOL_SUPPLIES_REST,
+    PurchaseCategory.OTHER_RESTAURANT,
+]
+
+PURCHASE_CATEGORIES_RESORT = [
+    PurchaseCategory.CLEANING_SUPPLIES,
+    PurchaseCategory.HOUSEHOLD_SUPPLIES,
+    PurchaseCategory.POOL_SUPPLIES,
+    PurchaseCategory.EQUIPMENT,
+    PurchaseCategory.SAUNA_PARTS,
+    PurchaseCategory.TABLEWARE,
+    PurchaseCategory.OTHER_RESORT,
+]
+
 WALLET_TRANSACTION_TYPE_LABELS = {
     WalletTransactionType.CASH_IN: "Приход наличных",
     WalletTransactionType.TRANSFER_TO_EMPLOYEE: "Передача сотруднику",
     WalletTransactionType.TRANSFER_TO_SHAVKAT: "Передано Шавкату",
     WalletTransactionType.CASH_TO_BANK: "Сдано в банк",
+    WalletTransactionType.PURCHASE: "Закуп",
 }

@@ -225,7 +225,7 @@ async def on_section_select(callback: types.CallbackQuery):
     section_name = get_text(f"section_{section}", lang)
     await callback.message.edit_text(
         get_text("main_menu", lang, section=section_name),
-        reply_markup=main_menu_keyboard(lang, current_section=section),
+        reply_markup=main_menu_keyboard(lang, current_section=section, role=user.role.value),
     )
     await callback.answer(get_text("switched_to", lang, section=section_name))
 
@@ -243,5 +243,5 @@ async def cmd_menu(message: types.Message):
     section_name = get_text(f"section_{section}", lang)
     await message.answer(
         get_text("main_menu", lang, section=section_name),
-        reply_markup=main_menu_keyboard(lang, current_section=section),
+        reply_markup=main_menu_keyboard(lang, current_section=section, role=user.role.value),
     )

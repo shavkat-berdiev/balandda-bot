@@ -22,10 +22,12 @@ router = APIRouter()
 
 
 USER_ROLE_LABELS = {
+    "OWNER": "Владелец",
     "ADMIN": "Администратор",
     "RESORT_MANAGER": "Менеджер курорта",
     "RESTAURANT_MANAGER": "Менеджер ресторана",
     "OPERATOR": "Оператор",
+    "PURCHASER": "Закупщик",
 }
 
 

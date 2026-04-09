@@ -18,7 +18,7 @@ def section_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
     ])
 
 
-def main_menu_keyboard(lang: str = "ru", current_section: str = "resort") -> InlineKeyboardMarkup:
+def main_menu_keyboard(lang: str = "ru", current_section: str = "resort", role: str = "") -> InlineKeyboardMarkup:
     # Determine the other section for the switch button
     if current_section == "resort":
         switch_label = f"🔄 {get_text('section_restaurant', lang)}"
@@ -27,11 +27,40 @@ def main_menu_keyboard(lang: str = "ru", current_section: str = "resort") -> Inl
         switch_label = f"🔄 {get_text('section_resort', lang)}"
         switch_data = "section:resort"
 
+    # PURCHASER role — restricted menu: only purchase + wallet
+    if role == "PURCHASER":
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🛒 Закуп",
+                    callback_data="action:purchase",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💼 Инкассация",
+                    callback_data="action:wallet",
+                ),
+            ],
+            [
+                InlineKeyboardButton(text=switch_label, callback_data=switch_data),
+                InlineKeyboardButton(
+                    text=f"⚙️ {get_text('btn_settings', lang)}",
+                    callback_data="action:settings",
+                ),
+            ],
+        ])
+
+    # Full menu for all other roles
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
                 text=f"📝 {get_text('btn_new_report', lang)}",
                 callback_data="action:new_report",
+            ),
+            InlineKeyboardButton(
+                text="🛒 Закуп",
+                callback_data="action:purchase",
             ),
         ],
         [

@@ -273,6 +273,6 @@ async def on_back_menu(callback: types.CallbackQuery, state: FSMContext):
 
     await callback.message.edit_text(
         get_text("main_menu", lang, section=section_name),
-        reply_markup=main_menu_keyboard(lang, current_section=section),
+        reply_markup=main_menu_keyboard(lang, current_section=section, role=user.role.value),
     )
     await callback.answer()

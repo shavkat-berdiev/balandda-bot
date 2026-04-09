@@ -46,6 +46,8 @@ from db.enums import (
     WalletTransactionType,
     WalletTransactionStatus,
     WALLET_TRANSACTION_TYPE_LABELS,
+    PurchaseCategory,
+    PURCHASE_CATEGORY_LABELS,
 )
 
 # Re-export for backward compatibility
@@ -352,6 +354,39 @@ class WalletTransaction(Base):
     report_id: Mapped[int | None] = mapped_column(ForeignKey("structured_reports.id"), nullable=True)
     business_unit: Mapped[BusinessUnit | None] = mapped_column(Enum(BusinessUnit), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PurchaseReport(Base):
+    """Purchase report — groups multiple purchase entries into a daily report."""
+    __tablename__ = "purchase_reports"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    report_date: Mapped[date] = mapped_column(Date)
+    business_unit: Mapped[BusinessUnit] = mapped_column(Enum(BusinessUnit))
+    status: Mapped[ReportStatus] = mapped_column(
+        Enum(ReportStatus), default=ReportStatus.DRAFT
+    )
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(15, 2), default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    entries: Mapped[list["PurchaseEntry"]] = relationship(
+        back_populates="report", cascade="all, delete-orphan"
+    )
+
+
+class PurchaseEntry(Base):
+    """Individual purchase entry within a purchase report."""
+    __tablename__ = "purchase_entries"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    report_id: Mapped[int] = mapped_column(ForeignKey("purchase_reports.id"), index=True)
+    category: Mapped[PurchaseCategory] = mapped_column(Enum(PurchaseCategory))
+    amount: Mapped[Decimal] = mapped_column(Numeric(15, 2))
+    description: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    report: Mapped["PurchaseReport"] = relationship(back_populates="entries")
 
 
 class RegistrationRequest(Base):
