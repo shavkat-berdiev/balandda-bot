@@ -26,10 +26,10 @@ echo "📂 Copying frontend to $WEB_PUBLIC..."
 sudo rm -rf "$WEB_PUBLIC/assets"
 sudo cp -r "$DEPLOY_DIR/web/dist/"* "$WEB_PUBLIC/"
 
-# 4. Rebuild and restart API container
-echo "🐳 Rebuilding Docker API container..."
+# 4. Rebuild and restart API + Bot containers
+echo "🐳 Rebuilding Docker containers..."
 cd "$DEPLOY_DIR"
-docker compose build --no-cache api
+docker compose build --no-cache api bot
 docker compose up -d
 
 # 5. Restart nginx-proxy to pick up new files
