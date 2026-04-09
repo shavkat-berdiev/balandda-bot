@@ -25,6 +25,8 @@ from db.models import (
     ExpenseEntry,
     IncomeEntry,
     MinibarItem,
+    Prepayment,
+    PrepaymentStatus,
     Property,
     ReportStatus,
     ServiceItem,
@@ -126,6 +128,7 @@ class StructuredReportResponse(BaseModel):
 class StructuredReportSummary(BaseModel):
     id: int
     report_date: date
+    business_unit: str
     status: str
     total_income: float
     total_expense: float
@@ -253,17 +256,16 @@ async def list_staff(
 
 @router.get("/list", response_model=list[StructuredReportSummary])
 async def list_structured_reports(
-    business_unit: BusinessUnit = Query(default=BusinessUnit.RESORT),
+    business_unit: Optional[str] = Query(default="RESORT"),
     limit: int = Query(default=30, le=365),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     session: AsyncSession = Depends(get_session),
     _user: dict = Depends(get_current_user),
 ):
-    """List structured reports with summary info."""
+    """List structured reports with summary info. business_unit=ALL for both."""
     query = (
         select(StructuredReport)
-        .where(StructuredReport.business_unit == business_unit)
         .order_by(StructuredReport.report_date.desc())
         .limit(limit)
         .options(
@@ -271,6 +273,11 @@ async def list_structured_reports(
             selectinload(StructuredReport.expense_entries),
         )
     )
+    if business_unit and business_unit != "ALL":
+        try:
+            query = query.where(StructuredReport.business_unit == BusinessUnit(business_unit))
+        except ValueError:
+            pass
     if start_date:
         query = query.where(StructuredReport.report_date >= start_date)
     if end_date:
@@ -282,6 +289,7 @@ async def list_structured_reports(
         StructuredReportSummary(
             id=r.id,
             report_date=r.report_date,
+            business_unit=r.business_unit.value,
             status=r.status.value,
             total_income=float(r.total_income or 0),
             total_expense=float(r.total_expense or 0),
@@ -372,7 +380,7 @@ async def get_structured_report(
 
 @router.get("/breakdown")
 async def structured_breakdown(
-    business_unit: BusinessUnit = Query(default=BusinessUnit.RESORT),
+    business_unit: Optional[str] = Query(default="RESORT"),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     session: AsyncSession = Depends(get_session),
@@ -387,7 +395,6 @@ async def structured_breakdown(
     query = (
         select(StructuredReport)
         .where(
-            StructuredReport.business_unit == business_unit,
             StructuredReport.report_date >= start_date,
             StructuredReport.report_date <= end_date,
             StructuredReport.status != ReportStatus.DRAFT,
@@ -400,6 +407,12 @@ async def structured_breakdown(
         )
         .order_by(StructuredReport.report_date)
     )
+    if business_unit and business_unit != "ALL":
+        try:
+            query = query.where(StructuredReport.business_unit == BusinessUnit(business_unit))
+        except ValueError:
+            pass
+
     result = await session.execute(query)
     reports = result.scalars().all()
 
@@ -566,13 +579,13 @@ async def structured_transactions(
 
 @router.get("/dashboard")
 async def structured_dashboard(
-    business_unit: BusinessUnit = Query(default=BusinessUnit.RESORT),
+    business_unit: Optional[str] = Query(default="RESORT"),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     session: AsyncSession = Depends(get_session),
     _user: dict = Depends(get_current_user),
 ):
-    """Dashboard data: totals, income breakdown, expense breakdown, daily trend, service breakdown."""
+    """Dashboard data: totals, income breakdown, expense breakdown, daily trend, service breakdown, prepayments."""
     if end_date is None:
         end_date = date.today()
     if start_date is None:
@@ -581,7 +594,6 @@ async def structured_dashboard(
     query = (
         select(StructuredReport)
         .where(
-            StructuredReport.business_unit == business_unit,
             StructuredReport.report_date >= start_date,
             StructuredReport.report_date <= end_date,
         )
@@ -593,6 +605,12 @@ async def structured_dashboard(
         )
         .order_by(StructuredReport.report_date)
     )
+    if business_unit and business_unit != "ALL":
+        try:
+            query = query.where(StructuredReport.business_unit == BusinessUnit(business_unit))
+        except ValueError:
+            pass
+
     result = await session.execute(query)
     reports = result.scalars().all()
 
@@ -653,6 +671,19 @@ async def structured_dashboard(
             reverse=True,
         )
 
+    # ── Prepayment stats ──
+    prep_query = select(Prepayment).where(
+        Prepayment.check_in_date >= start_date,
+        Prepayment.check_in_date <= end_date,
+    )
+    prep_result = await session.execute(prep_query)
+    prepayments = prep_result.scalars().all()
+
+    prep_total = float(sum(p.amount for p in prepayments))
+    prep_confirmed = float(sum(p.amount for p in prepayments if p.status == PrepaymentStatus.CONFIRMED))
+    prep_pending = float(sum(p.amount for p in prepayments if p.status == PrepaymentStatus.PENDING))
+    prep_count = len(prepayments)
+
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
@@ -666,6 +697,12 @@ async def structured_dashboard(
         "by_property": dict_to_chart(by_property),
         "by_service": dict_to_chart(by_service),
         "daily_totals": sorted(daily_data.values(), key=lambda x: x["date"]),
+        "prepayments": {
+            "total": prep_total,
+            "confirmed": prep_confirmed,
+            "pending": prep_pending,
+            "count": prep_count,
+        },
     }
 
 

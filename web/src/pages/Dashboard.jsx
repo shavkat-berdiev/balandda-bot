@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { TrendingUp, TrendingDown, DollarSign, ArrowUpDown, Calendar, FileText, Wallet } from 'lucide-react';
+import { TrendingUp, TrendingDown, DollarSign, ArrowUpDown, Calendar, FileText, Wallet, CreditCard } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Legend, Area, AreaChart,
@@ -153,26 +153,22 @@ export default function Dashboard({ user }) {
           <p className="text-gray-500 text-sm mt-1">{periodLabel}</p>
         </div>
         <div className="flex gap-2">
-          <button
-            onClick={() => setSection('RESORT')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              section === 'RESORT'
-                ? 'bg-blue-600 text-white'
-                : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-            }`}
-          >
-            Курорт
-          </button>
-          <button
-            onClick={() => setSection('RESTAURANT')}
-            className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-              section === 'RESTAURANT'
-                ? 'bg-blue-600 text-white'
-                : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
-            }`}
-          >
-            Ресторан
-          </button>
+          {[
+            { key: 'RESORT', label: 'Курорт' },
+            { key: 'RESTAURANT', label: 'Ресторан' },
+            { key: 'ALL', label: 'Все' },
+          ].map(({ key, label }) => (
+            <button key={key}
+              onClick={() => setSection(key)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                section === key
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -222,6 +218,37 @@ export default function Dashboard({ user }) {
               color={data.net >= 0 ? 'blue' : 'red'} />
             <SummaryCard title="Отчётов" value={String(data.report_count)} icon={FileText} color="purple" />
           </div>
+
+          {/* Prepayments card */}
+          {data.prepayments && data.prepayments.count > 0 && (
+            <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+              <div className="flex items-center gap-2 mb-4">
+                <CreditCard size={20} className="text-yellow-600" />
+                <h2 className="text-lg font-semibold text-gray-800">Предоплаты</h2>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Всего</p>
+                  <p className="text-lg font-bold text-gray-900">{formatUZS(data.prepayments.total)}</p>
+                  <p className="text-xs text-gray-500">{data.prepayments.count} шт.</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Подтверждено</p>
+                  <p className="text-lg font-bold text-green-700">{formatUZS(data.prepayments.confirmed)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Ожидание</p>
+                  <p className="text-lg font-bold text-yellow-600">{formatUZS(data.prepayments.pending)}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">Не в отчётах</p>
+                  <p className="text-lg font-bold text-gray-600">
+                    {formatUZS(data.prepayments.total - data.prepayments.confirmed)}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Row 1: Income pie + Expense bar */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">

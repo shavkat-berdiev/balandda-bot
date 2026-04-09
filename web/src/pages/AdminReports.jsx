@@ -41,6 +41,7 @@ export default function AdminReports({ user }) {
   const [detail, setDetail] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [businessUnit, setBusinessUnit] = useState('ALL');
 
   // Edit states
   const [editingReportId, setEditingReportId] = useState(null);
@@ -57,7 +58,7 @@ export default function AdminReports({ user }) {
     setLoading(true);
     setError('');
     try {
-      const data = await api.getStructuredReportsList(dateFrom, dateTo);
+      const data = await api.getStructuredReportsList(dateFrom, dateTo, businessUnit);
       setReports(data);
     } catch (err) {
       setError(err.message);
@@ -228,6 +229,23 @@ export default function AdminReports({ user }) {
             <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)}
               className="px-3 py-2 border border-gray-200 rounded-lg text-sm" />
           </div>
+          <div className="flex gap-1.5">
+            {[
+              { key: 'ALL', label: 'Все' },
+              { key: 'RESORT', label: 'Курорт' },
+              { key: 'RESTAURANT', label: 'Ресторан' },
+            ].map(({ key, label }) => (
+              <button key={key}
+                onClick={() => { setBusinessUnit(key); }}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  businessUnit === key
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-blue-50'
+                }`}>
+                {label}
+              </button>
+            ))}
+          </div>
           <button onClick={loadReports}
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
             <Calendar size={16} /> Показать
@@ -255,6 +273,11 @@ export default function AdminReports({ user }) {
                   <div className="text-left">
                     <p className="font-semibold text-gray-800">{fmtDate(report.report_date)}</p>
                     <div className="flex gap-3 text-xs text-gray-500 mt-1">
+                      {businessUnit === 'ALL' && (
+                        <span className={`px-1.5 py-0.5 rounded font-medium ${report.business_unit === 'RESORT' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                          {BU_LABELS[report.business_unit] || report.business_unit}
+                        </span>
+                      )}
                       <span>Доходы: {report.income_count}</span>
                       <span>Расходы: {report.expense_count}</span>
                     </div>

@@ -93,8 +93,13 @@ export const api = {
   updateAdminStaff: (id, data) => request(`/admin/staff/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Structured Reports (with date filter)
-  getStructuredReportsList: (from, to) =>
-    request(`/structured/list?start_date=${from}&end_date=${to}`),
+  getStructuredReportsList: (from, to, unit) => {
+    const sp = new URLSearchParams();
+    if (from) sp.set('start_date', from);
+    if (to) sp.set('end_date', to);
+    if (unit) sp.set('business_unit', unit);
+    return request(`/structured/list?${sp}`);
+  },
   getStructuredReportDetail: (id) =>
     request(`/structured/detail/${id}`),
 
