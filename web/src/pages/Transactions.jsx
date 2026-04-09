@@ -156,14 +156,15 @@ export default function Transactions() {
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Описание</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Оплата</th>
                 <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Сумма (UZS)</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Комментарий</th>
                 <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Статус</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {loading ? (
-                <tr><td colSpan="8" className="px-4 py-12 text-center text-gray-400">Загрузка...</td></tr>
+                <tr><td colSpan="9" className="px-4 py-12 text-center text-gray-400">Загрузка...</td></tr>
               ) : transactions.length === 0 ? (
-                <tr><td colSpan="8" className="px-4 py-12 text-center text-gray-400">
+                <tr><td colSpan="9" className="px-4 py-12 text-center text-gray-400">
                   <ArrowLeftRight size={36} className="mx-auto mb-2 opacity-40" />
                   Нет записей за выбранный период
                 </td></tr>
@@ -197,6 +198,9 @@ export default function Transactions() {
                       tx.type === 'income' ? 'text-green-600' : 'text-red-600'
                     }`}>
                       {tx.type === 'income' ? '+' : '-'}{formatUZS(tx.amount)}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-gray-500 max-w-[200px] truncate">
+                      {tx.note || ''}
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex px-2 py-0.5 rounded-full text-xs ${

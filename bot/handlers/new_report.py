@@ -1558,6 +1558,7 @@ async def on_finalize(callback: types.CallbackQuery, state: FSMContext):
             await session.commit()
 
     await state.clear()
+    await callback.answer()
 
     # Show success and back to menu
     user = await get_user(callback.from_user.id)
@@ -1568,7 +1569,7 @@ async def on_finalize(callback: types.CallbackQuery, state: FSMContext):
             reply_markup=main_menu_keyboard(lang, current_section=user.active_section.value.lower()),
         )
 
-        # Notify owner
+        # Notify owner (fire-and-forget, won't block)
         if report_data:
             await notify_report_submitted(
                 callback.bot,
@@ -1580,7 +1581,6 @@ async def on_finalize(callback: types.CallbackQuery, state: FSMContext):
                 income_count=report_data["inc_count"],
                 expense_count=report_data["exp_count"],
             )
-    await callback.answer()
 
 
 # ────────────────────────────────────────────────────────────────────────

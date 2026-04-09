@@ -1,5 +1,10 @@
-"""Shared notification module — sends activity logs to OWNER users via Telegram."""
+"""Shared notification module — sends activity logs to OWNER users via Telegram.
 
+All public notify_* functions are fire-and-forget: they schedule the actual
+send as a background task so the calling handler never blocks on network I/O.
+"""
+
+import asyncio
 import logging
 
 from aiogram import Bot
@@ -24,14 +29,19 @@ async def _get_owner_ids() -> list[int]:
         return [row[0] for row in result.all()]
 
 
-async def notify_owners(bot: Bot, text: str):
-    """Send a notification message to all OWNER users."""
+async def _send_to_owners(bot: Bot, text: str):
+    """Actually send a notification message to all OWNER users."""
     owner_ids = await _get_owner_ids()
     for tid in owner_ids:
         try:
             await bot.send_message(tid, text, parse_mode="HTML")
         except Exception as e:
             logger.error(f"Failed to notify owner {tid}: {e}")
+
+
+def notify_owners(bot: Bot, text: str):
+    """Fire-and-forget: schedule notification as a background task."""
+    asyncio.create_task(_send_to_owners(bot, text))
 
 
 def format_amount(amount) -> str:
@@ -54,7 +64,7 @@ async def notify_report_submitted(bot: Bot, user_name: str, report_date, busines
         f"📉 Расход: {format_amount(total_expense)} UZS ({expense_count} шт.)\n"
         f"💰 Итого: {'+' if net >= 0 else ''}{format_amount(net)} UZS"
     )
-    await notify_owners(bot, text)
+    notify_owners(bot, text)
 
 
 async def notify_prepayment_created(bot: Bot, operator_name: str, guest_name: str,
@@ -70,7 +80,7 @@ async def notify_prepayment_created(bot: Bot, operator_name: str, guest_name: st
         f"💰 {format_amount(amount)} UZS\n"
         f"💳 {payment_method}"
     )
-    await notify_owners(bot, text)
+    notify_owners(bot, text)
 
 
 async def notify_wallet_transfer(bot: Bot, sender_name: str, tx_label: str,
@@ -84,7 +94,7 @@ async def notify_wallet_transfer(bot: Bot, sender_name: str, tx_label: str,
         f"➡️ {receiver_name}\n"
         f"💰 {format_amount(amount)} UZS{note_text}"
     )
-    await notify_owners(bot, text)
+    notify_owners(bot, text)
 
 
 async def notify_income_entry(bot: Bot, user_name: str, entry_name: str,
@@ -99,7 +109,7 @@ async def notify_income_entry(bot: Bot, user_name: str, entry_name: str,
         f"💰 {format_amount(amount)} UZS\n"
         f"💳 {payment_label}"
     )
-    await notify_owners(bot, text)
+    notify_owners(bot, text)
 
 
 async def notify_expense_entry(bot: Bot, user_name: str, category_label: str,
@@ -113,4 +123,4 @@ async def notify_expense_entry(bot: Bot, user_name: str, category_label: str,
         f"📝 {category_label}: {description}\n"
         f"💰 {format_amount(amount)} UZS"
     )
-    await notify_owners(bot, text)
+    notify_owners(bot, text)
