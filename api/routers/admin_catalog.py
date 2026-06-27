@@ -61,6 +61,7 @@ class PropertyUpdate(BaseModel):
     emoji: str | None = None
     sort_order: int | None = None
     is_active: bool | None = None
+    business_unit: str | None = None
 
 
 class PropertyOut(BaseModel):
@@ -264,6 +265,8 @@ async def update_property(
         updates["price_weekday"] = Decimal(str(updates["price_weekday"]))
     if "price_weekend" in updates:
         updates["price_weekend"] = Decimal(str(updates["price_weekend"]))
+    if "business_unit" in updates:
+        updates["business_unit"] = BusinessUnit(updates["business_unit"])
 
     for field, value in updates.items():
         setattr(prop, field, value)

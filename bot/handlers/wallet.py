@@ -605,10 +605,11 @@ async def on_confirm_transfer(callback: types.CallbackQuery, state: FSMContext):
             except Exception as e:
                 logger.error(f"Failed to send acceptance request to {receiver_tid}: {e}")
 
-        # Notify owners about pending transfer
+        # Notify owners about pending transfer (exclude receiver — they got accept/decline buttons)
         await notify_wallet_transfer(
             callback.bot, sender_name, f"{tx_label} ⏳",
             receiver_name, float(amount), data.get("note"),
+            exclude_tid=data.get("receiver_telegram_id"),
         )
 
         # Show sender confirmation

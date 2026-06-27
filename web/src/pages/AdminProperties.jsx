@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Pencil, Check, X, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Plus, Pencil, Check, X, ToggleLeft, ToggleRight, Copy } from 'lucide-react';
 import { api } from '../api';
 
 const EMPTY_FORM = {
@@ -55,6 +55,26 @@ export default function AdminProperties() {
   function startCreate() {
     setEditId(null);
     setForm(EMPTY_FORM);
+    setShowForm(true);
+    setError('');
+  }
+
+  function startDuplicate(item) {
+    setEditId(null);
+    setForm({
+      code: item.code + '-copy',
+      name_ru: item.name_ru,
+      name_uz: item.name_uz,
+      property_type: item.property_type,
+      unit_number: '',
+      capacity: item.capacity,
+      has_sauna: item.has_sauna,
+      price_weekday: item.price_weekday,
+      price_weekend: item.price_weekend,
+      emoji: item.emoji,
+      sort_order: item.sort_order + 1,
+      business_unit: item.business_unit,
+    });
     setShowForm(true);
     setError('');
   }
@@ -165,6 +185,13 @@ export default function AdminProperties() {
               <input type="number" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Бизнес-юнит</label>
+              <select value={form.business_unit} onChange={(e) => setForm({ ...form, business_unit: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                {enums.business_units.map(bu => <option key={bu.value} value={bu.value}>{bu.label}</option>)}
+              </select>
+            </div>
             <div className="flex items-end gap-4">
               <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
                 <input type="checkbox" checked={form.has_sauna} onChange={(e) => setForm({ ...form, has_sauna: e.target.checked })}
@@ -226,6 +253,9 @@ export default function AdminProperties() {
                       <div className="flex items-center justify-center gap-2">
                         <button onClick={() => startEdit(item)} className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50" title="Редактировать">
                           <Pencil size={16} />
+                        </button>
+                        <button onClick={() => startDuplicate(item)} className="p-1.5 text-gray-400 hover:text-purple-600 rounded-lg hover:bg-purple-50" title="Дублировать">
+                          <Copy size={16} />
                         </button>
                         <button onClick={() => toggleActive(item)} className={`p-1.5 rounded-lg ${item.is_active ? 'text-green-600 hover:bg-green-50' : 'text-gray-400 hover:bg-gray-100'}`} title={item.is_active ? 'Деактивировать' : 'Активировать'}>
                           {item.is_active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}

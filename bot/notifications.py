@@ -29,19 +29,21 @@ async def _get_owner_ids() -> list[int]:
         return [row[0] for row in result.all()]
 
 
-async def _send_to_owners(bot: Bot, text: str):
+async def _send_to_owners(bot: Bot, text: str, exclude_tid: int | None = None):
     """Actually send a notification message to all OWNER users."""
     owner_ids = await _get_owner_ids()
     for tid in owner_ids:
+        if tid == exclude_tid:
+            continue
         try:
             await bot.send_message(tid, text, parse_mode="HTML")
         except Exception as e:
             logger.error(f"Failed to notify owner {tid}: {e}")
 
 
-def notify_owners(bot: Bot, text: str):
+def notify_owners(bot: Bot, text: str, exclude_tid: int | None = None):
     """Fire-and-forget: schedule notification as a background task."""
-    asyncio.create_task(_send_to_owners(bot, text))
+    asyncio.create_task(_send_to_owners(bot, text, exclude_tid=exclude_tid))
 
 
 def format_amount(amount) -> str:
@@ -84,8 +86,14 @@ async def notify_prepayment_created(bot: Bot, operator_name: str, guest_name: st
 
 
 async def notify_wallet_transfer(bot: Bot, sender_name: str, tx_label: str,
-                                  receiver_name: str, amount: float, note: str | None = None):
-    """Notify owners when a wallet transfer is made."""
+                                  receiver_name: str, amount: float,
+                                  note: str | None = None,
+                                  exclude_tid: int | None = None):
+    """Notify owners when a wallet transfer is made.
+
+    exclude_tid: skip this telegram_id from owner notification
+    (used when the receiver is an OWNER — they already got the accept/decline message).
+    """
     note_text = f"\n📝 {note}" if note else ""
     text = (
         f"💼 <b>Операция кошелька</b>\n\n"
@@ -94,7 +102,7 @@ async def notify_wallet_transfer(bot: Bot, sender_name: str, tx_label: str,
         f"➡️ {receiver_name}\n"
         f"💰 {format_amount(amount)} UZS{note_text}"
     )
-    notify_owners(bot, text)
+    notify_owners(bot, text, exclude_tid=exclude_tid)
 
 
 async def notify_income_entry(bot: Bot, user_name: str, entry_name: str,
