@@ -30,7 +30,9 @@ function money(n) {
 export default function Calendar() {
   const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
   const [start, setStart] = useState(today);
-  const [span, setSpan] = useState(21);
+  const [span, setSpan] = useState(() =>
+    typeof window !== 'undefined' && window.innerWidth < 640 ? 7 : 21
+  );
   const [units, setUnits] = useState([]);
   const [reservations, setReservations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -130,11 +132,12 @@ export default function Calendar() {
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
         <h1 className="text-2xl font-bold text-gray-800">Календарь броней</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => setStart(addDays(start, -span))} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"><ChevronLeft size={18} /></button>
           <input type="date" value={ymd(start)} onChange={(e) => setStart(new Date(e.target.value + 'T00:00:00'))} className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
           <button onClick={() => setStart(addDays(start, span))} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"><ChevronRight size={18} /></button>
           <select value={span} onChange={(e) => setSpan(Number(e.target.value))} className="border border-gray-200 rounded-lg px-2 py-2 text-sm">
+            <option value={7}>7 дней</option>
             <option value={14}>14 дней</option>
             <option value={21}>21 день</option>
             <option value={30}>30 дней</option>
@@ -155,7 +158,7 @@ export default function Calendar() {
       {loading ? (
         <div className="py-16 text-center text-gray-400">Загрузка…</div>
       ) : (
-        <div className="overflow-x-auto border border-gray-200 rounded-xl bg-white">
+        <div className="overflow-x-auto border border-gray-200 rounded-xl bg-white" style={{ WebkitOverflowScrolling: 'touch' }}>
           <table className="border-collapse text-sm">
             <thead>
               <tr>

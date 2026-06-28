@@ -53,6 +53,19 @@ export default function App() {
     return <Login onLogin={handleLogin} />;
   }
 
+  // Front-office domain (calendar.balandda.uz): agents see ONLY the booking calendar.
+  const frontOffice = window.location.hostname === 'calendar.balandda.uz';
+  if (frontOffice) {
+    return (
+      <Layout user={user} onLogout={handleLogout} frontOffice>
+        <Routes>
+          <Route path="/calendar" element={<Calendar />} />
+          <Route path="*" element={<Navigate to="/calendar" />} />
+        </Routes>
+      </Layout>
+    );
+  }
+
   return (
     <Layout user={user} onLogout={handleLogout}>
       <Routes>

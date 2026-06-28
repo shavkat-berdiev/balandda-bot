@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.auth import get_current_user, require_admin
+from api.auth import get_current_user
 from db.database import get_session
 from db.enums import (
     RESERVATION_SOURCE_LABELS,
@@ -90,7 +90,6 @@ async def list_reservations(
     user: dict = Depends(get_current_user),
 ):
     """Reservations/blocks overlapping [from, to), with unit names — for the calendar."""
-    require_admin(user)
     rows = (
         await session.execute(
             select(Reservation, Property.name_ru)
@@ -109,7 +108,6 @@ async def create_reservation(
     session: AsyncSession = Depends(get_session),
     user: dict = Depends(get_current_user),
 ):
-    require_admin(user)
     if data.check_out <= data.check_in:
         raise HTTPException(status_code=400, detail="check_out must be after check_in")
     status = _parse_status(data.status)
@@ -149,7 +147,6 @@ async def update_reservation(
     session: AsyncSession = Depends(get_session),
     user: dict = Depends(get_current_user),
 ):
-    require_admin(user)
     res = await session.get(Reservation, res_id)
     if not res:
         raise HTTPException(status_code=404, detail="not found")
@@ -177,7 +174,6 @@ async def cancel_reservation(
     session: AsyncSession = Depends(get_session),
     user: dict = Depends(get_current_user),
 ):
-    require_admin(user)
     res = await session.get(Reservation, res_id)
     if not res:
         raise HTTPException(status_code=404, detail="not found")
