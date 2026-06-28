@@ -16,12 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.auth import get_current_user
 from db.database import get_session
 from db.enums import (
+    PrepaymentStatus,
     RESERVATION_SOURCE_LABELS,
     RESERVATION_STATUS_LABELS,
     ReservationSource,
     ReservationStatus,
 )
-from db.models import Property, Reservation
+from db.models import Prepayment, Property, Reservation
 
 router = APIRouter()
 
@@ -181,3 +182,57 @@ async def cancel_reservation(
     await session.commit()
     await session.refresh(res)
     return _out(res)
+
+
+@router.post("/import-prepayments")
+async def import_prepayments(
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Backfill the calendar from existing prepayments in analytics — the source of
+    current bookings until Exely sync exists. Idempotent: a prepayment already linked
+    to a reservation is skipped; date overlaps are skipped (and counted)."""
+    preps = (
+        await session.execute(
+            select(Prepayment).where(Prepayment.status != PrepaymentStatus.CANCELLED)
+        )
+    ).scalars().all()
+    linked = set(
+        (
+            await session.execute(
+                select(Reservation.prepayment_id).where(Reservation.prepayment_id.is_not(None))
+            )
+        ).scalars().all()
+    )
+    created, skipped = 0, 0
+    for p in preps:
+        if p.id in linked:
+            continue
+        if not p.check_in_date or not p.check_out_date or p.check_out_date <= p.check_in_date:
+            skipped += 1
+            continue
+        status = (
+            ReservationStatus.CONFIRMED
+            if p.status in (PrepaymentStatus.CONFIRMED, PrepaymentStatus.SETTLED)
+            else ReservationStatus.HOLD
+        )
+        res = Reservation(
+            property_id=p.property_id,
+            check_in=p.check_in_date,
+            check_out=p.check_out_date,
+            guest_name=p.guest_name,
+            status=status,
+            source=ReservationSource.MANUAL,
+            deposit_amount=p.amount,
+            prepayment_id=p.id,
+            note="Импорт из предоплат",
+            created_by=user.get("telegram_id"),
+        )
+        session.add(res)
+        try:
+            await session.commit()
+            created += 1
+        except IntegrityError:
+            await session.rollback()
+            skipped += 1
+    return {"created": created, "skipped": skipped}

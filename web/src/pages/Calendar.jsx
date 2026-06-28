@@ -26,13 +26,25 @@ function money(n) {
   if (n == null) return '';
   return Number(n).toLocaleString('ru-RU').replace(/,/g, ' ');
 }
+function stayTotal(unit, ciStr, coStr) {
+  if (!unit || !ciStr || !coStr) return 0;
+  let d = new Date(ciStr + 'T00:00:00');
+  const end = new Date(coStr + 'T00:00:00');
+  let total = 0;
+  while (d < end) {
+    total += Number(d.getDay() === 6 ? unit.price_weekend : unit.price_weekday) || 0; // Sat = weekend
+    d = addDays(d, 1);
+  }
+  return Math.round(total);
+}
 
 export default function Calendar() {
   const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
   const [start, setStart] = useState(today);
   const [span, setSpan] = useState(() =>
-    typeof window !== 'undefined' && window.innerWidth < 640 ? 7 : 21
+    typeof window !== 'undefined' && window.innerWidth < 640 ? 7 : 14
   );
+  const [importing, setImporting] = useState(false);
   const [units, setUnits] = useState([]);
   const [reservations, setReservations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -80,15 +92,51 @@ export default function Calendar() {
     return m;
   }, [reservations]);
 
+  // Suggested amounts from the unit's catalog rate (editable). Deposit defaults to 30%.
+  function calcAmounts(propertyId, ci, co) {
+    const u = units.find((x) => x.id === Number(propertyId));
+    const total = stayTotal(u, ci, co);
+    return {
+      total_amount: total ? String(total) : '',
+      deposit_amount: total ? String(Math.round(total * 0.3)) : '',
+    };
+  }
+
   function openNew(unit, date) {
+    const property_id = unit ? unit.id : (units[0]?.id ?? '');
+    const check_in = date ? ymd(date) : rangeFrom;
+    const check_out = date ? ymd(addDays(date, 1)) : ymd(addDays(start, 1));
     setForm({
-      property_id: unit ? unit.id : (units[0]?.id ?? ''),
-      check_in: date ? ymd(date) : rangeFrom,
-      check_out: date ? ymd(addDays(date, 1)) : ymd(addDays(start, 1)),
+      property_id, check_in, check_out,
       guest_name: '', guest_phone: '', guest_count: '',
       status: 'CONFIRMED', source: 'MANUAL',
-      total_amount: '', deposit_amount: '', note: '',
+      ...calcAmounts(property_id, check_in, check_out),
+      note: '',
     });
+  }
+
+  // Merge a change; recompute suggested amounts when the unit or dates change.
+  function updateForm(patch) {
+    setForm((f) => {
+      const next = { ...f, ...patch };
+      if ('property_id' in patch || 'check_in' in patch || 'check_out' in patch) {
+        Object.assign(next, calcAmounts(next.property_id, next.check_in, next.check_out));
+      }
+      return next;
+    });
+  }
+
+  async function importPreps() {
+    setImporting(true);
+    try {
+      const r = await api.importPrepayments();
+      await load();
+      alert(`Импортировано из предоплат: ${r.created}, пропущено: ${r.skipped}`);
+    } catch (e) {
+      alert(e.message || 'Ошибка импорта');
+    } finally {
+      setImporting(false);
+    }
   }
 
   async function submitNew(e) {
@@ -143,6 +191,7 @@ export default function Calendar() {
             <option value={30}>30 дней</option>
           </select>
           <button onClick={() => openNew(null, null)} className="flex items-center gap-1.5 bg-blue-600 text-white rounded-lg px-3 py-2 text-sm font-medium hover:bg-blue-700"><Plus size={16} /> Бронь</button>
+          <button onClick={importPreps} disabled={importing} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{importing ? 'Импорт…' : 'Импорт предоплат'}</button>
         </div>
       </div>
 
@@ -166,7 +215,7 @@ export default function Calendar() {
                 {days.map((d) => {
                   const isSat = d.getDay() === 6;
                   return (
-                    <th key={ymd(d)} className={`border-b border-gray-200 px-1 py-2 text-center font-medium min-w-[34px] ${isSat ? 'bg-rose-50 text-rose-600' : 'text-gray-500'}`}>
+                    <th key={ymd(d)} className={`border-b border-gray-200 px-1 py-2 text-center font-medium min-w-[72px] ${isSat ? 'bg-rose-50 text-rose-600' : 'text-gray-500'}`}>
                       <div className="text-[10px] leading-none">{dow[d.getDay()]}</div>
                       <div>{d.getDate()}</div>
                     </th>
@@ -176,29 +225,7 @@ export default function Calendar() {
             </thead>
             <tbody>
               {units.map((u) => (
-                <tr key={u.id}>
-                  <td className="sticky left-0 z-10 bg-white border-b border-r border-gray-200 px-3 py-1.5 font-medium text-gray-800 whitespace-nowrap">
-                    {u.name_ru} <span className="text-gray-400 text-xs">· {u.capacity}👤</span>
-                  </td>
-                  {days.map((d) => {
-                    const r = byCell.get(`${u.id}|${ymd(d)}`);
-                    const isSat = d.getDay() === 6;
-                    if (r) {
-                      const st = STATUS_STYLE[r.status] || STATUS_STYLE.CONFIRMED;
-                      return (
-                        <td key={ymd(d)} className="border-b border-gray-100 p-0">
-                          <button onClick={() => setDetail(r)} title={`${r.guest_name || r.source_label}: ${r.check_in}→${r.check_out}`}
-                            className={`w-full h-8 ${st.cell} transition-colors`} />
-                        </td>
-                      );
-                    }
-                    return (
-                      <td key={ymd(d)} className={`border-b border-gray-100 p-0 ${isSat ? 'bg-rose-50/40' : ''}`}>
-                        <button onClick={() => openNew(u, d)} className="w-full h-8 hover:bg-blue-100 transition-colors" />
-                      </td>
-                    );
-                  })}
-                </tr>
+                <UnitRow key={u.id} unit={u} days={days} byCell={byCell} onOpen={openNew} onDetail={setDetail} />
               ))}
               {units.length === 0 && (
                 <tr><td colSpan={days.length + 1} className="px-3 py-8 text-center text-gray-400">Нет объектов</td></tr>
@@ -213,13 +240,13 @@ export default function Calendar() {
         <Modal onClose={() => setForm(null)} title="Новая бронь / блок">
           <form onSubmit={submitNew} className="space-y-3">
             <Field label="Объект">
-              <select required value={form.property_id} onChange={(e) => setForm({ ...form, property_id: e.target.value })} className="input">
+              <select required value={form.property_id} onChange={(e) => updateForm({ property_id: e.target.value })} className="input">
                 {units.map((u) => <option key={u.id} value={u.id}>{u.name_ru}</option>)}
               </select>
             </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Заезд"><input type="date" required value={form.check_in} onChange={(e) => setForm({ ...form, check_in: e.target.value })} className="input" /></Field>
-              <Field label="Выезд"><input type="date" required value={form.check_out} onChange={(e) => setForm({ ...form, check_out: e.target.value })} className="input" /></Field>
+              <Field label="Заезд"><input type="date" required value={form.check_in} onChange={(e) => updateForm({ check_in: e.target.value })} className="input" /></Field>
+              <Field label="Выезд"><input type="date" required value={form.check_out} onChange={(e) => updateForm({ check_out: e.target.value })} className="input" /></Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Статус">
@@ -274,6 +301,52 @@ export default function Calendar() {
 
       <style>{`.input{width:100%;border:1px solid #e5e7eb;border-radius:0.5rem;padding:0.5rem 0.625rem;font-size:0.875rem}`}</style>
     </div>
+  );
+}
+
+// One unit's row as a tape chart: bookings render as bars (colSpan over their nights)
+// showing guest name + phone; empty days are clickable to create a booking.
+function UnitRow({ unit, days, byCell, onOpen, onDetail }) {
+  const cells = [];
+  let i = 0;
+  while (i < days.length) {
+    const d = days[i];
+    const r = byCell.get(`${unit.id}|${ymd(d)}`);
+    if (r) {
+      let len = 1;
+      while (i + len < days.length) {
+        const rr = byCell.get(`${unit.id}|${ymd(days[i + len])}`);
+        if (rr && rr.id === r.id) len++; else break;
+      }
+      const st = STATUS_STYLE[r.status] || STATUS_STYLE.CONFIRMED;
+      const line2 = r.guest_phone || (r.deposit_amount != null ? money(r.deposit_amount) + ' сум' : '');
+      cells.push(
+        <td key={ymd(d)} colSpan={len} className="border-b border-gray-100 p-0.5 align-top">
+          <button onClick={() => onDetail(r)} title={`${r.guest_name || r.source_label} · ${r.check_in}→${r.check_out}`}
+            className={`w-full h-12 rounded ${st.cell} px-1.5 text-left leading-tight overflow-hidden transition-colors`}>
+            <div className="text-[11px] font-semibold text-gray-900 truncate">{r.guest_name || r.source_label}</div>
+            <div className="text-[11px] text-gray-700 truncate">{line2}</div>
+          </button>
+        </td>
+      );
+      i += len;
+    } else {
+      const isSat = d.getDay() === 6;
+      cells.push(
+        <td key={ymd(d)} className={`border-b border-gray-100 p-0 ${isSat ? 'bg-rose-50/40' : ''}`}>
+          <button onClick={() => onOpen(unit, d)} className="w-full h-12 hover:bg-blue-100 transition-colors" />
+        </td>
+      );
+      i += 1;
+    }
+  }
+  return (
+    <tr>
+      <td className="sticky left-0 z-10 bg-white border-b border-r border-gray-200 px-3 py-1.5 font-medium text-gray-800 whitespace-nowrap">
+        {unit.name_ru} <span className="text-gray-400 text-xs">· {unit.capacity}👤</span>
+      </td>
+      {cells}
+    </tr>
   );
 }
 

@@ -185,6 +185,7 @@ export const api = {
   createReservation: (data) => request('/reservations', { method: 'POST', body: JSON.stringify(data) }),
   updateReservation: (id, data) => request(`/reservations/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   cancelReservation: (id) => request(`/reservations/${id}/cancel`, { method: 'POST' }),
+  importPrepayments: () => request('/reservations/import-prepayments', { method: 'POST' }),
   getAvailability: (checkIn, checkOut, guests = 1) =>
     request(`/public/availability?check_in=${checkIn}&check_out=${checkOut}&guests=${guests}`),
 };
