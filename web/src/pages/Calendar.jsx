@@ -40,6 +40,15 @@ function fmtDateTime(iso) {
     return iso;
   }
 }
+// Bar colour: no-show grey, fully paid green, past+unpaid orange (debt), else status colour.
+function barClass(r, todayStr) {
+  if (r.status === 'NO_SHOW') return 'bg-gray-200 hover:bg-gray-300 line-through text-gray-500';
+  const total = r.total_amount, paid = r.paid_amount || 0;
+  const fullyPaid = total != null && total > 0 && paid + 1 >= total;
+  if (fullyPaid) return 'bg-green-300 hover:bg-green-400';
+  if (r.check_out <= todayStr) return 'bg-orange-300 hover:bg-orange-400'; // stay ended, not fully paid
+  return (STATUS_STYLE[r.status] && STATUS_STYLE[r.status].cell) || STATUS_STYLE.CONFIRMED.cell;
+}
 function stayTotal(unit, ciStr, coStr) {
   if (!unit || !ciStr || !coStr) return 0;
   let d = new Date(ciStr + 'T00:00:00');
@@ -111,11 +120,14 @@ export default function Calendar() {
   const byCell = useMemo(() => {
     const m = new Map();
     for (const r of reservations) {
-      if (r.status === 'CANCELLED' || r.status === 'NO_SHOW') continue;
+      if (r.status === 'CANCELLED') continue; // cancelled frees the dates; no-show stays visible
       let d = new Date(r.check_in + 'T00:00:00');
       const end = new Date(r.check_out + 'T00:00:00');
       while (d < end) {
-        m.set(`${r.property_id}|${ymd(d)}`, r);
+        const key = `${r.property_id}|${ymd(d)}`;
+        const ex = m.get(key);
+        // don't let a no-show hide an active booking on the same night
+        if (!(ex && r.status === 'NO_SHOW' && ex.status !== 'NO_SHOW')) m.set(key, r);
         d = addDays(d, 1);
       }
     }
@@ -161,7 +173,7 @@ export default function Calendar() {
     try {
       const r = await api.importPrepayments();
       await load();
-      alert(`Импортировано из предоплат: ${r.created}, пропущено: ${r.skipped}`);
+      alert(`Брони из предоплат: +${r.created} (пропущено ${r.skipped}); привязано прошлых оплат: ${r.linked_income ?? 0}`);
     } catch (e) {
       alert(e.message || 'Ошибка импорта');
     } finally {
@@ -252,9 +264,12 @@ export default function Calendar() {
 
       {/* Legend */}
       <div className="flex flex-wrap gap-3 mb-3 text-xs text-gray-600">
-        {STATUS_OPTIONS.concat(['CHECKED_IN']).map((s) => (
-          <span key={s} className="flex items-center gap-1.5"><span className={`inline-block w-3 h-3 rounded ${STATUS_STYLE[s].cell.split(' ')[0]}`} />{STATUS_STYLE[s].label}</span>
-        ))}
+        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-green-300" />Оплачено</span>
+        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-blue-300" />Подтверждено</span>
+        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-amber-200" />Бронь (ожидает)</span>
+        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-orange-300" />Долг (не оплачено)</span>
+        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-gray-400" />Блок</span>
+        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-gray-200" />Не приехал</span>
       </div>
 
       {loading ? (
@@ -278,7 +293,7 @@ export default function Calendar() {
             </thead>
             <tbody>
               {units.map((u) => (
-                <UnitRow key={u.id} unit={u} days={days} byCell={byCell} onOpen={openNew} onDetail={setDetail} />
+                <UnitRow key={u.id} unit={u} days={days} byCell={byCell} onOpen={openNew} onDetail={setDetail} todayStr={ymd(today)} />
               ))}
               {units.length === 0 && (
                 <tr><td colSpan={days.length + 1} className="px-3 py-8 text-center text-gray-400">Нет объектов</td></tr>
@@ -397,7 +412,7 @@ export default function Calendar() {
 
 // One unit's row as a tape chart: bookings render as bars (colSpan over their nights)
 // showing guest name + phone; empty days are clickable to create a booking.
-function UnitRow({ unit, days, byCell, onOpen, onDetail }) {
+function UnitRow({ unit, days, byCell, onOpen, onDetail, todayStr }) {
   const cells = [];
   let i = 0;
   while (i < days.length) {
@@ -409,14 +424,16 @@ function UnitRow({ unit, days, byCell, onOpen, onDetail }) {
         const rr = byCell.get(`${unit.id}|${ymd(days[i + len])}`);
         if (rr && rr.id === r.id) len++; else break;
       }
-      const st = STATUS_STYLE[r.status] || STATUS_STYLE.CONFIRMED;
-      const line2 = r.guest_phone || (r.deposit_amount != null ? money(r.deposit_amount) + ' сум' : '');
+      const total = r.total_amount;
+      const paid = r.paid_amount || 0;
+      const fullyPaid = total != null && total > 0 && paid + 1 >= total;
+      const line2 = r.guest_phone || (total != null ? money(total) + ' сум' : '');
       cells.push(
         <td key={ymd(d)} colSpan={len} className="border-b border-gray-100 p-0.5 align-top">
           <button onClick={() => onDetail(r)} title={`${r.guest_name || r.source_label} · ${r.guest_phone || ''} · ${r.check_in}→${r.check_out}`}
-            className={`w-full h-12 rounded ${st.cell} px-1.5 text-left leading-tight overflow-hidden transition-colors`}>
-            <div className="text-[11px] font-semibold text-gray-900 truncate">{cap(r.guest_name || r.source_label)}</div>
-            <div className="text-[11px] text-gray-700 truncate">{cap(line2)}</div>
+            className={`w-full h-12 rounded ${barClass(r, todayStr)} px-1.5 text-left leading-tight overflow-hidden transition-colors`}>
+            <div className="text-[11px] font-semibold truncate">{fullyPaid ? '✓ ' : ''}{cap(r.guest_name || r.source_label)}</div>
+            <div className="text-[11px] truncate opacity-80">{cap(line2)}</div>
           </button>
         </td>
       );

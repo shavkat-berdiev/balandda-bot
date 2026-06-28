@@ -5,11 +5,11 @@ range, create a booking or manual block (double-booking is rejected by the DB
 exclusion constraint -> 409), update, and cancel.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +22,7 @@ from db.enums import (
     ReservationSource,
     ReservationStatus,
 )
-from db.models import IncomeEntry, Prepayment, Property, Reservation, ReservationEvent, User
+from db.models import IncomeEntry, Prepayment, Property, Reservation, ReservationEvent, StructuredReport, User
 
 router = APIRouter()
 
@@ -53,12 +53,25 @@ class ReservationUpdate(BaseModel):
     note: str | None = None
 
 
-def _out(r: Reservation, property_name: str | None = None, income_paid: float = 0.0) -> dict:
+def _stay_price(prop, ci, co):
+    """Estimate the full stay price from the unit's catalog rate (Sat = weekend)."""
+    if not prop or not ci or not co or co <= ci:
+        return None
+    total = 0.0
+    d = ci
+    while d < co:
+        total += float(prop.price_weekend if d.weekday() == 5 else prop.price_weekday)
+        d += timedelta(days=1)
+    return round(total)
+
+
+def _out(r: Reservation, property_name: str | None = None, income_paid: float = 0.0,
+         total_override: float | None = None) -> dict:
     st = r.status if isinstance(r.status, ReservationStatus) else ReservationStatus(r.status)
     sr = r.source if isinstance(r.source, ReservationSource) else ReservationSource(r.source)
     deposit = float(r.deposit_amount) if r.deposit_amount is not None else 0.0
     paid = deposit + float(income_paid or 0)
-    total = float(r.total_amount) if r.total_amount is not None else None
+    total = total_override if total_override is not None else (float(r.total_amount) if r.total_amount is not None else None)
     return {
         "id": r.id,
         "property_id": r.property_id,
@@ -147,14 +160,14 @@ async def list_reservations(
     """Reservations/blocks overlapping [from, to), with unit names — for the calendar."""
     rows = (
         await session.execute(
-            select(Reservation, Property.name_ru)
+            select(Reservation, Property)
             .join(Property, Property.id == Reservation.property_id)
             .where(Reservation.check_in < to)
             .where(Reservation.check_out > from_)
             .order_by(Reservation.property_id, Reservation.check_in)
         )
     ).all()
-    res_ids = [r.id for (r, _n) in rows]
+    res_ids = [r.id for (r, _p) in rows]
     income_by_res: dict[int, float] = {}
     if res_ids:
         sums = (
@@ -165,7 +178,11 @@ async def list_reservations(
             )
         ).all()
         income_by_res = {rid: float(s) for (rid, s) in sums}
-    return [_out(r, name, income_by_res.get(r.id, 0.0)) for (r, name) in rows]
+    return [
+        _out(r, prop.name_ru, income_by_res.get(r.id, 0.0),
+             float(r.total_amount) if r.total_amount is not None else _stay_price(prop, r.check_in, r.check_out))
+        for (r, prop) in rows
+    ]
 
 
 @router.post("")
@@ -343,4 +360,35 @@ async def import_prepayments(
         except IntegrityError:
             await session.rollback()
             skipped += 1
-    return {"created": created, "skipped": skipped}
+
+    # Backfill: link historical accommodation income (recorded before this feature)
+    # to bookings by unit + the report's date.
+    inc_rows = (
+        await session.execute(
+            select(IncomeEntry.id, IncomeEntry.property_id, StructuredReport.report_date)
+            .join(StructuredReport, StructuredReport.id == IncomeEntry.report_id)
+            .where(IncomeEntry.property_id.is_not(None))
+            .where(IncomeEntry.reservation_id.is_(None))
+            .where(IncomeEntry.restaurant_category.is_(None))
+        )
+    ).all()
+    linked_income = 0
+    for (inc_id, prop_id, rdate) in inc_rows:
+        if not prop_id or not rdate:
+            continue
+        rid = (
+            await session.execute(
+                select(Reservation.id)
+                .where(Reservation.property_id == prop_id)
+                .where(Reservation.status.notin_([ReservationStatus.CANCELLED, ReservationStatus.NO_SHOW]))
+                .where(Reservation.check_in <= rdate)
+                .where(Reservation.check_out >= rdate)
+                .order_by(Reservation.check_in.desc())
+            )
+        ).scalars().first()
+        if rid:
+            await session.execute(update(IncomeEntry).where(IncomeEntry.id == inc_id).values(reservation_id=rid))
+            linked_income += 1
+    await session.commit()
+
+    return {"created": created, "skipped": skipped, "linked_income": linked_income}
