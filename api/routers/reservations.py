@@ -192,11 +192,21 @@ async def import_prepayments(
     """Backfill the calendar from existing prepayments in analytics — the source of
     current bookings until Exely sync exists. Idempotent: a prepayment already linked
     to a reservation is skipped; date overlaps are skipped (and counted)."""
-    preps = (
+    rows = (
         await session.execute(
             select(Prepayment).where(Prepayment.status != PrepaymentStatus.CANCELLED)
         )
     ).scalars().all()
+    # Snapshot fields before any write — a rollback below would expire these ORM
+    # objects, and a later attribute access would raise MissingGreenlet.
+    snap = [
+        {
+            "id": p.id, "property_id": p.property_id, "guest_name": p.guest_name,
+            "check_in": p.check_in_date, "check_out": p.check_out_date,
+            "amount": p.amount, "status": p.status,
+        }
+        for p in rows
+    ]
     linked = set(
         (
             await session.execute(
@@ -204,29 +214,30 @@ async def import_prepayments(
             )
         ).scalars().all()
     )
+    operator = user.get("telegram_id")
     created, skipped = 0, 0
-    for p in preps:
-        if p.id in linked:
+    for s in snap:
+        if s["id"] in linked:
             continue
-        if not p.check_in_date or not p.check_out_date or p.check_out_date <= p.check_in_date:
+        if not s["check_in"] or not s["check_out"] or s["check_out"] <= s["check_in"]:
             skipped += 1
             continue
         status = (
             ReservationStatus.CONFIRMED
-            if p.status in (PrepaymentStatus.CONFIRMED, PrepaymentStatus.SETTLED)
+            if s["status"] in (PrepaymentStatus.CONFIRMED, PrepaymentStatus.SETTLED)
             else ReservationStatus.HOLD
         )
         res = Reservation(
-            property_id=p.property_id,
-            check_in=p.check_in_date,
-            check_out=p.check_out_date,
-            guest_name=p.guest_name,
+            property_id=s["property_id"],
+            check_in=s["check_in"],
+            check_out=s["check_out"],
+            guest_name=s["guest_name"],
             status=status,
             source=ReservationSource.MANUAL,
-            deposit_amount=p.amount,
-            prepayment_id=p.id,
+            deposit_amount=s["amount"],
+            prepayment_id=s["id"],
             note="Импорт из предоплат",
-            created_by=user.get("telegram_id"),
+            created_by=operator,
         )
         session.add(res)
         try:

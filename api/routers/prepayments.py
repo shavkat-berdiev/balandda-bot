@@ -113,6 +113,9 @@ async def update_prepayment_status(
     prepayment.status = new_status
     await session.commit()
     await session.refresh(prepayment)
+    # Keep the linked calendar reservation in sync (status change / cancellation)
+    from db.reservation_sync import sync_reservation_for_prepayment
+    await sync_reservation_for_prepayment(session, prepayment)
 
     return {"ok": True, "status": new_status.value}
 

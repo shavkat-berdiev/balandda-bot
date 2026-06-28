@@ -609,6 +609,9 @@ async def on_prepay_confirm(callback: types.CallbackQuery, state: FSMContext):
         )
         session.add(prepayment)
         await session.commit()
+        # Auto-add this prepayment to the bookings calendar
+        from db.reservation_sync import sync_reservation_for_prepayment
+        await sync_reservation_for_prepayment(session, prepayment)
 
     # Clear state and return to main menu
     await state.clear()
