@@ -13,6 +13,7 @@ import AdminMinibar from './pages/AdminMinibar';
 import AdminStaff from './pages/AdminStaff';
 import AdminReports from './pages/AdminReports';
 import Prepayments from './pages/Prepayments';
+import Calendar from './pages/Calendar';
 import Wallets from './pages/Wallets';
 import RegistrationRequests from './pages/RegistrationRequests';
 
@@ -66,6 +67,7 @@ export default function App() {
         <Route path="/admin/staff" element={<AdminStaff />} />
         <Route path="/admin/reports" element={<AdminReports user={user} />} />
         <Route path="/prepayments" element={<Prepayments />} />
+        <Route path="/calendar" element={<Calendar />} />
         <Route path="/wallets" element={<Wallets />} />
         <Route path="/registration" element={<RegistrationRequests />} />
         <Route path="/login" element={<Navigate to="/" />} />

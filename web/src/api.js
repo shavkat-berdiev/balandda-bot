@@ -179,4 +179,12 @@ export const api = {
   getRegistrationRoles: () => request('/registration/roles'),
   decideRegistrationRequest: (id, data) =>
     request(`/registration/decide/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Reservations / availability calendar
+  getReservations: (from, to) => request(`/reservations?from=${from}&to=${to}`),
+  createReservation: (data) => request('/reservations', { method: 'POST', body: JSON.stringify(data) }),
+  updateReservation: (id, data) => request(`/reservations/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  cancelReservation: (id) => request(`/reservations/${id}/cancel`, { method: 'POST' }),
+  getAvailability: (checkIn, checkOut, guests = 1) =>
+    request(`/public/availability?check_in=${checkIn}&check_out=${checkOut}&guests=${guests}`),
 };
