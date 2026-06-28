@@ -231,6 +231,20 @@ async def run_migrations():
         """
         CREATE INDEX IF NOT EXISTS ix_reservations_status ON reservations (status);
         """,
+        """
+        CREATE TABLE IF NOT EXISTS reservation_events (
+            id SERIAL PRIMARY KEY,
+            reservation_id INTEGER NOT NULL REFERENCES reservations(id) ON DELETE CASCADE,
+            actor_id BIGINT,
+            actor_name VARCHAR(255),
+            action VARCHAR(40) NOT NULL,
+            detail TEXT,
+            created_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_reservation_events_res ON reservation_events (reservation_id);
+        """,
         # btree_gist + exclusion constraint: no overlapping dates on the same unit.
         # Wrapped in a sub-block so a missing extension / permission issue logs a
         # warning instead of aborting the whole migration transaction.

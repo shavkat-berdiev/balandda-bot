@@ -12,7 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.enums import PrepaymentStatus, ReservationSource, ReservationStatus
-from db.models import Prepayment, Reservation
+from db.models import Prepayment, Reservation, ReservationEvent
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,12 @@ async def sync_reservation_for_prepayment(session: AsyncSession, prepayment: Pre
         except IntegrityError:
             await session.rollback()
             logger.warning("reservation sync overlap for prepayment %s", pid)
+            return
+        session.add(ReservationEvent(
+            reservation_id=existing.id, actor_name="Авто (предоплата)", action="auto",
+            detail=f"Обновлено из предоплаты (статус: {status.value})",
+        ))
+        await session.commit()
         return
 
     if status == ReservationStatus.CANCELLED:
@@ -79,3 +85,9 @@ async def sync_reservation_for_prepayment(session: AsyncSession, prepayment: Pre
     except IntegrityError:
         await session.rollback()
         logger.warning("reservation create overlap for prepayment %s", pid)
+        return
+    session.add(ReservationEvent(
+        reservation_id=res.id, actor_name="Авто (предоплата)", action="auto",
+        detail=f"Создано из предоплаты: депозит {p_amount}",
+    ))
+    await session.commit()

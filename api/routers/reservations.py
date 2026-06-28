@@ -22,7 +22,7 @@ from db.enums import (
     ReservationSource,
     ReservationStatus,
 )
-from db.models import Prepayment, Property, Reservation
+from db.models import Prepayment, Property, Reservation, ReservationEvent, User
 
 router = APIRouter()
 
@@ -83,6 +83,55 @@ def _parse_status(value: str) -> ReservationStatus:
         raise HTTPException(status_code=400, detail=f"invalid status: {value}")
 
 
+# ---- change-log helpers ----
+_FIELDS = ["check_in", "check_out", "guest_name", "guest_phone",
+           "guest_count", "total_amount", "deposit_amount", "note", "status"]
+_FIELD_LABELS = {
+    "check_in": "Заезд", "check_out": "Выезд", "guest_name": "Имя",
+    "guest_phone": "Телефон", "guest_count": "Гостей",
+    "total_amount": "Сумма", "deposit_amount": "Предоплата",
+    "note": "Заметка", "status": "Статус",
+}
+
+
+def _fmt(field, v):
+    if v is None or v == "":
+        return "—"
+    if field in ("total_amount", "deposit_amount"):
+        try:
+            return f"{int(round(float(v))):,}".replace(",", " ")
+        except (TypeError, ValueError):
+            return str(v)
+    if field == "status":
+        st = v if isinstance(v, ReservationStatus) else ReservationStatus(v)
+        return RESERVATION_STATUS_LABELS.get(st, st.value)
+    if hasattr(v, "isoformat"):
+        return v.isoformat()
+    return str(v)
+
+
+def _diff_text(old: dict, new: dict) -> str:
+    parts = []
+    for f in _FIELDS:
+        ov, nv = _fmt(f, old.get(f)), _fmt(f, new.get(f))
+        if ov != nv:
+            parts.append(f"{_FIELD_LABELS.get(f, f)}: {ov} → {nv}")
+    return "; ".join(parts)
+
+
+async def _log(session: AsyncSession, reservation_id: int, actor: dict, action: str, detail: str | None = None):
+    actor_id = actor.get("telegram_id") if actor else None
+    name = None
+    if actor_id:
+        name = (
+            await session.execute(select(User.full_name).where(User.telegram_id == actor_id))
+        ).scalar_one_or_none()
+    session.add(ReservationEvent(
+        reservation_id=reservation_id, actor_id=actor_id, actor_name=name, action=action, detail=detail,
+    ))
+    await session.commit()
+
+
 @router.get("")
 async def list_reservations(
     from_: date = Query(..., alias="from"),
@@ -138,6 +187,8 @@ async def create_reservation(
         await session.rollback()
         raise HTTPException(status_code=409, detail="Unit is not available for these dates")
     await session.refresh(res)
+    await _log(session, res.id, user, "created",
+               f"{data.guest_name or RESERVATION_SOURCE_LABELS.get(source, source.value)} · {data.check_in}→{data.check_out}")
     return _out(res)
 
 
@@ -151,6 +202,7 @@ async def update_reservation(
     res = await session.get(Reservation, res_id)
     if not res:
         raise HTTPException(status_code=404, detail="not found")
+    old = {f: getattr(res, f) for f in _FIELDS}
     if data.status is not None:
         res.status = _parse_status(data.status)
     for field in ("check_in", "check_out", "guest_name", "guest_phone",
@@ -160,11 +212,15 @@ async def update_reservation(
             setattr(res, field, val)
     if res.check_out <= res.check_in:
         raise HTTPException(status_code=400, detail="check_out must be after check_in")
+    new = {f: getattr(res, f) for f in _FIELDS}
     try:
         await session.commit()
     except IntegrityError:
         await session.rollback()
         raise HTTPException(status_code=409, detail="Unit is not available for these dates")
+    detail = _diff_text(old, new)
+    if detail:
+        await _log(session, res_id, user, "updated", detail)
     await session.refresh(res)
     return _out(res)
 
@@ -180,8 +236,33 @@ async def cancel_reservation(
         raise HTTPException(status_code=404, detail="not found")
     res.status = ReservationStatus.CANCELLED
     await session.commit()
+    await _log(session, res_id, user, "cancelled", "Бронь отменена")
     await session.refresh(res)
     return _out(res)
+
+
+@router.get("/{res_id}/events")
+async def reservation_events(
+    res_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Change log for a reservation, newest first."""
+    rows = (
+        await session.execute(
+            select(ReservationEvent)
+            .where(ReservationEvent.reservation_id == res_id)
+            .order_by(ReservationEvent.created_at.desc())
+        )
+    ).scalars().all()
+    return [
+        {
+            "id": e.id, "action": e.action, "actor_name": e.actor_name,
+            "detail": e.detail,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+        }
+        for e in rows
+    ]
 
 
 @router.post("/import-prepayments")

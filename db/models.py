@@ -67,7 +67,7 @@ __all__ = [
     "PrepaymentStatus", "PREPAYMENT_STATUS_LABELS",
     "PropertyType", "PROPERTY_TYPE_LABELS",
     "ReportStatus", "REPORT_STATUS_LABELS",
-    "Reservation", "ReservationStatus", "RESERVATION_STATUS_LABELS",
+    "Reservation", "ReservationEvent", "ReservationStatus", "RESERVATION_STATUS_LABELS",
     "ReservationSource", "RESERVATION_SOURCE_LABELS",
     "ServiceType", "SERVICE_TYPE_LABELS",
     "TransactionType",
@@ -443,3 +443,18 @@ class Reservation(Base):
     )
 
     property: Mapped["Property"] = relationship()
+
+
+class ReservationEvent(Base):
+    """Audit log for a reservation: who changed what and when."""
+    __tablename__ = "reservation_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    reservation_id: Mapped[int] = mapped_column(
+        ForeignKey("reservations.id", ondelete="CASCADE"), index=True
+    )
+    actor_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    actor_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    action: Mapped[str] = mapped_column(String(40))  # created / updated / cancelled / auto
+    detail: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -26,6 +26,20 @@ function money(n) {
   if (n == null) return '';
   return Number(n).toLocaleString('ru-RU').replace(/,/g, ' ');
 }
+// Keep calendar bars compact: show ~9 chars, full text on the card.
+function cap(s, n = 9) {
+  s = (s ?? '').toString();
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+const ACTION_LABELS = { created: 'создано', updated: 'изменено', cancelled: 'отменено', auto: 'авто' };
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  try {
+    return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  } catch {
+    return iso;
+  }
+}
 function stayTotal(unit, ciStr, coStr) {
   if (!unit || !ciStr || !coStr) return 0;
   let d = new Date(ciStr + 'T00:00:00');
@@ -50,7 +64,10 @@ export default function Calendar() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [form, setForm] = useState(null);     // new-reservation form
-  const [detail, setDetail] = useState(null); // reservation detail
+  const [detail, setDetail] = useState(null); // selected reservation
+  const [detailForm, setDetailForm] = useState(null); // editable copy of the selected reservation
+  const [events, setEvents] = useState([]);   // change log for the selected reservation
+  const [savingDetail, setSavingDetail] = useState(false);
 
   const days = useMemo(
     () => Array.from({ length: span }, (_, i) => addDays(start, i)),
@@ -76,6 +93,19 @@ export default function Calendar() {
   }, [rangeFrom, rangeTo]);
 
   useEffect(() => { load(); }, [load]);
+
+  // When a booking is selected: load an editable copy + its change log.
+  useEffect(() => {
+    if (!detail) { setDetailForm(null); setEvents([]); return; }
+    setDetailForm({
+      status: detail.status,
+      check_in: detail.check_in, check_out: detail.check_out,
+      guest_name: detail.guest_name || '', guest_phone: detail.guest_phone || '',
+      guest_count: detail.guest_count ?? '', total_amount: detail.total_amount ?? '',
+      deposit_amount: detail.deposit_amount ?? '', note: detail.note || '',
+    });
+    api.getReservationEvents(detail.id).then(setEvents).catch(() => setEvents([]));
+  }, [detail]);
 
   // index: `${property_id}|${ymd}` -> reservation covering that night
   const byCell = useMemo(() => {
@@ -171,6 +201,29 @@ export default function Calendar() {
       await load();
     } catch (e) {
       alert(e.message || 'Ошибка');
+    }
+  }
+
+  async function saveDetail() {
+    setSavingDetail(true);
+    try {
+      await api.updateReservation(detail.id, {
+        status: detailForm.status,
+        check_in: detailForm.check_in,
+        check_out: detailForm.check_out,
+        guest_name: detailForm.guest_name || null,
+        guest_phone: detailForm.guest_phone || null,
+        guest_count: detailForm.guest_count ? Number(detailForm.guest_count) : null,
+        total_amount: detailForm.total_amount ? Number(detailForm.total_amount) : null,
+        deposit_amount: detailForm.deposit_amount ? Number(detailForm.deposit_amount) : null,
+        note: detailForm.note || null,
+      });
+      setDetail(null);
+      await load();
+    } catch (e) {
+      alert(e.message || 'Не удалось сохранить');
+    } finally {
+      setSavingDetail(false);
     }
   }
 
@@ -278,23 +331,53 @@ export default function Calendar() {
         </Modal>
       )}
 
-      {/* Detail modal */}
-      {detail && (
-        <Modal onClose={() => setDetail(null)} title={detail.guest_name || detail.source_label}>
-          <div className="space-y-1.5 text-sm text-gray-700">
-            <Row k="Объект" v={detail.property_name} />
-            <Row k="Даты" v={`${detail.check_in} → ${detail.check_out}`} />
-            <Row k="Статус" v={detail.status_label} />
-            <Row k="Источник" v={detail.source_label} />
-            {detail.guest_phone && <Row k="Телефон" v={detail.guest_phone} />}
-            {detail.guest_count != null && <Row k="Гостей" v={detail.guest_count} />}
-            {detail.total_amount != null && <Row k="Сумма" v={money(detail.total_amount) + ' сум'} />}
-            {detail.deposit_amount != null && <Row k="Предоплата" v={money(detail.deposit_amount) + ' сум'} />}
-            {detail.note && <Row k="Заметка" v={detail.note} />}
+      {/* Detail / edit modal */}
+      {detail && detailForm && (
+        <Modal onClose={() => setDetail(null)} title={`${detail.property_name || 'Бронь'}${detail.source_label ? ' · ' + detail.source_label : ''}`}>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Заезд"><input type="date" value={detailForm.check_in} onChange={(e) => setDetailForm({ ...detailForm, check_in: e.target.value })} className="input" /></Field>
+              <Field label="Выезд"><input type="date" value={detailForm.check_out} onChange={(e) => setDetailForm({ ...detailForm, check_out: e.target.value })} className="input" /></Field>
+            </div>
+            <Field label="Статус">
+              <select value={detailForm.status} onChange={(e) => setDetailForm({ ...detailForm, status: e.target.value })} className="input">
+                {Object.keys(STATUS_STYLE).filter((s) => s !== 'CANCELLED').map((s) => <option key={s} value={s}>{STATUS_STYLE[s].label}</option>)}
+              </select>
+            </Field>
+            <Field label="Имя гостя"><input value={detailForm.guest_name} onChange={(e) => setDetailForm({ ...detailForm, guest_name: e.target.value })} className="input" /></Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Телефон"><input value={detailForm.guest_phone} onChange={(e) => setDetailForm({ ...detailForm, guest_phone: e.target.value })} className="input" /></Field>
+              <Field label="Гостей"><input type="number" min="1" value={detailForm.guest_count} onChange={(e) => setDetailForm({ ...detailForm, guest_count: e.target.value })} className="input" /></Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Сумма (сум)"><input type="number" value={detailForm.total_amount} onChange={(e) => setDetailForm({ ...detailForm, total_amount: e.target.value })} className="input" /></Field>
+              <Field label="Предоплата (сум)"><input type="number" value={detailForm.deposit_amount} onChange={(e) => setDetailForm({ ...detailForm, deposit_amount: e.target.value })} className="input" /></Field>
+            </div>
+            <Field label="Заметка"><input value={detailForm.note} onChange={(e) => setDetailForm({ ...detailForm, note: e.target.value })} className="input" /></Field>
           </div>
-          <div className="flex justify-end gap-2 pt-4">
-            <button onClick={() => doCancel(detail.id)} className="px-4 py-2 rounded-lg bg-red-50 text-red-600 text-sm font-medium hover:bg-red-100">Отменить бронь</button>
-            <button onClick={() => setDetail(null)} className="px-4 py-2 rounded-lg border border-gray-200 text-sm">Закрыть</button>
+          <div className="flex justify-between items-center gap-2 pt-4">
+            <button onClick={() => doCancel(detail.id)} className="px-3 py-2 rounded-lg bg-red-50 text-red-600 text-sm font-medium hover:bg-red-100">Отменить</button>
+            <div className="flex gap-2">
+              <button onClick={() => setDetail(null)} className="px-4 py-2 rounded-lg border border-gray-200 text-sm">Закрыть</button>
+              <button onClick={saveDetail} disabled={savingDetail} className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 disabled:opacity-50">{savingDetail ? 'Сохранение…' : 'Сохранить'}</button>
+            </div>
+          </div>
+
+          <div className="mt-4 pt-3 border-t border-gray-100">
+            <div className="text-xs font-semibold text-gray-500 mb-2">История изменений</div>
+            {events.length === 0 ? (
+              <p className="text-xs text-gray-400">Нет записей</p>
+            ) : (
+              <ul className="space-y-1.5 max-h-40 overflow-y-auto">
+                {events.map((ev) => (
+                  <li key={ev.id} className="text-xs text-gray-600 leading-snug">
+                    <span className="text-gray-400">{fmtDateTime(ev.created_at)}</span>{' · '}
+                    <span className="font-medium text-gray-700">{ev.actor_name || 'Система'}</span>{' · '}
+                    {ACTION_LABELS[ev.action] || ev.action}{ev.detail ? `: ${ev.detail}` : ''}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         </Modal>
       )}
@@ -322,10 +405,10 @@ function UnitRow({ unit, days, byCell, onOpen, onDetail }) {
       const line2 = r.guest_phone || (r.deposit_amount != null ? money(r.deposit_amount) + ' сум' : '');
       cells.push(
         <td key={ymd(d)} colSpan={len} className="border-b border-gray-100 p-0.5 align-top">
-          <button onClick={() => onDetail(r)} title={`${r.guest_name || r.source_label} · ${r.check_in}→${r.check_out}`}
+          <button onClick={() => onDetail(r)} title={`${r.guest_name || r.source_label} · ${r.guest_phone || ''} · ${r.check_in}→${r.check_out}`}
             className={`w-full h-12 rounded ${st.cell} px-1.5 text-left leading-tight overflow-hidden transition-colors`}>
-            <div className="text-[11px] font-semibold text-gray-900 truncate">{r.guest_name || r.source_label}</div>
-            <div className="text-[11px] text-gray-700 truncate">{line2}</div>
+            <div className="text-[11px] font-semibold text-gray-900 truncate">{cap(r.guest_name || r.source_label)}</div>
+            <div className="text-[11px] text-gray-700 truncate">{cap(line2)}</div>
           </button>
         </td>
       );
