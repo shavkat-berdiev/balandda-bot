@@ -40,13 +40,17 @@ def verify_telegram_auth(auth_data: dict) -> bool:
     data_check_arr = sorted([f"{k}={v}" for k, v in auth_data.items()])
     data_check_string = "\n".join(data_check_arr)
 
-    # Compute hash
-    secret = hashlib.sha256(settings.bot_token.encode()).digest()
-    computed_hash = hmac.new(
-        secret, data_check_string.encode(), hashlib.sha256
-    ).hexdigest()
-
-    return computed_hash == check_hash
+    # Accept either the main bot (analytics.berdiev.uz) or the front-office bot
+    # (calendar.balandda.uz) — each Login Widget is signed with its own bot token.
+    tokens = [settings.bot_token]
+    if settings.front_bot_token:
+        tokens.append(settings.front_bot_token)
+    for token in tokens:
+        secret = hashlib.sha256(token.encode()).digest()
+        computed_hash = hmac.new(secret, data_check_string.encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(computed_hash, check_hash):
+            return True
+    return False
 
 
 def create_session_token(telegram_id: int, role: str) -> str:

@@ -4,6 +4,10 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     # Telegram
     bot_token: str
+    main_bot_username: str = "berdiev_shavkat_bot"   # Login Widget bot for analytics.berdiev.uz
+    # Front-office login bot for calendar.balandda.uz (separate Login Widget domain).
+    front_bot_token: str = ""
+    front_bot_username: str = ""
 
     # Database
     db_host: str = "localhost"

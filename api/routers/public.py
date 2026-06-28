@@ -11,10 +11,11 @@ Nothing requires auth; all write/admin operations stay in admin_catalog.py.
 
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from bot.config import settings
 from db.database import get_session
 from db.enums import PROPERTY_TYPE_LABELS, PropertyType, ReservationStatus
 from db.models import BusinessUnit, Property, Reservation, ServiceItem
@@ -242,3 +243,15 @@ async def public_availability(
         "available_units": units,
         "available_types": list(types.values()),
     }
+
+
+@router.get("/login-config")
+async def login_config(request: Request):
+    """Which Telegram Login Widget bot the page should use, by domain.
+
+    calendar.balandda.uz -> front-office bot; everything else -> main bot.
+    """
+    host = (request.headers.get("host") or "").split(":")[0].lower()
+    if settings.front_bot_username and host.startswith("calendar."):
+        return {"bot_login": settings.front_bot_username}
+    return {"bot_login": settings.main_bot_username}
