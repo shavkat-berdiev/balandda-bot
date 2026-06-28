@@ -33,6 +33,10 @@ from db.enums import (
     PREPAYMENT_STATUS_LABELS,
     PropertyType,
     PROPERTY_TYPE_LABELS,
+    ReservationStatus,
+    RESERVATION_STATUS_LABELS,
+    ReservationSource,
+    RESERVATION_SOURCE_LABELS,
     RegistrationRequestStatus,
     REGISTRATION_REQUEST_STATUS_LABELS,
     ReportStatus,
@@ -63,6 +67,8 @@ __all__ = [
     "PrepaymentStatus", "PREPAYMENT_STATUS_LABELS",
     "PropertyType", "PROPERTY_TYPE_LABELS",
     "ReportStatus", "REPORT_STATUS_LABELS",
+    "Reservation", "ReservationStatus", "RESERVATION_STATUS_LABELS",
+    "ReservationSource", "RESERVATION_SOURCE_LABELS",
     "ServiceType", "SERVICE_TYPE_LABELS",
     "TransactionType",
     "UserRole",
@@ -404,3 +410,36 @@ class RegistrationRequest(Base):
     assigned_role: Mapped[UserRole | None] = mapped_column(Enum(UserRole), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Reservation(Base):
+    """A booking (or manual block) on a specific unit (Property). Powers the
+    availability calendar. Overlap on the same unit is prevented by a Postgres
+    GiST exclusion constraint added in run_migrations()."""
+    __tablename__ = "reservations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    property_id: Mapped[int] = mapped_column(ForeignKey("properties.id"), index=True)
+    guest_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    guest_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    guest_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    check_in: Mapped[date] = mapped_column(Date, index=True)
+    check_out: Mapped[date] = mapped_column(Date)
+    status: Mapped[ReservationStatus] = mapped_column(
+        Enum(ReservationStatus), default=ReservationStatus.HOLD, index=True
+    )
+    source: Mapped[ReservationSource] = mapped_column(
+        Enum(ReservationSource), default=ReservationSource.DIRECT
+    )
+    total_amount: Mapped[float | None] = mapped_column(Numeric(15, 2), nullable=True)
+    deposit_amount: Mapped[float | None] = mapped_column(Numeric(15, 2), nullable=True)
+    prepayment_id: Mapped[int | None] = mapped_column(ForeignKey("prepayments.id"), nullable=True)
+    hold_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    property: Mapped["Property"] = relationship()

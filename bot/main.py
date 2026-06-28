@@ -187,6 +187,70 @@ async def run_migrations():
             END IF;
         END $$;
         """,
+        # ── Phase 2: reservations / availability calendar ──
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'reservationstatus') THEN
+                CREATE TYPE reservationstatus AS ENUM
+                    ('HOLD','CONFIRMED','CHECKED_IN','CHECKED_OUT','CANCELLED','NO_SHOW','BLOCKED');
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'reservationsource') THEN
+                CREATE TYPE reservationsource AS ENUM
+                    ('DIRECT','PHONE','TELEGRAM','INSTAGRAM','BOOKING_COM','AIRBNB','MANUAL');
+            END IF;
+        END $$;
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS reservations (
+            id SERIAL PRIMARY KEY,
+            property_id INTEGER NOT NULL REFERENCES properties(id),
+            guest_name VARCHAR(255),
+            guest_phone VARCHAR(50),
+            guest_count INTEGER,
+            check_in DATE NOT NULL,
+            check_out DATE NOT NULL,
+            status reservationstatus NOT NULL DEFAULT 'HOLD',
+            source reservationsource NOT NULL DEFAULT 'DIRECT',
+            total_amount NUMERIC(15,2),
+            deposit_amount NUMERIC(15,2),
+            prepayment_id INTEGER REFERENCES prepayments(id),
+            hold_expires_at TIMESTAMPTZ,
+            note TEXT,
+            created_by BIGINT,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_reservations_property ON reservations (property_id);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_reservations_check_in ON reservations (check_in);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_reservations_status ON reservations (status);
+        """,
+        # btree_gist + exclusion constraint: no overlapping dates on the same unit.
+        # Wrapped in a sub-block so a missing extension / permission issue logs a
+        # warning instead of aborting the whole migration transaction.
+        """
+        DO $$
+        BEGIN
+            BEGIN
+                CREATE EXTENSION IF NOT EXISTS btree_gist;
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'reservations_no_overlap') THEN
+                    ALTER TABLE reservations ADD CONSTRAINT reservations_no_overlap
+                    EXCLUDE USING gist (
+                        property_id WITH =,
+                        daterange(check_in, check_out, '[)') WITH &&
+                    ) WHERE (status::text NOT IN ('CANCELLED','NO_SHOW'));
+                END IF;
+            EXCEPTION WHEN OTHERS THEN
+                RAISE WARNING 'reservations_no_overlap not applied: %', SQLERRM;
+            END;
+        END $$;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:

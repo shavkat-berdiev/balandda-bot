@@ -103,6 +103,47 @@ class PropertyType(str, enum.Enum):
     SPA_SUITE = "SPA_SUITE"
 
 
+class ReservationStatus(str, enum.Enum):
+    HOLD = "HOLD"            # tentative — awaiting payment/confirmation
+    CONFIRMED = "CONFIRMED"
+    CHECKED_IN = "CHECKED_IN"
+    CHECKED_OUT = "CHECKED_OUT"
+    CANCELLED = "CANCELLED"
+    NO_SHOW = "NO_SHOW"
+    BLOCKED = "BLOCKED"      # manual block (maintenance / owner hold)
+
+
+class ReservationSource(str, enum.Enum):
+    DIRECT = "DIRECT"        # website self-service booking
+    PHONE = "PHONE"
+    TELEGRAM = "TELEGRAM"
+    INSTAGRAM = "INSTAGRAM"
+    BOOKING_COM = "BOOKING_COM"
+    AIRBNB = "AIRBNB"
+    MANUAL = "MANUAL"        # entered by staff / manual block
+
+
+RESERVATION_STATUS_LABELS = {
+    ReservationStatus.HOLD: "Бронь (ожидает оплаты)",
+    ReservationStatus.CONFIRMED: "Подтверждено",
+    ReservationStatus.CHECKED_IN: "Заселён",
+    ReservationStatus.CHECKED_OUT: "Выселен",
+    ReservationStatus.CANCELLED: "Отменено",
+    ReservationStatus.NO_SHOW: "Не приехал",
+    ReservationStatus.BLOCKED: "Заблокировано",
+}
+
+RESERVATION_SOURCE_LABELS = {
+    ReservationSource.DIRECT: "Сайт",
+    ReservationSource.PHONE: "Телефон",
+    ReservationSource.TELEGRAM: "Telegram",
+    ReservationSource.INSTAGRAM: "Instagram",
+    ReservationSource.BOOKING_COM: "Booking.com",
+    ReservationSource.AIRBNB: "Airbnb",
+    ReservationSource.MANUAL: "Вручную",
+}
+
+
 class ReportStatus(str, enum.Enum):
     DRAFT = "DRAFT"
     SUBMITTED = "SUBMITTED"
