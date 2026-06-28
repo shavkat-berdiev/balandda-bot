@@ -244,7 +244,7 @@ async def run_migrations():
                     EXCLUDE USING gist (
                         property_id WITH =,
                         daterange(check_in, check_out, '[)') WITH &&
-                    ) WHERE (status::text NOT IN ('CANCELLED','NO_SHOW'));
+                    ) WHERE (status NOT IN ('CANCELLED','NO_SHOW'));
                 END IF;
             EXCEPTION WHEN OTHERS THEN
                 RAISE WARNING 'reservations_no_overlap not applied: %', SQLERRM;

@@ -9,15 +9,15 @@ Only safe, public data is exposed here (names, prices, capacities, policies).
 Nothing requires auth; all write/admin operations stay in admin_catalog.py.
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.database import get_session
-from db.enums import PROPERTY_TYPE_LABELS, PropertyType
-from db.models import BusinessUnit, Property, ServiceItem
+from db.enums import PROPERTY_TYPE_LABELS, PropertyType, ReservationStatus
+from db.models import BusinessUnit, Property, Reservation, ServiceItem
 
 router = APIRouter()
 
@@ -157,4 +157,88 @@ async def public_catalog(
         "pages": pages,
         "spa": spa,
         "policies": POLICIES,
+    }
+
+
+def _stay_total(price_weekday, price_weekend, ci: date, co: date) -> int:
+    """Sum nightly prices over the stay. Saturday = weekend rate; Sunday counts
+    as a weekday (per Balandda pricing). Holidays are confirmed by the operator."""
+    total = 0.0
+    d = ci
+    while d < co:
+        total += float(price_weekend if d.weekday() == 5 else price_weekday)
+        d += timedelta(days=1)
+    return int(round(total))
+
+
+@router.get("/availability")
+async def public_availability(
+    check_in: date,
+    check_out: date,
+    guests: int = 1,
+    session: AsyncSession = Depends(get_session),
+):
+    """Units free for the whole [check_in, check_out) range, with the stay price.
+
+    A unit is unavailable if any non-cancelled reservation overlaps the range.
+    """
+    if check_out <= check_in:
+        return {"error": "check_out must be after check_in",
+                "nights": 0, "available_units": [], "available_types": []}
+
+    busy = (
+        select(Reservation.property_id)
+        .where(Reservation.check_in < check_out)
+        .where(Reservation.check_out > check_in)
+        .where(Reservation.status.notin_([ReservationStatus.CANCELLED, ReservationStatus.NO_SHOW]))
+    )
+    rows = (
+        await session.execute(
+            select(Property)
+            .where(Property.is_active.is_(True))
+            .where(Property.business_unit == BusinessUnit.RESORT)
+            .where(Property.capacity >= guests)
+            .where(Property.id.notin_(busy))
+            .order_by(Property.sort_order)
+        )
+    ).scalars().all()
+
+    nights = (check_out - check_in).days
+    units = []
+    for p in rows:
+        total = _stay_total(p.price_weekday, p.price_weekend, check_in, check_out)
+        units.append({
+            "code": p.code,
+            "type": p.property_type.value,
+            "type_label": PROPERTY_TYPE_LABELS.get(p.property_type, p.property_type.value),
+            "web_slug": TYPE_TO_WEB_SLUG.get(p.property_type),
+            "name": {"ru": p.name_ru, "uz": p.name_uz},
+            "capacity": p.capacity,
+            "has_sauna": p.has_sauna,
+            "price_total": total,
+        })
+
+    types: dict[str, dict] = {}
+    for u in units:
+        t = u["type"]
+        agg = types.get(t)
+        if agg is None:
+            types[t] = {
+                "type": t, "label": u["type_label"], "web_slug": u["web_slug"],
+                "units_available": 1, "capacity_max": u["capacity"],
+                "price_from_total": u["price_total"],
+            }
+        else:
+            agg["units_available"] += 1
+            agg["capacity_max"] = max(agg["capacity_max"], u["capacity"])
+            agg["price_from_total"] = min(agg["price_from_total"], u["price_total"])
+
+    return {
+        "check_in": check_in.isoformat(),
+        "check_out": check_out.isoformat(),
+        "nights": nights,
+        "guests": guests,
+        "currency": "UZS",
+        "available_units": units,
+        "available_types": list(types.values()),
     }
