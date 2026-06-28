@@ -245,6 +245,19 @@ async def run_migrations():
         """
         CREATE INDEX IF NOT EXISTS ix_reservation_events_res ON reservation_events (reservation_id);
         """,
+        # Link accommodation income to a booking
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'income_entries' AND column_name = 'reservation_id'
+            ) THEN
+                ALTER TABLE income_entries ADD COLUMN reservation_id INTEGER REFERENCES reservations(id);
+                CREATE INDEX IF NOT EXISTS ix_income_entries_reservation ON income_entries (reservation_id);
+            END IF;
+        END $$;
+        """,
         # btree_gist + exclusion constraint: no overlapping dates on the same unit.
         # Wrapped in a sub-block so a missing extension / permission issue logs a
         # warning instead of aborting the whole migration transaction.

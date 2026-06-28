@@ -455,7 +455,27 @@ async def on_property_selected(callback: types.CallbackQuery, state: FSMContext)
                 logger.error(f"Prepayment query failed: {e}")
                 active_prepayments = []
 
-        await state.update_data(current_property=prop_id, base_price=float(prop.price_weekday))
+            # Find the active booking for this unit on the report date (at most one,
+            # thanks to the no-overlap constraint) — to auto-link this income.
+            from db.models import Reservation
+            from db.enums import ReservationStatus
+            try:
+                res_row = (await session.execute(
+                    select(Reservation).where(
+                        Reservation.property_id == prop_id,
+                        Reservation.status.notin_([ReservationStatus.CANCELLED, ReservationStatus.NO_SHOW]),
+                        Reservation.check_in <= report_date + timedelta(days=1),
+                        Reservation.check_out >= report_date,
+                    ).order_by(Reservation.check_in)
+                )).scalars().first()
+                active_res_id = res_row.id if res_row else None
+                active_res_guest = res_row.guest_name if res_row else None
+            except Exception as e:
+                logger.error(f"Reservation lookup failed: {e}")
+                active_res_id, active_res_guest = None, None
+
+        await state.update_data(current_property=prop_id, base_price=float(prop.price_weekday),
+                                reservation_id=active_res_id)
 
         # Build info text
         info = f"💳 {prop.name_ru}\nБазовая цена: {format_amount(prop.price_weekday)}\n"
@@ -479,6 +499,9 @@ async def on_property_selected(callback: types.CallbackQuery, state: FSMContext)
             )
         else:
             await state.update_data(active_prepayment_ids=[], prepaid_amount=0)
+
+        if active_res_guest:
+            info += f"\n📌 Бронь: {active_res_guest}\n"
 
         info += "\nВыберите способ оплаты:"
 
@@ -763,6 +786,7 @@ async def on_accommodation_confirm(callback: types.CallbackQuery, state: FSMCont
         entry = IncomeEntry(
             report_id=report_id,
             property_id=data["current_property"],
+            reservation_id=data.get("reservation_id"),
             payment_method=PaymentMethod(data["payment_method"]),
             amount=Decimal(data["amount"]),
             num_days=data.get("num_days", 1),
@@ -796,6 +820,19 @@ async def on_accommodation_confirm(callback: types.CallbackQuery, state: FSMCont
                 Decimal(data["amount"]), report_id,
                 data.get("business_unit"),
             )
+
+        # Record this accommodation payment in the linked booking's change log
+        rid = data.get("reservation_id")
+        if rid:
+            from db.models import ReservationEvent, User
+            uname = (
+                await session.execute(select(User.full_name).where(User.telegram_id == callback.from_user.id))
+            ).scalar_one_or_none()
+            session.add(ReservationEvent(
+                reservation_id=rid, actor_id=callback.from_user.id, actor_name=uname,
+                action="auto",
+                detail=f"Оплата проживания: +{format_amount(data['amount'])} сум · отчёт #{report_id}",
+            ))
 
         await session.commit()
 

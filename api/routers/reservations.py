@@ -9,7 +9,7 @@ from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,7 +22,7 @@ from db.enums import (
     ReservationSource,
     ReservationStatus,
 )
-from db.models import Prepayment, Property, Reservation, ReservationEvent, User
+from db.models import IncomeEntry, Prepayment, Property, Reservation, ReservationEvent, User
 
 router = APIRouter()
 
@@ -53,9 +53,12 @@ class ReservationUpdate(BaseModel):
     note: str | None = None
 
 
-def _out(r: Reservation, property_name: str | None = None) -> dict:
+def _out(r: Reservation, property_name: str | None = None, income_paid: float = 0.0) -> dict:
     st = r.status if isinstance(r.status, ReservationStatus) else ReservationStatus(r.status)
     sr = r.source if isinstance(r.source, ReservationSource) else ReservationSource(r.source)
+    deposit = float(r.deposit_amount) if r.deposit_amount is not None else 0.0
+    paid = deposit + float(income_paid or 0)
+    total = float(r.total_amount) if r.total_amount is not None else None
     return {
         "id": r.id,
         "property_id": r.property_id,
@@ -69,8 +72,10 @@ def _out(r: Reservation, property_name: str | None = None) -> dict:
         "status_label": RESERVATION_STATUS_LABELS.get(st, st.value),
         "source": sr.value,
         "source_label": RESERVATION_SOURCE_LABELS.get(sr, sr.value),
-        "total_amount": float(r.total_amount) if r.total_amount is not None else None,
+        "total_amount": total,
         "deposit_amount": float(r.deposit_amount) if r.deposit_amount is not None else None,
+        "paid_amount": paid,
+        "balance": (total - paid) if total is not None else None,
         "note": r.note,
         "created_at": r.created_at.isoformat() if r.created_at else None,
     }
@@ -149,7 +154,18 @@ async def list_reservations(
             .order_by(Reservation.property_id, Reservation.check_in)
         )
     ).all()
-    return [_out(r, name) for (r, name) in rows]
+    res_ids = [r.id for (r, _n) in rows]
+    income_by_res: dict[int, float] = {}
+    if res_ids:
+        sums = (
+            await session.execute(
+                select(IncomeEntry.reservation_id, func.coalesce(func.sum(IncomeEntry.amount), 0))
+                .where(IncomeEntry.reservation_id.in_(res_ids))
+                .group_by(IncomeEntry.reservation_id)
+            )
+        ).all()
+        income_by_res = {rid: float(s) for (rid, s) in sums}
+    return [_out(r, name, income_by_res.get(r.id, 0.0)) for (r, name) in rows]
 
 
 @router.post("")

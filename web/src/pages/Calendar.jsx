@@ -334,6 +334,14 @@ export default function Calendar() {
       {/* Detail / edit modal */}
       {detail && detailForm && (
         <Modal onClose={() => setDetail(null)} title={`${detail.property_name || 'Бронь'}${detail.source_label ? ' · ' + detail.source_label : ''}`}>
+          <div className="mb-3 p-2.5 rounded-lg bg-gray-50 text-sm flex items-center justify-between">
+            <span className="text-gray-500">Оплачено</span>
+            <span className="font-semibold text-gray-800">
+              {money(detail.paid_amount || 0)}{detail.total_amount != null ? ` / ${money(detail.total_amount)}` : ''} сум
+              {detail.balance != null && detail.balance > 0 ? ` · остаток ${money(detail.balance)}` : ''}
+              {detail.balance != null && detail.balance <= 0 ? ' ✓' : ''}
+            </span>
+          </div>
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <Field label="Заезд"><input type="date" value={detailForm.check_in} onChange={(e) => setDetailForm({ ...detailForm, check_in: e.target.value })} className="input" /></Field>
