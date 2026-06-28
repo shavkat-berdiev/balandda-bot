@@ -466,7 +466,7 @@ async def on_property_selected(callback: types.CallbackQuery, state: FSMContext)
                         Reservation.status.notin_([ReservationStatus.CANCELLED, ReservationStatus.NO_SHOW]),
                         Reservation.check_in <= report_date + timedelta(days=1),
                         Reservation.check_out >= report_date,
-                    ).order_by(Reservation.check_in)
+                    ).order_by(Reservation.check_in.desc())
                 )).scalars().first()
                 active_res_id = res_row.id if res_row else None
                 active_res_guest = res_row.guest_name if res_row else None
