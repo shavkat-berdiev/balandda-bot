@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from api.routers import admin_catalog, auth, categories, daily_reports, prepayments, registration, reports, structured_reports, transactions, users, wallets
+from api.routers import admin_catalog, auth, categories, daily_reports, prepayments, public, registration, reports, structured_reports, transactions, users, wallets
 
 app = FastAPI(
     title="Balandda Analytics API",
@@ -16,6 +16,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://analytics.berdiev.uz",
+        "https://www.balandda.uz",   # website reads the public catalog
+        "https://balandda.uz",
         "http://localhost:5173",  # Vite dev server
         "http://localhost:8000",
     ],
@@ -36,6 +38,7 @@ app.include_router(admin_catalog.router, prefix="/api/v1/admin", tags=["admin-ca
 app.include_router(prepayments.router, prefix="/api/v1/prepayments", tags=["prepayments"])
 app.include_router(wallets.router, prefix="/api/v1/wallets", tags=["wallets"])
 app.include_router(registration.router, prefix="/api/v1/registration", tags=["registration"])
+app.include_router(public.router, prefix="/api/v1/public", tags=["public"])
 
 
 @app.get("/api/health")
