@@ -341,6 +341,19 @@ async def run_migrations():
             END IF;
         END $$;
         """,
+        # ADJUSTMENT wallet transaction type (owner balance corrections)
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_enum
+                WHERE enumlabel = 'ADJUSTMENT'
+                  AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'wallettransactiontype')
+            ) THEN
+                ALTER TYPE wallettransactiontype ADD VALUE 'ADJUSTMENT';
+            END IF;
+        END $$;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in enum_additions:

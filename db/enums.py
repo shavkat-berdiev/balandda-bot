@@ -188,6 +188,7 @@ class WalletTransactionType(str, enum.Enum):
     TRANSFER_TO_SHAVKAT = "TRANSFER_TO_SHAVKAT"    # Final dest: owner
     CASH_TO_BANK = "CASH_TO_BANK"        # Final dest: bank
     PURCHASE = "PURCHASE"                # Deduction for purchase
+    ADJUSTMENT = "ADJUSTMENT"            # Owner correction (signed delta)
 
 
 class WalletTransactionStatus(str, enum.Enum):
@@ -336,4 +337,5 @@ WALLET_TRANSACTION_TYPE_LABELS = {
     WalletTransactionType.TRANSFER_TO_SHAVKAT: "Передано Шавкату",
     WalletTransactionType.CASH_TO_BANK: "Сдано в банк",
     WalletTransactionType.PURCHASE: "Закуп",
+    WalletTransactionType.ADJUSTMENT: "Корректировка",
 }

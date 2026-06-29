@@ -4,10 +4,11 @@ from datetime import date, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
+from pydantic import BaseModel
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.auth import get_current_user, is_owner
+from api.auth import get_current_user, is_owner, require_owner
 from db.database import get_session
 from db.enums import (
     PaymentMethod,
@@ -65,7 +66,17 @@ async def _calculate_balance(session: AsyncSession, telegram_id: int) -> float:
     )
     total_out = float(outgoing.scalar())
 
-    return total_in - total_out
+    # Owner balance corrections (signed delta)
+    adj = await session.execute(
+        select(func.coalesce(func.sum(WalletTransaction.amount), 0)).where(
+            WalletTransaction.sender_telegram_id == telegram_id,
+            WalletTransaction.transaction_type == WalletTransactionType.ADJUSTMENT,
+            WalletTransaction.status == WalletTransactionStatus.COMPLETED,
+        )
+    )
+    total_adj = float(adj.scalar())
+
+    return total_in - total_out + total_adj
 
 
 # ── Cash wallets (per user) ──
@@ -260,3 +271,56 @@ async def get_balance(
         "full_name": u.full_name if u else "?",
         "balance": balance,
     }
+
+
+# ── Owner: correct / reset wallet balances ──
+
+
+class SetBalanceInput(BaseModel):
+    telegram_id: int
+    balance: float
+
+
+@router.post("/set-balance")
+async def set_wallet_balance(
+    data: SetBalanceInput,
+    user: dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Owner: set a user's cash balance to a value via a signed adjustment."""
+    require_owner(user)
+    current = await _calculate_balance(session, data.telegram_id)
+    delta = round(float(data.balance) - current)
+    if delta != 0:
+        session.add(WalletTransaction(
+            sender_telegram_id=data.telegram_id, amount=delta,
+            transaction_type=WalletTransactionType.ADJUSTMENT,
+            status=WalletTransactionStatus.COMPLETED,
+            note=f"Корректировка баланса владельцем (→ {round(float(data.balance))})",
+        ))
+        await session.commit()
+    new_balance = await _calculate_balance(session, data.telegram_id)
+    return {"telegram_id": data.telegram_id, "balance": new_balance}
+
+
+@router.post("/reset-all")
+async def reset_all_wallets(
+    user: dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Owner: zero out every active user's cash balance (start fresh)."""
+    require_owner(user)
+    users = (await session.execute(select(User).where(User.is_active == True))).scalars().all()
+    reset = 0
+    for u in users:
+        cur = await _calculate_balance(session, u.telegram_id)
+        if round(cur) != 0:
+            session.add(WalletTransaction(
+                sender_telegram_id=u.telegram_id, amount=round(-cur),
+                transaction_type=WalletTransactionType.ADJUSTMENT,
+                status=WalletTransactionStatus.COMPLETED,
+                note="Обнуление баланса владельцем",
+            ))
+            reset += 1
+    await session.commit()
+    return {"reset": reset}

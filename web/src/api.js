@@ -162,6 +162,8 @@ export const api = {
     return request(`/wallets/transactions?${sp}`);
   },
   getWalletBalance: (telegramId) => request(`/wallets/balance/${telegramId}`),
+  setWalletBalance: (telegram_id, balance) => request('/wallets/set-balance', { method: 'POST', body: JSON.stringify({ telegram_id, balance }) }),
+  resetAllWallets: () => request('/wallets/reset-all', { method: 'POST' }),
   getCentralWallets: (params = {}) => {
     const sp = new URLSearchParams();
     if (params.start_date) sp.set('start_date', params.start_date);

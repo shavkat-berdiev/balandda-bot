@@ -99,7 +99,17 @@ async def get_wallet_balance(telegram_id: int) -> Decimal:
         )
         total_out = Decimal(str(outgoing.scalar()))
 
-    return total_in - total_out
+        # Owner balance corrections (signed delta)
+        adj = await session.execute(
+            select(func.coalesce(func.sum(WalletTransaction.amount), 0)).where(
+                WalletTransaction.sender_telegram_id == telegram_id,
+                WalletTransaction.transaction_type == WalletTransactionType.ADJUSTMENT,
+                WalletTransaction.status == WalletTransactionStatus.COMPLETED,
+            )
+        )
+        total_adj = Decimal(str(adj.scalar()))
+
+    return total_in - total_out + total_adj
 
 
 # ────────────────────────────────────────────────────────────────────────
@@ -142,6 +152,7 @@ async def on_wallet(callback: types.CallbackQuery, state: FSMContext):
 
     buttons = [
         [InlineKeyboardButton(text="💼 Инкассация", callback_data="wlt:to_employee")],
+        [InlineKeyboardButton(text="👑 Передать владельцу", callback_data="wlt:to_owner")],
         [InlineKeyboardButton(text="🏦 Сдать в банк", callback_data="wlt:to_bank")],
     ]
     if pending_count:
@@ -355,7 +366,7 @@ async def on_transfer_employee(callback: types.CallbackQuery, state: FSMContext)
         result = await session.execute(
             select(User).where(
                 User.is_active == True,
-                User.role.in_([UserRole.ADMIN, UserRole.OWNER]),
+                User.role == UserRole.ADMIN,
                 User.telegram_id != callback.from_user.id,
             ).order_by(User.full_name)
         )
@@ -409,6 +420,45 @@ async def on_employee_selected(callback: types.CallbackQuery, state: FSMContext)
         f"👤 Получатель: <b>{receiver_name}</b>\n"
         f"💰 Ваш баланс: {format_amount(balance)} UZS\n\n"
         f"Введите сумму перевода:"
+    )
+    await callback.answer()
+
+
+# ────────────────────────────────────────────────────────────────────────
+# TRANSFER TO OWNER (final destination, owner must accept)
+# ────────────────────────────────────────────────────────────────────────
+
+
+@router.callback_query(F.data == "wlt:to_owner", WalletStates.viewing)
+async def on_transfer_owner(callback: types.CallbackQuery, state: FSMContext):
+    """Send the final amount to the owner — a final destination he must accept."""
+    async with async_session() as session:
+        result = await session.execute(
+            select(User).where(
+                User.is_active == True,
+                User.role == UserRole.OWNER,
+                User.telegram_id != callback.from_user.id,
+            ).order_by(User.full_name)
+        )
+        owners = result.scalars().all()
+
+    if not owners:
+        await callback.answer("Владелец не найден", show_alert=True)
+        return
+
+    owner = owners[0]
+    await state.update_data(
+        transfer_type=WalletTransactionType.TRANSFER_TO_SHAVKAT.value,
+        sender_telegram_id=callback.from_user.id,
+        receiver_telegram_id=owner.telegram_id,
+        receiver_name=owner.full_name,
+    )
+    balance = await get_wallet_balance(callback.from_user.id)
+    await state.set_state(WalletStates.entering_amount)
+    await callback.message.edit_text(
+        f"👑 Передать владельцу: <b>{owner.full_name}</b>\n"
+        f"💰 Ваш баланс: {format_amount(balance)} UZS\n\n"
+        f"Введите сумму (владелец подтвердит получение):"
     )
     await callback.answer()
 
