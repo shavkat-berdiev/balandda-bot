@@ -13,6 +13,7 @@ import logging
 from decimal import Decimal
 
 from aiogram import Bot, F, Router, types
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -168,6 +169,16 @@ async def on_wallet(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(WalletStates.viewing)
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons))
     await callback.answer()
+
+
+@router.message(Command("balance"))
+async def cmd_balance(message: types.Message, state: FSMContext):
+    """Quick on-demand balance check."""
+    bal = await get_wallet_balance(message.from_user.id)
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="💰 Открыть кошелёк", callback_data="action:wallet"),
+    ]])
+    await message.answer(f"💰 Ваш баланс: <b>{format_amount(bal)} UZS</b>", reply_markup=kb)
 
 
 # ────────────────────────────────────────────────────────────────────────

@@ -4,6 +4,7 @@ import logging
 from datetime import date, datetime
 
 from aiogram import Bot
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
@@ -148,6 +149,38 @@ async def send_daily_report(bot: Bot):
         logger.error(f"Error building daily report: {e}", exc_info=True)
 
 
+async def send_balance_reminders(bot: Bot):
+    """At 21:00 remind each admin/owner who is holding cash about their balance."""
+    from bot.handlers.wallet import get_wallet_balance
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(User).where(
+                User.role.in_([UserRole.ADMIN, UserRole.OWNER]),
+                User.is_active == True,
+            )
+        )
+        users = result.scalars().all()
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="💰 Открыть кошелёк", callback_data="action:wallet"),
+    ]])
+    for u in users:
+        try:
+            bal = await get_wallet_balance(u.telegram_id)
+            if float(bal) == 0:
+                continue  # nothing on hand — don't ping
+            await bot.send_message(
+                u.telegram_id,
+                f"💰 <b>Остаток наличных на конец дня</b>\n\n"
+                f"Ваш баланс: <b>{format_amount(float(bal))} UZS</b>\n\n"
+                f"Не забудьте сдать инкассацию.",
+                reply_markup=kb,
+            )
+        except Exception as e:
+            logger.error(f"Balance reminder failed for {u.telegram_id}: {e}")
+
+
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """Set up and return the APScheduler instance."""
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
@@ -162,6 +195,19 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         args=[bot],
         id="daily_report",
         name="Daily Report",
+        replace_existing=True,
+    )
+
+    scheduler.add_job(
+        send_balance_reminders,
+        CronTrigger(
+            hour=settings.daily_report_hour,
+            minute=settings.daily_report_minute,
+            timezone=settings.timezone,
+        ),
+        args=[bot],
+        id="balance_reminders",
+        name="Balance Reminders",
         replace_existing=True,
     )
 
