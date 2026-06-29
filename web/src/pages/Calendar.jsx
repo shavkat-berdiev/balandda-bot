@@ -13,6 +13,13 @@ const STATUS_STYLE = {
 };
 const STATUS_OPTIONS = ['CONFIRMED', 'HOLD', 'BLOCKED'];
 const SOURCE_OPTIONS = ['MANUAL', 'PHONE', 'DIRECT', 'TELEGRAM', 'INSTAGRAM', 'BOOKING_COM', 'AIRBNB'];
+const PAYMENT_METHODS = [
+  { v: 'CASH', l: 'Наличные' },
+  { v: 'CARD_TRANSFER', l: 'Перевод на карту' },
+  { v: 'TERMINAL_VISA', l: 'Терминал Visa' },
+  { v: 'TERMINAL_UZCARD', l: 'Терминал UzCard' },
+  { v: 'PAYME', l: 'PayMe' },
+];
 
 function ymd(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -77,6 +84,8 @@ export default function Calendar() {
   const [detailForm, setDetailForm] = useState(null); // editable copy of the selected reservation
   const [events, setEvents] = useState([]);   // change log for the selected reservation
   const [savingDetail, setSavingDetail] = useState(false);
+  const [payForm, setPayForm] = useState(null);
+  const [savingPay, setSavingPay] = useState(false);
 
   const days = useMemo(
     () => Array.from({ length: span }, (_, i) => addDays(start, i)),
@@ -105,7 +114,8 @@ export default function Calendar() {
 
   // When a booking is selected: load an editable copy + its change log.
   useEffect(() => {
-    if (!detail) { setDetailForm(null); setEvents([]); return; }
+    if (!detail) { setDetailForm(null); setEvents([]); setPayForm(null); return; }
+    setPayForm(null);
     setDetailForm({
       status: detail.status,
       check_in: detail.check_in, check_out: detail.check_out,
@@ -239,6 +249,20 @@ export default function Calendar() {
     }
   }
 
+  async function acceptPay() {
+    if (!payForm || !payForm.amount || Number(payForm.amount) <= 0) { alert('Введите сумму'); return; }
+    setSavingPay(true);
+    try {
+      await api.acceptPayment(detail.id, { amount: Number(payForm.amount), payment_method: payForm.method });
+      setDetail(null);
+      await load();
+    } catch (e) {
+      alert(e.message || 'Не удалось принять оплату');
+    } finally {
+      setSavingPay(false);
+    }
+  }
+
   const dow = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
 
   return (
@@ -357,6 +381,26 @@ export default function Calendar() {
               {detail.balance != null && detail.balance <= 0 ? ' ✓' : ''}
             </span>
           </div>
+
+          {!payForm ? (
+            <button
+              onClick={() => setPayForm({ amount: String(Math.max(0, Math.round(detail.balance ?? 0)) || ''), method: 'CASH' })}
+              className="w-full mb-3 px-3 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700"
+            >💵 Принять оплату</button>
+          ) : (
+            <div className="mb-3 p-3 rounded-lg border border-green-200 bg-green-50 space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                <input type="number" placeholder="Сумма" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} className="input" />
+                <select value={payForm.method} onChange={(e) => setPayForm({ ...payForm, method: e.target.value })} className="input">
+                  {PAYMENT_METHODS.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
+                </select>
+              </div>
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setPayForm(null)} className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm">Отмена</button>
+                <button onClick={acceptPay} disabled={savingPay} className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50">{savingPay ? '…' : 'Провести оплату'}</button>
+              </div>
+            </div>
+          )}
           <div className="space-y-3">
             <div className="grid grid-cols-2 gap-3">
               <Field label="Заезд"><input type="date" value={detailForm.check_in} onChange={(e) => setDetailForm({ ...detailForm, check_in: e.target.value })} className="input" /></Field>

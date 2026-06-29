@@ -5,7 +5,7 @@ range, create a booking or manual block (double-booking is rejected by the DB
 exclusion constraint -> 409), update, and cancel.
 """
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -16,13 +16,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.auth import get_current_user
 from db.database import get_session
 from db.enums import (
+    BusinessUnit,
+    PAYMENT_METHOD_LABELS,
+    PaymentMethod,
     PrepaymentStatus,
     RESERVATION_SOURCE_LABELS,
     RESERVATION_STATUS_LABELS,
+    ReportStatus,
     ReservationSource,
     ReservationStatus,
+    WalletTransactionStatus,
+    WalletTransactionType,
 )
-from db.models import IncomeEntry, Prepayment, Property, Reservation, ReservationEvent, StructuredReport, User
+from db.models import (
+    IncomeEntry, Prepayment, Property, Reservation, ReservationEvent,
+    StructuredReport, User, WalletTransaction,
+)
 
 router = APIRouter()
 
@@ -39,6 +48,11 @@ class ReservationCreate(BaseModel):
     total_amount: float | None = None
     deposit_amount: float | None = None
     note: str | None = None
+
+
+class PaymentInput(BaseModel):
+    amount: float
+    payment_method: str
 
 
 class ReservationUpdate(BaseModel):
@@ -272,6 +286,80 @@ async def cancel_reservation(
     await _log(session, res_id, user, "cancelled", "Бронь отменена")
     await session.refresh(res)
     return _out(res)
+
+
+@router.post("/{res_id}/payment")
+async def accept_payment(
+    res_id: int,
+    data: PaymentInput,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Record a full/balance accommodation payment from the calendar. Creates a
+    linked income entry in today's RESORT report (so it lands in analytics) and
+    updates the booking's paid total + change log."""
+    res = await session.get(Reservation, res_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="not found")
+    if data.amount is None or data.amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be positive")
+    try:
+        pm = PaymentMethod(data.payment_method)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"invalid payment_method: {data.payment_method}")
+
+    operator = user.get("telegram_id")
+    today = datetime.now(timezone(timedelta(hours=5))).date()  # Asia/Tashkent
+
+    report = (
+        await session.execute(
+            select(StructuredReport).where(
+                StructuredReport.submitted_by == operator,
+                StructuredReport.report_date == today,
+                StructuredReport.business_unit == BusinessUnit.RESORT,
+                StructuredReport.status == ReportStatus.DRAFT,
+            )
+        )
+    ).scalar_one_or_none()
+    if not report:
+        report = StructuredReport(
+            report_date=today, business_unit=BusinessUnit.RESORT,
+            status=ReportStatus.DRAFT, submitted_by=operator,
+        )
+        session.add(report)
+        await session.flush()
+
+    amt = round(float(data.amount))
+    nights = (res.check_out - res.check_in).days or 1
+    session.add(IncomeEntry(
+        report_id=report.id, property_id=res.property_id, reservation_id=res.id,
+        payment_method=pm, amount=amt, num_days=nights,
+    ))
+    report.total_income = (report.total_income or 0) + amt
+    if pm == PaymentMethod.CASH:
+        session.add(WalletTransaction(
+            sender_telegram_id=operator, amount=amt,
+            transaction_type=WalletTransactionType.CASH_IN,
+            status=WalletTransactionStatus.COMPLETED,
+            report_id=report.id, business_unit=BusinessUnit.RESORT,
+        ))
+    name = (
+        await session.execute(select(User.full_name).where(User.telegram_id == operator))
+    ).scalar_one_or_none()
+    session.add(ReservationEvent(
+        reservation_id=res.id, actor_id=operator, actor_name=name, action="payment",
+        detail=f"Оплата проживания: +{amt} сум ({PAYMENT_METHOD_LABELS.get(pm, pm.value)}) · отчёт #{report.id}",
+    ))
+    await session.commit()
+
+    income = (
+        await session.execute(
+            select(func.coalesce(func.sum(IncomeEntry.amount), 0)).where(IncomeEntry.reservation_id == res.id)
+        )
+    ).scalar() or 0
+    prop = await session.get(Property, res.property_id)
+    total = float(res.total_amount) if res.total_amount is not None else _stay_price(prop, res.check_in, res.check_out)
+    return _out(res, prop.name_ru if prop else None, float(income), total)
 
 
 @router.get("/{res_id}/events")

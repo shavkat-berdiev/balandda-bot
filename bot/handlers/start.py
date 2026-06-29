@@ -5,6 +5,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from datetime import datetime
 from sqlalchemy import select
 
 from bot.config import settings
@@ -16,6 +17,22 @@ from db.models import BusinessUnit, Language, RegistrationRequest, User, UserRol
 
 router = Router()
 logger = logging.getLogger(__name__)
+
+ROLE_LABELS = {
+    "OWNER": "Владелец", "ADMIN": "Администратор",
+    "RESORT_MANAGER": "Менеджер курорта", "RESTAURANT_MANAGER": "Менеджер ресторана",
+    "OPERATOR": "Оператор", "PURCHASER": "Закупщик",
+}
+CALENDAR_URL = "https://calendar.balandda.uz"
+
+
+def _approve_keyboard(req_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Оператор", callback_data=f"reg_ok:{req_id}:OPERATOR"),
+         InlineKeyboardButton(text="✅ Менеджер", callback_data=f"reg_ok:{req_id}:RESORT_MANAGER")],
+        [InlineKeyboardButton(text="✅ Админ", callback_data=f"reg_ok:{req_id}:ADMIN"),
+         InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reg_no:{req_id}")],
+    ])
 
 
 class RegistrationStates(StatesGroup):
@@ -53,17 +70,19 @@ async def create_admin_if_needed(telegram_id: int, full_name: str) -> User:
         return user
 
 
-async def _notify_admins(bot: Bot, text: str):
-    """Send notification to all admin users."""
+async def _notify_admins(bot: Bot, text: str, reply_markup=None):
+    """Send notification to all admin/owner users."""
     async with async_session() as session:
         result = await session.execute(
-            select(User).where(User.role == UserRole.ADMIN, User.is_active == True)
+            select(User).where(
+                User.role.in_([UserRole.ADMIN, UserRole.OWNER]), User.is_active == True
+            )
         )
         admins = result.scalars().all()
 
     for admin in admins:
         try:
-            await bot.send_message(admin.telegram_id, text)
+            await bot.send_message(admin.telegram_id, text, reply_markup=reply_markup)
         except Exception as e:
             logger.error(f"Failed to notify admin {admin.telegram_id}: {e}")
 
@@ -161,6 +180,8 @@ async def on_registration_request(callback: types.CallbackQuery, state: FSMConte
         )
         session.add(req)
         await session.commit()
+        await session.refresh(req)
+        new_req_id = req.id
 
     await callback.message.edit_text(
         "✅ Заявка отправлена!\n\n"
@@ -176,28 +197,96 @@ async def on_registration_request(callback: types.CallbackQuery, state: FSMConte
         f"📩 <b>Новая заявка на регистрацию</b>\n\n"
         f"Имя: {full_name}{username_str}\n"
         f"ID: <code>{telegram_id}</code>\n\n"
-        f"Откройте панель управления для рассмотрения.",
+        f"Выберите роль для одобрения:",
+        reply_markup=_approve_keyboard(new_req_id),
     )
 
 
 # ── Admin approval via bot callback (from admin panel notification) ──
 
 
-@router.callback_query(F.data.startswith("reg_approve:"))
-async def on_approve_from_bot(callback: types.CallbackQuery, state: FSMContext):
-    """Quick approve from bot notification (admin only)."""
-    # Verify caller is admin
+@router.callback_query(F.data.startswith("reg_ok:"))
+async def on_reg_approve(callback: types.CallbackQuery, state: FSMContext):
+    """Approve a registration request straight from the Telegram notification."""
+    parts = callback.data.split(":")
+    req_id, role_str = int(parts[1]), parts[2]
     async with async_session() as session:
-        result = await session.execute(
+        admin = (await session.execute(
             select(User).where(User.telegram_id == callback.from_user.id)
-        )
-        admin = result.scalar_one_or_none()
-        if not admin or admin.role != UserRole.ADMIN:
-            await callback.answer("Только администраторы", show_alert=True)
-            return
+        )).scalar_one_or_none()
+        if not admin or admin.role not in (UserRole.ADMIN, UserRole.OWNER):
+            return await callback.answer("Только администраторы", show_alert=True)
+        req = await session.get(RegistrationRequest, req_id)
+        if not req:
+            return await callback.answer("Заявка не найдена", show_alert=True)
+        if req.status != RegistrationRequestStatus.PENDING:
+            return await callback.answer("Заявка уже обработана", show_alert=True)
+        try:
+            role = UserRole(role_str)
+        except ValueError:
+            return await callback.answer("Неверная роль", show_alert=True)
+        exists = (await session.execute(
+            select(User).where(User.telegram_id == req.telegram_id)
+        )).scalar_one_or_none()
+        if not exists:
+            session.add(User(
+                telegram_id=req.telegram_id, full_name=req.full_name, role=role,
+                language=Language.RU, active_section=BusinessUnit.RESORT,
+            ))
+        req.status = RegistrationRequestStatus.APPROVED
+        req.assigned_role = role
+        req.reviewed_by = callback.from_user.id
+        req.reviewed_at = datetime.utcnow()
+        await session.commit()
+        applicant_id, applicant_name = req.telegram_id, req.full_name
 
-    # This callback is just informational — actual approval happens in admin panel
-    await callback.answer("Откройте панель управления для назначения роли", show_alert=True)
+    label = ROLE_LABELS.get(role_str, role_str)
+    try:
+        await callback.message.edit_text(
+            f"✅ <b>{applicant_name}</b> принят как «{label}»\n(одобрил: {callback.from_user.full_name})"
+        )
+    except Exception:
+        pass
+    try:
+        await callback.bot.send_message(
+            applicant_id,
+            f"✅ Ваша заявка одобрена! Роль: <b>{label}</b>.\n\nВойдите: {CALENDAR_URL}",
+        )
+    except Exception as e:
+        logger.error(f"notify applicant failed: {e}")
+    await callback.answer("Одобрено")
+
+
+@router.callback_query(F.data.startswith("reg_no:"))
+async def on_reg_reject(callback: types.CallbackQuery, state: FSMContext):
+    """Reject a registration request from the Telegram notification."""
+    req_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        admin = (await session.execute(
+            select(User).where(User.telegram_id == callback.from_user.id)
+        )).scalar_one_or_none()
+        if not admin or admin.role not in (UserRole.ADMIN, UserRole.OWNER):
+            return await callback.answer("Только администраторы", show_alert=True)
+        req = await session.get(RegistrationRequest, req_id)
+        if not req or req.status != RegistrationRequestStatus.PENDING:
+            return await callback.answer("Недоступно", show_alert=True)
+        req.status = RegistrationRequestStatus.REJECTED
+        req.reviewed_by = callback.from_user.id
+        req.reviewed_at = datetime.utcnow()
+        await session.commit()
+        applicant_id, applicant_name = req.telegram_id, req.full_name
+
+    try:
+        await callback.message.edit_text(
+            f"❌ Заявка от <b>{applicant_name}</b> отклонена\n(отклонил: {callback.from_user.full_name})"
+        )
+    except Exception:
+        pass
+    try:
+        await callback.bot.send_message(applicant_id, "К сожалению, ваша заявка отклонена.")
+    except Exception:
+        pass
+    await callback.answer("Отклонено")
 
 
 # ── Section selection & menu ──────────────────────────────────────
