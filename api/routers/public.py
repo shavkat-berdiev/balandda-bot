@@ -252,6 +252,10 @@ async def login_config(request: Request):
     calendar.balandda.uz -> front-office bot; everything else -> main bot.
     """
     host = (request.headers.get("host") or "").split(":")[0].lower()
-    if settings.front_bot_username and host.startswith("calendar."):
-        return {"bot_login": settings.front_bot_username}
-    return {"bot_login": settings.main_bot_username}
+    bot_login = (
+        settings.front_bot_username
+        if (settings.front_bot_username and host.startswith("calendar."))
+        else settings.main_bot_username
+    )
+    # Registration (access requests) is always handled by the management bot.
+    return {"bot_login": bot_login, "register_bot": settings.main_bot_username}

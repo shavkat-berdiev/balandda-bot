@@ -6,6 +6,7 @@ export default function Login({ onLogin }) {
   const [error, setError] = useState('');
   const [devMode, setDevMode] = useState(false);
   const [devTelegramId, setDevTelegramId] = useState('');
+  const [registerBot, setRegisterBot] = useState('berdiev_shavkat_bot');
 
   useEffect(() => {
     let cancelled = false;
@@ -17,7 +18,8 @@ export default function Login({ onLogin }) {
         const result = await api.telegramLogin(user);
         onLogin(result.user, result.token);
       } catch (err) {
-        setError(err.message);
+        const notReg = /not registered/i.test(err.message || '');
+        setError(notReg ? 'Вы ещё не зарегистрированы. Нажмите «Запросить доступ» ниже.' : err.message);
       }
     };
 
@@ -30,6 +32,7 @@ export default function Login({ onLogin }) {
         if (res.ok) {
           const d = await res.json();
           if (d && d.bot_login) botLogin = d.bot_login;
+        if (d && d.register_bot) setRegisterBot(d.register_bot);
         }
       } catch { /* fall back to default bot */ }
       if (cancelled || !widgetRef.current || widgetRef.current.hasChildNodes()) return;
@@ -92,9 +95,17 @@ export default function Login({ onLogin }) {
           </div>
         )}
 
-        <p className="text-xs text-gray-400 mt-6">
-          You must be registered in the Telegram bot first
-        </p>
+        <div className="mt-6">
+          <p className="text-xs text-gray-400">Нет доступа? Отправьте заявку — администратор подтвердит, и вы сможете войти.</p>
+          <a
+            href={`https://t.me/${registerBot}`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-block mt-2 text-sm font-medium text-blue-600 hover:text-blue-700"
+          >
+            📩 Запросить доступ
+          </a>
+        </div>
 
         {/* Dev mode toggle (only for localhost) */}
         {window.location.hostname === 'localhost' && (
