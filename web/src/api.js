@@ -187,8 +187,11 @@ export const api = {
   createReservation: (data) => request('/reservations', { method: 'POST', body: JSON.stringify(data) }),
   updateReservation: (id, data) => request(`/reservations/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   cancelReservation: (id) => request(`/reservations/${id}/cancel`, { method: 'POST' }),
+  restoreReservation: (id) => request(`/reservations/${id}/restore`, { method: 'POST' }),
+  deleteReservation: (id) => request(`/reservations/${id}`, { method: 'DELETE' }),
   importPrepayments: () => request('/reservations/import-prepayments', { method: 'POST' }),
   getReservationEvents: (id) => request(`/reservations/${id}/events`),
+  getAllReservationEvents: (limit = 300) => request(`/reservations/events?limit=${limit}`),
   acceptPayment: (id, data) => request(`/reservations/${id}/payment`, { method: 'POST', body: JSON.stringify(data) }),
   getAvailability: (checkIn, checkOut, guests = 1) =>
     request(`/public/availability?check_in=${checkIn}&check_out=${checkOut}&guests=${guests}`),

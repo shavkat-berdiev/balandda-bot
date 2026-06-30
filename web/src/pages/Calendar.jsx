@@ -38,7 +38,10 @@ function cap(s, n = 9) {
   s = (s ?? '').toString();
   return s.length > n ? s.slice(0, n) + '…' : s;
 }
-const ACTION_LABELS = { created: 'создано', updated: 'изменено', cancelled: 'отменено', auto: 'авто' };
+const ACTION_LABELS = { created: 'создано', updated: 'изменено', cancelled: 'отменено', restored: 'восстановлено', deleted: 'удалено', payment: 'оплата', auto: 'авто' };
+function currentUser() {
+  try { return JSON.parse(localStorage.getItem('user') || '{}'); } catch { return {}; }
+}
 function fmtDateTime(iso) {
   if (!iso) return '';
   try {
@@ -86,6 +89,8 @@ export default function Calendar() {
   const [savingDetail, setSavingDetail] = useState(false);
   const [payForm, setPayForm] = useState(null);
   const [savingPay, setSavingPay] = useState(false);
+
+  const isOwner = useMemo(() => (currentUser().role || '').toUpperCase() === 'OWNER', []);
 
   const days = useMemo(
     () => Array.from({ length: span }, (_, i) => addDays(start, i)),
@@ -226,6 +231,34 @@ export default function Calendar() {
     }
   }
 
+  // Cancelled bookings overlapping the visible range — kept (struck-through) so
+  // they can be restored; the dates themselves read as free for new bookings.
+  const cancelled = useMemo(
+    () => reservations.filter((r) => r.status === 'CANCELLED'),
+    [reservations]
+  );
+
+  async function doRestore(id) {
+    if (!confirm('Восстановить эту бронь? Даты снова станут занятыми.')) return;
+    try {
+      await api.restoreReservation(id);
+      await load();
+    } catch (e) {
+      alert(e.message || 'Не удалось восстановить');
+    }
+  }
+
+  async function doDelete(id) {
+    if (!confirm('Удалить эту бронь НАВСЕГДА? Это действие необратимо.')) return;
+    if (!confirm('Вы уверены? Бронь будет удалена без возможности восстановления.')) return;
+    try {
+      await api.deleteReservation(id);
+      await load();
+    } catch (e) {
+      alert(e.message || 'Не удалось удалить');
+    }
+  }
+
   async function saveDetail() {
     setSavingDetail(true);
     try {
@@ -324,6 +357,30 @@ export default function Calendar() {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Cancelled bookings in range — restore or permanently delete */}
+      {cancelled.length > 0 && (
+        <div className="mt-5 border border-gray-200 rounded-xl bg-white p-4">
+          <div className="text-sm font-semibold text-gray-600 mb-1">Отменённые брони в этом периоде</div>
+          <p className="text-xs text-gray-400 mb-3">Даты свободны для новых броней. Можно восстановить ошибочно отменённую бронь{isOwner ? ' или удалить её навсегда' : ''}.</p>
+          <ul className="space-y-2">
+            {cancelled.map((r) => (
+              <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-2 first:border-t-0 first:pt-0">
+                <span className="text-sm text-gray-400 line-through">
+                  {r.property_name} · {r.guest_name || r.source_label} · {r.check_in}→{r.check_out}
+                  {r.total_amount != null ? ` · ${money(r.total_amount)} сум` : ''}
+                </span>
+                <span className="flex gap-2">
+                  <button onClick={() => doRestore(r.id)} className="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100">Восстановить</button>
+                  {isOwner && (
+                    <button onClick={() => doDelete(r.id)} className="px-3 py-1.5 rounded-lg bg-red-50 text-red-600 text-xs font-medium hover:bg-red-100">Удалить навсегда</button>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 

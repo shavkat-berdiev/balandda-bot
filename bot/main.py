@@ -245,6 +245,24 @@ async def run_migrations():
         """
         CREATE INDEX IF NOT EXISTS ix_reservation_events_res ON reservation_events (reservation_id);
         """,
+        # Keep the audit trail when a booking is permanently deleted: make the
+        # event's reservation_id nullable and switch the FK from CASCADE to SET NULL,
+        # so deletion rows survive (orphaned) instead of vanishing with the booking.
+        """
+        DO $$
+        BEGIN
+            BEGIN
+                ALTER TABLE reservation_events ALTER COLUMN reservation_id DROP NOT NULL;
+                ALTER TABLE reservation_events DROP CONSTRAINT IF EXISTS reservation_events_reservation_id_fkey;
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'reservation_events_res_setnull_fk') THEN
+                    ALTER TABLE reservation_events ADD CONSTRAINT reservation_events_res_setnull_fk
+                    FOREIGN KEY (reservation_id) REFERENCES reservations(id) ON DELETE SET NULL;
+                END IF;
+            EXCEPTION WHEN OTHERS THEN
+                RAISE WARNING 'reservation_events FK relax not applied: %', SQLERRM;
+            END;
+        END $$;
+        """,
         # Link accommodation income to a booking
         """
         DO $$

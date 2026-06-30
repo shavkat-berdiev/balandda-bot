@@ -13,7 +13,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.auth import get_current_user
+from api.auth import get_current_user, require_owner
 from db.database import get_session
 from db.enums import (
     BusinessUnit,
@@ -199,6 +199,41 @@ async def list_reservations(
     ]
 
 
+@router.get("/events")
+async def all_reservation_events(
+    limit: int = Query(300, le=2000),
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Global change log across all bookings, newest first. Includes deletions —
+    those rows have reservation_id = NULL (the booking is gone) but keep a snapshot
+    in `detail`."""
+    rows = (
+        await session.execute(
+            select(ReservationEvent, Reservation, Property)
+            .outerjoin(Reservation, Reservation.id == ReservationEvent.reservation_id)
+            .outerjoin(Property, Property.id == Reservation.property_id)
+            .order_by(ReservationEvent.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    return [
+        {
+            "id": e.id,
+            "action": e.action,
+            "actor_name": e.actor_name,
+            "detail": e.detail,
+            "created_at": e.created_at.isoformat() if e.created_at else None,
+            "reservation_id": e.reservation_id,
+            "property_name": prop.name_ru if prop else None,
+            "guest_name": r.guest_name if r else None,
+            "check_in": r.check_in.isoformat() if r else None,
+            "check_out": r.check_out.isoformat() if r else None,
+        }
+        for (e, r, prop) in rows
+    ]
+
+
 @router.post("")
 async def create_reservation(
     data: ReservationCreate,
@@ -286,6 +321,63 @@ async def cancel_reservation(
     await _log(session, res_id, user, "cancelled", "Бронь отменена")
     await session.refresh(res)
     return _out(res)
+
+
+@router.post("/{res_id}/restore")
+async def restore_reservation(
+    res_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Undo a cancellation — bring a CANCELLED booking back as CONFIRMED. Rejected
+    with 409 if the dates are now taken by another active booking."""
+    res = await session.get(Reservation, res_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="not found")
+    if res.status != ReservationStatus.CANCELLED:
+        raise HTTPException(status_code=400, detail="Бронь не отменена — восстанавливать нечего")
+    res.status = ReservationStatus.CONFIRMED
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Даты уже заняты другой бронью — освободите их перед восстановлением",
+        )
+    await _log(session, res_id, user, "restored", "Бронь восстановлена")
+    await session.refresh(res)
+    return _out(res)
+
+
+@router.delete("/{res_id}")
+async def delete_reservation(
+    res_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Permanently remove a booking (owner only, and only if already cancelled).
+    Linked accommodation income is kept but unlinked; a surviving audit row records
+    the deletion (its reservation_id becomes NULL by FK ON DELETE SET NULL)."""
+    require_owner(user)
+    res = await session.get(Reservation, res_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="not found")
+    if res.status != ReservationStatus.CANCELLED:
+        raise HTTPException(status_code=400, detail="Удалить навсегда можно только отменённую бронь")
+    prop = await session.get(Property, res.property_id)
+    snapshot = (
+        f"{res.guest_name or 'без имени'} · "
+        f"{prop.name_ru if prop else res.property_id} · "
+        f"{res.check_in}→{res.check_out}"
+    )
+    await session.execute(
+        update(IncomeEntry).where(IncomeEntry.reservation_id == res_id).values(reservation_id=None)
+    )
+    await _log(session, res_id, user, "deleted", f"Бронь удалена навсегда: {snapshot}")
+    await session.delete(res)
+    await session.commit()
+    return {"ok": True, "deleted": res_id}
 
 
 @router.post("/{res_id}/payment")

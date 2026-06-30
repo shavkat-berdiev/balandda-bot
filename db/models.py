@@ -451,8 +451,8 @@ class ReservationEvent(Base):
     __tablename__ = "reservation_events"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    reservation_id: Mapped[int] = mapped_column(
-        ForeignKey("reservations.id", ondelete="CASCADE"), index=True
+    reservation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("reservations.id", ondelete="SET NULL"), index=True, nullable=True
     )
     actor_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     actor_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
