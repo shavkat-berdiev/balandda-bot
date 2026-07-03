@@ -84,7 +84,10 @@ export default function Layout({ user, onLogout, children, frontOffice }) {
 
 function SidebarContent({ user, roleLabels, location, onLogout, onClose, frontOffice }) {
   const items = frontOffice
-    ? [{ path: '/calendar', label: 'Календарь', icon: CalendarDays }]
+    ? [
+        { path: '/calendar', label: 'Календарь', icon: CalendarDays },
+        { path: '/changelog', label: 'Журнал броней', icon: History },
+      ]
     : navItems;
   return (
     <div className="flex flex-col h-full">

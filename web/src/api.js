@@ -192,6 +192,7 @@ export const api = {
   importPrepayments: () => request('/reservations/import-prepayments', { method: 'POST' }),
   getReservationEvents: (id) => request(`/reservations/${id}/events`),
   getAllReservationEvents: (limit = 300) => request(`/reservations/events?limit=${limit}`),
+  getInactiveReservations: (limit = 200) => request(`/reservations/inactive?limit=${limit}`),
   acceptPayment: (id, data) => request(`/reservations/${id}/payment`, { method: 'POST', body: JSON.stringify(data) }),
   getReservationPayments: (id) => request(`/reservations/${id}/payments`),
   editReservationPayment: (id, incomeId, data) => request(`/reservations/${id}/payments/${incomeId}`, { method: 'PATCH', body: JSON.stringify(data) }),

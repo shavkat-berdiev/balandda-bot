@@ -75,10 +75,8 @@ function stayTotal(unit, ciStr, coStr) {
 
 export default function Calendar() {
   const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
-  const [start, setStart] = useState(today);
-  const [span, setSpan] = useState(() =>
-    typeof window !== 'undefined' && window.innerWidth < 640 ? 7 : 14
-  );
+  const [start, setStart] = useState(() => addDays(today, -5)); // default window opens 5 days in the past
+  const span = 18; // fixed: 5 past days + today + 12 future days
   const [importing, setImporting] = useState(false);
   const [units, setUnits] = useState([]);
   const [reservations, setReservations] = useState([]);
@@ -358,15 +356,10 @@ export default function Calendar() {
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
         <h1 className="text-2xl font-bold text-gray-800">Календарь броней</h1>
         <div className="flex flex-wrap items-center gap-2">
-          <button onClick={() => setStart(addDays(start, -span))} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"><ChevronLeft size={18} /></button>
+          <button onClick={() => setStart(addDays(start, -7))} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"><ChevronLeft size={18} /></button>
           <input type="date" value={ymd(start)} onChange={(e) => setStart(new Date(e.target.value + 'T00:00:00'))} className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-          <button onClick={() => setStart(addDays(start, span))} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"><ChevronRight size={18} /></button>
-          <select value={span} onChange={(e) => setSpan(Number(e.target.value))} className="border border-gray-200 rounded-lg px-2 py-2 text-sm">
-            <option value={7}>7 дней</option>
-            <option value={14}>14 дней</option>
-            <option value={21}>21 день</option>
-            <option value={30}>30 дней</option>
-          </select>
+          <button onClick={() => setStart(addDays(start, 7))} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"><ChevronRight size={18} /></button>
+          <button onClick={() => setStart(addDays(today, -5))} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Сегодня</button>
           <button onClick={() => openNew(null, null)} className="flex items-center gap-1.5 bg-blue-600 text-white rounded-lg px-3 py-2 text-sm font-medium hover:bg-blue-700"><Plus size={16} /> Бронь</button>
           <button onClick={importPreps} disabled={importing} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{importing ? 'Импорт…' : 'Импорт предоплат'}</button>
         </div>
@@ -394,9 +387,10 @@ export default function Calendar() {
                 <th className="sticky left-0 z-10 bg-gray-50 border-b border-r border-gray-200 px-3 py-2 text-left font-semibold text-gray-700 min-w-[150px]">Объект</th>
                 {days.map((d) => {
                   const isSat = d.getDay() === 6;
+                  const isToday = ymd(d) === ymd(today);
                   return (
-                    <th key={ymd(d)} className={`border-b border-gray-200 px-1 py-2 text-center font-medium min-w-[72px] ${isSat ? 'bg-rose-50 text-rose-600' : 'text-gray-500'}`}>
-                      <div className="text-[10px] leading-none">{dow[d.getDay()]}</div>
+                    <th key={ymd(d)} className={`border-b border-gray-200 px-1 py-2 text-center font-medium min-w-[72px] ${isToday ? 'bg-blue-50 text-blue-700' : isSat ? 'bg-rose-50 text-rose-600' : 'text-gray-500'}`}>
+                      <div className="text-[10px] leading-none">{isToday ? 'сегодня' : dow[d.getDay()]}</div>
                       <div>{d.getDate()}</div>
                     </th>
                   );

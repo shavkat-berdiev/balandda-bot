@@ -251,6 +251,38 @@ async def all_reservation_events(
     ]
 
 
+@router.get("/inactive")
+async def list_inactive(
+    limit: int = Query(200, le=1000),
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """All cancelled + expired bookings (any date), newest first — so they can be
+    reviewed and restored from the change-log page regardless of the calendar window."""
+    rows = (
+        await session.execute(
+            select(Reservation, Property)
+            .join(Property, Property.id == Reservation.property_id)
+            .where(Reservation.status.in_([ReservationStatus.CANCELLED, ReservationStatus.EXPIRED]))
+            .order_by(Reservation.updated_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    return [
+        {
+            "id": r.id,
+            "property_name": prop.name_ru if prop else None,
+            "guest_name": r.guest_name,
+            "telegram_username": r.telegram_username,
+            "check_in": r.check_in.isoformat(),
+            "check_out": r.check_out.isoformat(),
+            "status": r.status.value if hasattr(r.status, "value") else r.status,
+            "total_amount": float(r.total_amount) if r.total_amount is not None else None,
+        }
+        for (r, prop) in rows
+    ]
+
+
 @router.post("")
 async def create_reservation(
     data: ReservationCreate,

@@ -61,6 +61,7 @@ export default function App() {
       <Layout user={user} onLogout={handleLogout} frontOffice>
         <Routes>
           <Route path="/calendar" element={<Calendar />} />
+          <Route path="/changelog" element={<ChangeLog />} />
           <Route path="*" element={<Navigate to="/calendar" />} />
         </Routes>
       </Layout>

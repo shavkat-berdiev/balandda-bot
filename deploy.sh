@@ -27,14 +27,17 @@ sudo rm -rf "$WEB_PUBLIC/assets"
 sudo cp -r "$DEPLOY_DIR/web/dist/"* "$WEB_PUBLIC/"
 
 # 4. Rebuild and restart API + Bot containers
+# (cache is fine: the source COPY layer invalidates on code changes; avoids
+#  --no-cache disk bloat. Old images are pruned afterwards to reclaim space.)
 echo "🐳 Rebuilding Docker containers..."
 cd "$DEPLOY_DIR"
-docker compose build --no-cache api bot
+docker compose build api bot
 docker compose up -d
+docker image prune -f >/dev/null 2>&1 || true
 
-# 5. Restart nginx-proxy to pick up new files
-echo "🔄 Restarting nginx-proxy..."
-docker restart nginx-proxy
+# 5. Restart nginx-proxy if it exists (host nginx serves static files otherwise)
+echo "🔄 Reloading web server..."
+docker restart nginx-proxy 2>/dev/null || echo "ℹ️  no nginx-proxy container — host nginx serves static files, skipping"
 
 # 6. Verify
 echo ""
