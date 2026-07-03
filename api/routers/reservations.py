@@ -89,7 +89,11 @@ def _out(r: Reservation, property_name: str | None = None, income_paid: float = 
     st = r.status if isinstance(r.status, ReservationStatus) else ReservationStatus(r.status)
     sr = r.source if isinstance(r.source, ReservationSource) else ReservationSource(r.source)
     deposit = float(r.deposit_amount) if r.deposit_amount is not None else 0.0
-    paid = deposit + float(income_paid or 0)
+    income = float(income_paid or 0)
+    # The payment ledger is the single source of truth for "paid". deposit_amount is only
+    # a fallback for legacy bookings prepaid via analytics with no ledger entry — this
+    # avoids double-counting the 20% deposit hint on top of a recorded payment.
+    paid = income if income > 0 else deposit
     total = total_override if total_override is not None else (float(r.total_amount) if r.total_amount is not None else None)
     return {
         "id": r.id,

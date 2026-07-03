@@ -222,7 +222,9 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
         status: form.status,
         source: form.source,
         total_amount: form.total_amount ? Number(form.total_amount) : null,
-        deposit_amount: form.deposit_amount ? Number(form.deposit_amount) : null,
+        // The 20% figure is only a suggestion used to prefill the prepayment step —
+        // it is NOT a paid deposit, so we don't persist it (avoids double-counting "paid").
+        deposit_amount: null,
         note: form.note || null,
       };
       const res = await api.createReservation(body);
@@ -300,7 +302,6 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
         guest_count: detailForm.guest_count ? Number(detailForm.guest_count) : null,
         telegram_username: detailForm.telegram_username || null,
         total_amount: detailForm.total_amount ? Number(detailForm.total_amount) : null,
-        deposit_amount: detailForm.deposit_amount ? Number(detailForm.deposit_amount) : null,
         note: detailForm.note || null,
       });
       setDetail(null);
@@ -470,10 +471,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
                 <Field label="Гостей"><input type="number" min="1" value={form.guest_count} onChange={(e) => setForm({ ...form, guest_count: e.target.value })} className="input" /></Field>
                 <Field label="Сумма (сум)"><input type="number" value={form.total_amount} onChange={(e) => setForm({ ...form, total_amount: e.target.value })} className="input" /></Field>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Предоплата 20% (сум)"><input type="number" value={form.deposit_amount} onChange={(e) => setForm({ ...form, deposit_amount: e.target.value })} className="input" /></Field>
-                <Field label="Заметка"><input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="input" /></Field>
-              </div>
+              <Field label="Заметка"><input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="input" /></Field>
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setForm(null)} className="px-4 py-2 rounded-lg border border-gray-200 text-sm">Отмена</button>
                 <button type="submit" className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">
@@ -593,7 +591,6 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
               <Field label="Гостей"><input type="number" min="1" value={detailForm.guest_count} onChange={(e) => setDetailForm({ ...detailForm, guest_count: e.target.value })} className="input" /></Field>
               <Field label="Сумма (сум)"><input type="number" value={detailForm.total_amount} onChange={(e) => setDetailForm({ ...detailForm, total_amount: e.target.value })} className="input" /></Field>
             </div>
-            <Field label="Депозит-ориентир 20% (сум)"><input type="number" value={detailForm.deposit_amount} onChange={(e) => setDetailForm({ ...detailForm, deposit_amount: e.target.value })} className="input" /></Field>
             <Field label="Заметка"><input value={detailForm.note} onChange={(e) => setDetailForm({ ...detailForm, note: e.target.value })} className="input" /></Field>
           </div>
           <div className="flex justify-between items-center gap-2 pt-4">
