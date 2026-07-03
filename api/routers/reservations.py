@@ -297,9 +297,16 @@ async def create_reservation(
     except ValueError:
         raise HTTPException(status_code=400, detail=f"invalid source: {data.source}")
 
-    # An unpaid HOLD starts the working-hours countdown: warn at 30m, expire at 60m.
+    # An unpaid HOLD on an accommodation (RESORT) unit starts the working-hours
+    # countdown (warn 30m, expire 60m). Pool units (RESTAURANT) never expire —
+    # prepayment there is optional.
     now = datetime.now(timezone.utc)
-    is_hold = status == ReservationStatus.HOLD
+    prop = await session.get(Property, data.property_id)
+    arm = (
+        status == ReservationStatus.HOLD
+        and prop is not None
+        and prop.business_unit == BusinessUnit.RESORT
+    )
     res = Reservation(
         property_id=data.property_id,
         check_in=data.check_in,
@@ -315,8 +322,8 @@ async def create_reservation(
         deposit_amount=data.deposit_amount,
         note=data.note,
         created_by=user.get("telegram_id"),
-        hold_warn_at=add_working_minutes(now, 30) if is_hold else None,
-        hold_expires_at=add_working_minutes(now, 60) if is_hold else None,
+        hold_warn_at=add_working_minutes(now, 30) if arm else None,
+        hold_expires_at=add_working_minutes(now, 60) if arm else None,
     )
     session.add(res)
     try:

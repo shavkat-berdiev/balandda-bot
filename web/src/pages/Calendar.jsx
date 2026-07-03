@@ -73,7 +73,7 @@ function stayTotal(unit, ciStr, coStr) {
   return Math.round(total);
 }
 
-export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, title = 'Календарь броней', showImport = true } = {}) {
+export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, title = 'Календарь броней', showImport = true, expires = true } = {}) {
   const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
   const [start, setStart] = useState(() => addDays(today, -5)); // default window opens 5 days in the past
   const span = 18; // fixed: 5 past days + today + 12 future days
@@ -176,7 +176,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
       step: 1, createdRes: null,
       property_id, check_in, check_out,
       guest_name: '', guest_phone: '', guest_count: '', telegram_username: '',
-      status: 'HOLD', source: 'MANUAL',
+      status: expires ? 'HOLD' : 'CONFIRMED', source: 'MANUAL',
       ...calcAmounts(property_id, check_in, check_out),
       note: '',
       payMethod: 'CASH', payAmount: '',
@@ -483,9 +483,15 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
             </form>
           ) : (
             <div className="space-y-3">
-              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
-                Бронь создана и <b>ждёт предоплаты</b> (красная). Без предоплаты в течение рабочего часа она освободит дату автоматически.
-              </div>
+              {expires ? (
+                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+                  Бронь создана и <b>ждёт предоплаты</b> (красная). Без предоплаты в течение рабочего часа она освободит дату автоматически.
+                </div>
+              ) : (
+                <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 text-sm text-blue-700">
+                  Бронь создана. Предоплата <b>необязательна</b> — можно принять её сейчас или позже.
+                </div>
+              )}
               <div className="text-sm text-gray-600">
                 {form.createdRes?.property_name} · {form.check_in}→{form.check_out}
                 {form.total_amount ? <> · сумма {money(form.total_amount)} сум</> : null}

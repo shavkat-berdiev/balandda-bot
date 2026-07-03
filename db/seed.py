@@ -1,51 +1,44 @@
 """Database seeding functions for initial data population."""
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.enums import BusinessUnit, PropertyType, ServiceType
 from db.models import Property, ServiceItem, MinibarItem, StaffMember
 
 
+# Real pool inventory: Терасса ×6, Кабинка ×12, Шатёр ×7. Codes are stable so edits
+# made later in the admin UI are preserved (this seeder runs only once).
+_POOL_INVENTORY = (
+    [(f"pool-ter-{i}", f"Терасса МК{i}", f"Terasa MK{i}", PropertyType.POOL_LARGE_CABIN, "🌿", 100 + i) for i in range(1, 7)]
+    + [(f"pool-cab-{i}", f"Кабинка {i}", f"Kabinka {i}", PropertyType.POOL_SMALL_CABIN, "🛖", 200 + i) for i in range(1, 13)]
+    + [(f"pool-tent-{i}", f"Шатер {i}", f"Chodir {i}", PropertyType.POOL_TABLE, "⛺", 300 + i) for i in range(1, 8)]
+)
+
+
 async def seed_pool_units(async_session: AsyncSession) -> None:
-    """Seed pool-area bookable units (Большой шатёр ×10, Белый шатёр ×12, Стол ×20)
-    once, as RESTAURANT-unit properties with manual (0) pricing. Idempotent: skips if
-    any pool unit already exists, so renames/edits made in the admin UI are preserved."""
-    existing = await async_session.execute(
-        select(Property).where(
-            Property.property_type.in_([
-                PropertyType.POOL_LARGE_CABIN,
-                PropertyType.POOL_SMALL_CABIN,
-                PropertyType.POOL_TABLE,
-            ])
-        )
-    )
-    if existing.scalars().first():
+    """Seed the real pool inventory once, as RESTAURANT units with manual (0) pricing.
+    Idempotent (keyed on the first code), so admin renames/edits are preserved. Also
+    retires the earlier generic auto-seed set (deactivated, not deleted, to keep history)."""
+    already = await async_session.execute(select(Property).where(Property.code == "pool-ter-1"))
+    if already.scalar_one_or_none():
         return
 
-    units = []
-    for i in range(1, 11):
-        units.append(Property(
-            code=f"pool-large-{i}", name_ru=f"Большой шатёр №{i}", name_uz=f"Katta chodir №{i}",
-            property_type=PropertyType.POOL_LARGE_CABIN, unit_number=str(i), capacity=15,
-            has_sauna=False, price_weekday=0, price_weekend=0, emoji="⛺",
-            sort_order=100 + i, business_unit=BusinessUnit.RESTAURANT,
-        ))
-    for i in range(1, 13):
-        units.append(Property(
-            code=f"pool-small-{i}", name_ru=f"Белый шатёр №{i}", name_uz=f"Oq chodir №{i}",
-            property_type=PropertyType.POOL_SMALL_CABIN, unit_number=str(i), capacity=8,
-            has_sauna=False, price_weekday=0, price_weekend=0, emoji="⛺",
-            sort_order=200 + i, business_unit=BusinessUnit.RESTAURANT,
-        ))
-    for i in range(1, 21):
-        units.append(Property(
-            code=f"pool-table-{i}", name_ru=f"Стол №{i}", name_uz=f"Stol №{i}",
-            property_type=PropertyType.POOL_TABLE, unit_number=str(i), capacity=6,
-            has_sauna=False, price_weekday=0, price_weekend=0, emoji="🪑",
-            sort_order=300 + i, business_unit=BusinessUnit.RESTAURANT,
-        ))
+    # Retire the earlier generic auto-seeded pool units (if any) — non-destructive.
+    for prefix in ("pool-large-%", "pool-small-%", "pool-table-%"):
+        await async_session.execute(
+            update(Property).where(Property.code.like(prefix)).values(is_active=False)
+        )
 
+    units = [
+        Property(
+            code=code, name_ru=name_ru, name_uz=name_uz, property_type=ptype,
+            unit_number=None, capacity=10, has_sauna=False,
+            price_weekday=0, price_weekend=0, emoji=emoji,
+            sort_order=order, business_unit=BusinessUnit.RESTAURANT,
+        )
+        for (code, name_ru, name_uz, ptype, emoji, order) in _POOL_INVENTORY
+    ]
     async_session.add_all(units)
     await async_session.commit()
 

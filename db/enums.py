@@ -278,9 +278,9 @@ PROPERTY_TYPE_LABELS = {
     PropertyType.PENTHOUSE: "Пентхаус",
     PropertyType.VILLA: "Вилла",
     PropertyType.SPA_SUITE: "SPA Сьют",
-    PropertyType.POOL_LARGE_CABIN: "Большой шатёр (бассейн)",
-    PropertyType.POOL_SMALL_CABIN: "Белый шатёр (бассейн)",
-    PropertyType.POOL_TABLE: "Стол (бассейн)",
+    PropertyType.POOL_LARGE_CABIN: "Терасса (бассейн)",
+    PropertyType.POOL_SMALL_CABIN: "Кабинка (бассейн)",
+    PropertyType.POOL_TABLE: "Шатёр (бассейн)",
 }
 
 REPORT_STATUS_LABELS = {
