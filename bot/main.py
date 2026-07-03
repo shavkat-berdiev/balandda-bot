@@ -405,6 +405,31 @@ async def run_migrations():
             END IF;
         END $$;
         """,
+        # Pool calendar: property types for pool cabins / tables
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'POOL_LARGE_CABIN' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'propertytype')) THEN
+                ALTER TYPE propertytype ADD VALUE 'POOL_LARGE_CABIN';
+            END IF;
+        END $$;
+        """,
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'POOL_SMALL_CABIN' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'propertytype')) THEN
+                ALTER TYPE propertytype ADD VALUE 'POOL_SMALL_CABIN';
+            END IF;
+        END $$;
+        """,
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'POOL_TABLE' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'propertytype')) THEN
+                ALTER TYPE propertytype ADD VALUE 'POOL_TABLE';
+            END IF;
+        END $$;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in enum_additions:
@@ -539,6 +564,15 @@ async def seed_new_tables():
     logger.info("New structured report tables seeded")
 
 
+async def seed_pool():
+    """Seed pool-area bookable units (idempotent)."""
+    from db.seed import seed_pool_units
+
+    async with async_session() as session:
+        await seed_pool_units(session)
+    logger.info("Pool units seeded")
+
+
 async def main():
     logger.info("Starting Balandda Bot...")
 
@@ -547,6 +581,7 @@ async def main():
     await run_migrations()
     await seed_categories()
     await seed_new_tables()
+    await seed_pool()
 
     # Initialize bot
     bot = Bot(

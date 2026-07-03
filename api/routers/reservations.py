@@ -448,21 +448,23 @@ def _today_tashkent() -> date:
     return datetime.now(timezone(timedelta(hours=5))).date()
 
 
-async def _get_or_create_report(session: AsyncSession, operator: int) -> StructuredReport:
-    """Today's RESORT draft report for this operator (created on demand)."""
+async def _get_or_create_report(session: AsyncSession, operator: int,
+                                business_unit: BusinessUnit = BusinessUnit.RESORT) -> StructuredReport:
+    """Today's draft report for this operator + business unit (created on demand).
+    Accommodation is RESORT; pool units are RESTAURANT — so each lands in its own report."""
     report = (
         await session.execute(
             select(StructuredReport).where(
                 StructuredReport.submitted_by == operator,
                 StructuredReport.report_date == _today_tashkent(),
-                StructuredReport.business_unit == BusinessUnit.RESORT,
+                StructuredReport.business_unit == business_unit,
                 StructuredReport.status == ReportStatus.DRAFT,
             )
         )
     ).scalar_one_or_none()
     if not report:
         report = StructuredReport(
-            report_date=_today_tashkent(), business_unit=BusinessUnit.RESORT,
+            report_date=_today_tashkent(), business_unit=business_unit,
             status=ReportStatus.DRAFT, submitted_by=operator,
         )
         session.add(report)
@@ -509,7 +511,9 @@ async def accept_payment(
         raise HTTPException(status_code=400, detail=f"invalid payment_method: {data.payment_method}")
 
     operator = user.get("telegram_id")
-    report = await _get_or_create_report(session, operator)
+    prop = await session.get(Property, res.property_id)
+    business_unit = prop.business_unit if prop and prop.business_unit else BusinessUnit.RESORT
+    report = await _get_or_create_report(session, operator, business_unit)
 
     amt = round(float(data.amount))
     nights = (res.check_out - res.check_in).days or 1
@@ -525,7 +529,7 @@ async def accept_payment(
             sender_telegram_id=operator, amount=amt,
             transaction_type=WalletTransactionType.CASH_IN,
             status=WalletTransactionStatus.COMPLETED,
-            report_id=report.id, business_unit=BusinessUnit.RESORT,
+            report_id=report.id, business_unit=business_unit,
         ))
     # Mirror into the Prepayment table — analytics stays the finance source of truth.
     session.add(Prepayment(
@@ -619,7 +623,7 @@ async def edit_payment(
             sender_telegram_id=report.submitted_by, amount=(new_cash - old_cash),
             transaction_type=WalletTransactionType.ADJUSTMENT,
             status=WalletTransactionStatus.COMPLETED,
-            report_id=income.report_id, business_unit=BusinessUnit.RESORT,
+            report_id=income.report_id, business_unit=report.business_unit,
             note="Правка оплаты брони",
         ))
 
@@ -666,7 +670,7 @@ async def delete_payment(
                 sender_telegram_id=report.submitted_by, amount=-amt,
                 transaction_type=WalletTransactionType.ADJUSTMENT,
                 status=WalletTransactionStatus.COMPLETED,
-                report_id=income.report_id, business_unit=BusinessUnit.RESORT,
+                report_id=income.report_id, business_unit=report.business_unit,
                 note="Удаление оплаты брони",
             ))
     # Delete the mirrored prepayment first (its FK to the income row is SET NULL on delete).

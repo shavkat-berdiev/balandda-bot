@@ -3,8 +3,51 @@
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.enums import PropertyType, ServiceType
+from db.enums import BusinessUnit, PropertyType, ServiceType
 from db.models import Property, ServiceItem, MinibarItem, StaffMember
+
+
+async def seed_pool_units(async_session: AsyncSession) -> None:
+    """Seed pool-area bookable units (Большой шатёр ×10, Белый шатёр ×12, Стол ×20)
+    once, as RESTAURANT-unit properties with manual (0) pricing. Idempotent: skips if
+    any pool unit already exists, so renames/edits made in the admin UI are preserved."""
+    existing = await async_session.execute(
+        select(Property).where(
+            Property.property_type.in_([
+                PropertyType.POOL_LARGE_CABIN,
+                PropertyType.POOL_SMALL_CABIN,
+                PropertyType.POOL_TABLE,
+            ])
+        )
+    )
+    if existing.scalars().first():
+        return
+
+    units = []
+    for i in range(1, 11):
+        units.append(Property(
+            code=f"pool-large-{i}", name_ru=f"Большой шатёр №{i}", name_uz=f"Katta chodir №{i}",
+            property_type=PropertyType.POOL_LARGE_CABIN, unit_number=str(i), capacity=15,
+            has_sauna=False, price_weekday=0, price_weekend=0, emoji="⛺",
+            sort_order=100 + i, business_unit=BusinessUnit.RESTAURANT,
+        ))
+    for i in range(1, 13):
+        units.append(Property(
+            code=f"pool-small-{i}", name_ru=f"Белый шатёр №{i}", name_uz=f"Oq chodir №{i}",
+            property_type=PropertyType.POOL_SMALL_CABIN, unit_number=str(i), capacity=8,
+            has_sauna=False, price_weekday=0, price_weekend=0, emoji="⛺",
+            sort_order=200 + i, business_unit=BusinessUnit.RESTAURANT,
+        ))
+    for i in range(1, 21):
+        units.append(Property(
+            code=f"pool-table-{i}", name_ru=f"Стол №{i}", name_uz=f"Stol №{i}",
+            property_type=PropertyType.POOL_TABLE, unit_number=str(i), capacity=6,
+            has_sauna=False, price_weekday=0, price_weekend=0, emoji="🪑",
+            sort_order=300 + i, business_unit=BusinessUnit.RESTAURANT,
+        ))
+
+    async_session.add_all(units)
+    await async_session.commit()
 
 
 async def seed_database(async_session: AsyncSession) -> None:

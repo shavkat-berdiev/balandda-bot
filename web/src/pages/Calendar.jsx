@@ -73,7 +73,7 @@ function stayTotal(unit, ciStr, coStr) {
   return Math.round(total);
 }
 
-export default function Calendar() {
+export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, title = 'Календарь броней', showImport = true } = {}) {
   const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
   const [start, setStart] = useState(() => addDays(today, -5)); // default window opens 5 days in the past
   const span = 18; // fixed: 5 past days + today + 12 future days
@@ -108,14 +108,14 @@ export default function Calendar() {
         api.getAdminProperties(),
         api.getReservations(rangeFrom, rangeTo),
       ]);
-      setUnits((u || []).filter((x) => x.is_active && x.business_unit === 'RESORT'));
+      setUnits((u || []).filter((x) => x.is_active && x.business_unit === businessUnit));
       setReservations(r || []);
     } catch (e) {
       setError(e.message || 'Ошибка загрузки');
     } finally {
       setLoading(false);
     }
-  }, [rangeFrom, rangeTo]);
+  }, [rangeFrom, rangeTo, businessUnit]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -159,6 +159,7 @@ export default function Calendar() {
 
   // Suggested amounts from the unit's catalog rate (editable). Deposit defaults to 30%.
   function calcAmounts(propertyId, ci, co) {
+    if (!autoPrice) return { total_amount: '', deposit_amount: '' }; // pool: amounts empty/manual
     const u = units.find((x) => x.id === Number(propertyId));
     const total = stayTotal(u, ci, co);
     return {
@@ -354,14 +355,14 @@ export default function Calendar() {
   return (
     <div>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-        <h1 className="text-2xl font-bold text-gray-800">Календарь броней</h1>
+        <h1 className="text-2xl font-bold text-gray-800">{title}</h1>
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => setStart(addDays(start, -7))} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"><ChevronLeft size={18} /></button>
           <input type="date" value={ymd(start)} onChange={(e) => setStart(new Date(e.target.value + 'T00:00:00'))} className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
           <button onClick={() => setStart(addDays(start, 7))} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"><ChevronRight size={18} /></button>
           <button onClick={() => setStart(addDays(today, -5))} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Сегодня</button>
           <button onClick={() => openNew(null, null)} className="flex items-center gap-1.5 bg-blue-600 text-white rounded-lg px-3 py-2 text-sm font-medium hover:bg-blue-700"><Plus size={16} /> Бронь</button>
-          <button onClick={importPreps} disabled={importing} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{importing ? 'Импорт…' : 'Импорт предоплат'}</button>
+          {showImport && <button onClick={importPreps} disabled={importing} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{importing ? 'Импорт…' : 'Импорт предоплат'}</button>}
         </div>
       </div>
 

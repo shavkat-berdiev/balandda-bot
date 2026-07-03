@@ -61,6 +61,7 @@ export default function App() {
       <Layout user={user} onLogout={handleLogout} frontOffice>
         <Routes>
           <Route path="/calendar" element={<Calendar />} />
+          <Route path="/pool" element={<Calendar businessUnit="RESTAURANT" autoPrice={false} title="Бассейн" showImport={false} />} />
           <Route path="/changelog" element={<ChangeLog />} />
           <Route path="*" element={<Navigate to="/calendar" />} />
         </Routes>
@@ -83,6 +84,7 @@ export default function App() {
         <Route path="/admin/reports" element={<AdminReports user={user} />} />
         <Route path="/prepayments" element={<Prepayments />} />
         <Route path="/calendar" element={<Calendar />} />
+        <Route path="/pool" element={<Calendar businessUnit="RESTAURANT" autoPrice={false} title="Бассейн" showImport={false} />} />
         <Route path="/changelog" element={<ChangeLog />} />
         <Route path="/wallets" element={<Wallets />} />
         <Route path="/registration" element={<RegistrationRequests />} />

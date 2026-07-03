@@ -101,6 +101,9 @@ class PropertyType(str, enum.Enum):
     PENTHOUSE = "PENTHOUSE"
     VILLA = "VILLA"
     SPA_SUITE = "SPA_SUITE"
+    POOL_LARGE_CABIN = "POOL_LARGE_CABIN"   # бассейн — большой шатёр
+    POOL_SMALL_CABIN = "POOL_SMALL_CABIN"   # бассейн — белый шатёр
+    POOL_TABLE = "POOL_TABLE"               # бассейн — стол
 
 
 class ReservationStatus(str, enum.Enum):
@@ -275,6 +278,9 @@ PROPERTY_TYPE_LABELS = {
     PropertyType.PENTHOUSE: "Пентхаус",
     PropertyType.VILLA: "Вилла",
     PropertyType.SPA_SUITE: "SPA Сьют",
+    PropertyType.POOL_LARGE_CABIN: "Большой шатёр (бассейн)",
+    PropertyType.POOL_SMALL_CABIN: "Белый шатёр (бассейн)",
+    PropertyType.POOL_TABLE: "Стол (бассейн)",
 }
 
 REPORT_STATUS_LABELS = {
