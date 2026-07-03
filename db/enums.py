@@ -104,13 +104,14 @@ class PropertyType(str, enum.Enum):
 
 
 class ReservationStatus(str, enum.Enum):
-    HOLD = "HOLD"            # tentative — awaiting payment/confirmation
+    HOLD = "HOLD"            # tentative — awaiting prepayment (shown red)
     CONFIRMED = "CONFIRMED"
     CHECKED_IN = "CHECKED_IN"
     CHECKED_OUT = "CHECKED_OUT"
     CANCELLED = "CANCELLED"
     NO_SHOW = "NO_SHOW"
     BLOCKED = "BLOCKED"      # manual block (maintenance / owner hold)
+    EXPIRED = "EXPIRED"      # hold lapsed unpaid (shown pale grey, date freed)
 
 
 class ReservationSource(str, enum.Enum):
@@ -131,6 +132,7 @@ RESERVATION_STATUS_LABELS = {
     ReservationStatus.CANCELLED: "Отменено",
     ReservationStatus.NO_SHOW: "Не приехал",
     ReservationStatus.BLOCKED: "Заблокировано",
+    ReservationStatus.EXPIRED: "Истекло (не оплачено)",
 }
 
 RESERVATION_SOURCE_LABELS = {

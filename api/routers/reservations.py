@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth import get_current_user, require_owner
 from db.database import get_session
+from db.hold_timing import add_working_minutes
 from db.enums import (
     BusinessUnit,
     PAYMENT_METHOD_LABELS,
@@ -43,7 +44,9 @@ class ReservationCreate(BaseModel):
     guest_name: str | None = None
     guest_phone: str | None = None
     guest_count: int | None = None
-    status: str = "CONFIRMED"          # use "BLOCKED" for maintenance/owner holds
+    telegram_username: str | None = None
+    telegram_user_id: int | None = None
+    status: str = "CONFIRMED"          # use "BLOCKED" for maintenance/owner holds; "HOLD" arms the unpaid timer
     source: str = "MANUAL"
     total_amount: float | None = None
     deposit_amount: float | None = None
@@ -61,6 +64,8 @@ class ReservationUpdate(BaseModel):
     guest_name: str | None = None
     guest_phone: str | None = None
     guest_count: int | None = None
+    telegram_username: str | None = None
+    telegram_user_id: int | None = None
     status: str | None = None
     total_amount: float | None = None
     deposit_amount: float | None = None
@@ -104,8 +109,20 @@ def _out(r: Reservation, property_name: str | None = None, income_paid: float = 
         "paid_amount": paid,
         "balance": (total - paid) if total is not None else None,
         "note": r.note,
+        "telegram_username": r.telegram_username,
+        "telegram_user_id": r.telegram_user_id,
+        "hold_expires_at": r.hold_expires_at.isoformat() if r.hold_expires_at else None,
+        "hold_warn_at": r.hold_warn_at.isoformat() if r.hold_warn_at else None,
+        "hold_warned_at": r.hold_warned_at.isoformat() if r.hold_warned_at else None,
         "created_at": r.created_at.isoformat() if r.created_at else None,
     }
+
+
+def _clean_username(u: str | None) -> str | None:
+    if not u:
+        return None
+    u = u.strip().lstrip("@")
+    return u or None
 
 
 def _parse_status(value: str) -> ReservationStatus:
@@ -248,6 +265,9 @@ async def create_reservation(
     except ValueError:
         raise HTTPException(status_code=400, detail=f"invalid source: {data.source}")
 
+    # An unpaid HOLD starts the working-hours countdown: warn at 30m, expire at 60m.
+    now = datetime.now(timezone.utc)
+    is_hold = status == ReservationStatus.HOLD
     res = Reservation(
         property_id=data.property_id,
         check_in=data.check_in,
@@ -255,12 +275,16 @@ async def create_reservation(
         guest_name=data.guest_name,
         guest_phone=data.guest_phone,
         guest_count=data.guest_count,
+        telegram_username=_clean_username(data.telegram_username),
+        telegram_user_id=data.telegram_user_id,
         status=status,
         source=source,
         total_amount=data.total_amount,
         deposit_amount=data.deposit_amount,
         note=data.note,
         created_by=user.get("telegram_id"),
+        hold_warn_at=add_working_minutes(now, 30) if is_hold else None,
+        hold_expires_at=add_working_minutes(now, 60) if is_hold else None,
     )
     session.add(res)
     try:
@@ -292,6 +316,10 @@ async def update_reservation(
         val = getattr(data, field)
         if val is not None:
             setattr(res, field, val)
+    if data.telegram_username is not None:
+        res.telegram_username = _clean_username(data.telegram_username)
+    if data.telegram_user_id is not None:
+        res.telegram_user_id = data.telegram_user_id
     if res.check_out <= res.check_in:
         raise HTTPException(status_code=400, detail="check_out must be after check_in")
     new = {f: getattr(res, f) for f in _FIELDS}
@@ -329,14 +357,17 @@ async def restore_reservation(
     session: AsyncSession = Depends(get_session),
     user: dict = Depends(get_current_user),
 ):
-    """Undo a cancellation — bring a CANCELLED booking back as CONFIRMED. Rejected
-    with 409 if the dates are now taken by another active booking."""
+    """Bring a CANCELLED or EXPIRED booking back as CONFIRMED. Rejected with 409 if the
+    dates are now taken by another active booking."""
     res = await session.get(Reservation, res_id)
     if not res:
         raise HTTPException(status_code=404, detail="not found")
-    if res.status != ReservationStatus.CANCELLED:
-        raise HTTPException(status_code=400, detail="Бронь не отменена — восстанавливать нечего")
+    if res.status not in (ReservationStatus.CANCELLED, ReservationStatus.EXPIRED):
+        raise HTTPException(status_code=400, detail="Бронь активна — восстанавливать нечего")
     res.status = ReservationStatus.CONFIRMED
+    res.hold_warn_at = None
+    res.hold_expires_at = None
+    res.hold_warned_at = None
     try:
         await session.commit()
     except IntegrityError:
@@ -363,8 +394,8 @@ async def delete_reservation(
     res = await session.get(Reservation, res_id)
     if not res:
         raise HTTPException(status_code=404, detail="not found")
-    if res.status != ReservationStatus.CANCELLED:
-        raise HTTPException(status_code=400, detail="Удалить навсегда можно только отменённую бронь")
+    if res.status not in (ReservationStatus.CANCELLED, ReservationStatus.EXPIRED):
+        raise HTTPException(status_code=400, detail="Удалить навсегда можно только отменённую или истёкшую бронь")
     prop = await session.get(Property, res.property_id)
     snapshot = (
         f"{res.guest_name or 'без имени'} · "
@@ -380,6 +411,50 @@ async def delete_reservation(
     return {"ok": True, "deleted": res_id}
 
 
+# ---- payment ledger helpers ----
+def _today_tashkent() -> date:
+    return datetime.now(timezone(timedelta(hours=5))).date()
+
+
+async def _get_or_create_report(session: AsyncSession, operator: int) -> StructuredReport:
+    """Today's RESORT draft report for this operator (created on demand)."""
+    report = (
+        await session.execute(
+            select(StructuredReport).where(
+                StructuredReport.submitted_by == operator,
+                StructuredReport.report_date == _today_tashkent(),
+                StructuredReport.business_unit == BusinessUnit.RESORT,
+                StructuredReport.status == ReportStatus.DRAFT,
+            )
+        )
+    ).scalar_one_or_none()
+    if not report:
+        report = StructuredReport(
+            report_date=_today_tashkent(), business_unit=BusinessUnit.RESORT,
+            status=ReportStatus.DRAFT, submitted_by=operator,
+        )
+        session.add(report)
+        await session.flush()
+    return report
+
+
+async def _reservation_out(session: AsyncSession, res: Reservation) -> dict:
+    income = (
+        await session.execute(
+            select(func.coalesce(func.sum(IncomeEntry.amount), 0)).where(IncomeEntry.reservation_id == res.id)
+        )
+    ).scalar() or 0
+    prop = await session.get(Property, res.property_id)
+    total = float(res.total_amount) if res.total_amount is not None else _stay_price(prop, res.check_in, res.check_out)
+    return _out(res, prop.name_ru if prop else None, float(income), total)
+
+
+async def _actor_name(session: AsyncSession, operator: int) -> str | None:
+    return (
+        await session.execute(select(User.full_name).where(User.telegram_id == operator))
+    ).scalar_one_or_none()
+
+
 @router.post("/{res_id}/payment")
 async def accept_payment(
     res_id: int,
@@ -387,9 +462,10 @@ async def accept_payment(
     session: AsyncSession = Depends(get_session),
     user: dict = Depends(get_current_user),
 ):
-    """Record a full/balance accommodation payment from the calendar. Creates a
-    linked income entry in today's RESORT report (so it lands in analytics) and
-    updates the booking's paid total + change log."""
+    """Add a (partial) accommodation payment from the calendar. Records it as income in
+    today's RESORT report (lands in analytics immediately), mirrors it into the Prepayment
+    table (finance source of truth), tops up the cash wallet if paid in cash, and — on the
+    first payment — flips an unpaid HOLD to CONFIRMED and stops the expiry countdown."""
     res = await session.get(Reservation, res_id)
     if not res:
         raise HTTPException(status_code=404, detail="not found")
@@ -401,32 +477,16 @@ async def accept_payment(
         raise HTTPException(status_code=400, detail=f"invalid payment_method: {data.payment_method}")
 
     operator = user.get("telegram_id")
-    today = datetime.now(timezone(timedelta(hours=5))).date()  # Asia/Tashkent
-
-    report = (
-        await session.execute(
-            select(StructuredReport).where(
-                StructuredReport.submitted_by == operator,
-                StructuredReport.report_date == today,
-                StructuredReport.business_unit == BusinessUnit.RESORT,
-                StructuredReport.status == ReportStatus.DRAFT,
-            )
-        )
-    ).scalar_one_or_none()
-    if not report:
-        report = StructuredReport(
-            report_date=today, business_unit=BusinessUnit.RESORT,
-            status=ReportStatus.DRAFT, submitted_by=operator,
-        )
-        session.add(report)
-        await session.flush()
+    report = await _get_or_create_report(session, operator)
 
     amt = round(float(data.amount))
     nights = (res.check_out - res.check_in).days or 1
-    session.add(IncomeEntry(
+    income = IncomeEntry(
         report_id=report.id, property_id=res.property_id, reservation_id=res.id,
         payment_method=pm, amount=amt, num_days=nights,
-    ))
+    )
+    session.add(income)
+    await session.flush()  # need income.id for the mirror
     report.total_income = (report.total_income or 0) + amt
     if pm == PaymentMethod.CASH:
         session.add(WalletTransaction(
@@ -435,23 +495,163 @@ async def accept_payment(
             status=WalletTransactionStatus.COMPLETED,
             report_id=report.id, business_unit=BusinessUnit.RESORT,
         ))
-    name = (
-        await session.execute(select(User.full_name).where(User.telegram_id == operator))
-    ).scalar_one_or_none()
+    # Mirror into the Prepayment table — analytics stays the finance source of truth.
+    session.add(Prepayment(
+        guest_name=res.guest_name or "—", property_id=res.property_id,
+        check_in_date=res.check_in, check_out_date=res.check_out,
+        amount=amt, payment_method=pm.value, status=PrepaymentStatus.CONFIRMED,
+        operator_telegram_id=operator, reservation_id=res.id, income_entry_id=income.id,
+        settled_in_report_id=report.id, note="Из календаря броней",
+    ))
+
+    # First payment secures the booking: HOLD (red) -> CONFIRMED, stop the countdown.
+    if res.status == ReservationStatus.HOLD:
+        res.status = ReservationStatus.CONFIRMED
+        res.hold_warn_at = None
+        res.hold_expires_at = None
+        res.hold_warned_at = None
+
+    name = await _actor_name(session, operator)
     session.add(ReservationEvent(
         reservation_id=res.id, actor_id=operator, actor_name=name, action="payment",
-        detail=f"Оплата проживания: +{amt} сум ({PAYMENT_METHOD_LABELS.get(pm, pm.value)}) · отчёт #{report.id}",
+        detail=f"Оплата: +{amt} сум ({PAYMENT_METHOD_LABELS.get(pm, pm.value)}) · отчёт #{report.id}",
     ))
     await session.commit()
+    await session.refresh(res)
+    return await _reservation_out(session, res)
 
-    income = (
+
+@router.get("/{res_id}/payments")
+async def list_payments(
+    res_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """The payment ledger for a booking — every partial payment, newest first."""
+    rows = (
         await session.execute(
-            select(func.coalesce(func.sum(IncomeEntry.amount), 0)).where(IncomeEntry.reservation_id == res.id)
+            select(IncomeEntry, StructuredReport.report_date)
+            .join(StructuredReport, StructuredReport.id == IncomeEntry.report_id)
+            .where(IncomeEntry.reservation_id == res_id)
+            .order_by(IncomeEntry.id.desc())
         )
-    ).scalar() or 0
-    prop = await session.get(Property, res.property_id)
-    total = float(res.total_amount) if res.total_amount is not None else _stay_price(prop, res.check_in, res.check_out)
-    return _out(res, prop.name_ru if prop else None, float(income), total)
+    ).all()
+    return [
+        {
+            "id": e.id,
+            "amount": float(e.amount),
+            "payment_method": e.payment_method.value if e.payment_method else None,
+            "payment_method_label": PAYMENT_METHOD_LABELS.get(
+                e.payment_method, e.payment_method.value if e.payment_method else ""),
+            "report_id": e.report_id,
+            "report_date": rd.isoformat() if rd else None,
+        }
+        for (e, rd) in rows
+    ]
+
+
+@router.patch("/{res_id}/payments/{income_id}")
+async def edit_payment(
+    res_id: int,
+    income_id: int,
+    data: PaymentInput,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Edit a partial payment's amount/method; keeps the report total, cash wallet and the
+    mirrored Prepayment in sync, and logs the change."""
+    income = await session.get(IncomeEntry, income_id)
+    if not income or income.reservation_id != res_id:
+        raise HTTPException(status_code=404, detail="payment not found")
+    if data.amount is None or data.amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be positive")
+    try:
+        new_pm = PaymentMethod(data.payment_method)
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"invalid payment_method: {data.payment_method}")
+
+    operator = user.get("telegram_id")
+    old_amt = round(float(income.amount))
+    old_pm = income.payment_method
+    new_amt = round(float(data.amount))
+
+    report = await session.get(StructuredReport, income.report_id)
+    if report is not None:
+        report.total_income = (report.total_income or 0) + (new_amt - old_amt)
+
+    # Cash on hand: apply a signed wallet adjustment for the net cash change.
+    old_cash = old_amt if old_pm == PaymentMethod.CASH else 0
+    new_cash = new_amt if new_pm == PaymentMethod.CASH else 0
+    if new_cash - old_cash != 0 and report is not None:
+        session.add(WalletTransaction(
+            sender_telegram_id=report.submitted_by, amount=(new_cash - old_cash),
+            transaction_type=WalletTransactionType.ADJUSTMENT,
+            status=WalletTransactionStatus.COMPLETED,
+            report_id=income.report_id, business_unit=BusinessUnit.RESORT,
+            note="Правка оплаты брони",
+        ))
+
+    income.amount = new_amt
+    income.payment_method = new_pm
+
+    prep = (
+        await session.execute(select(Prepayment).where(Prepayment.income_entry_id == income_id))
+    ).scalar_one_or_none()
+    if prep is not None:
+        prep.amount = new_amt
+        prep.payment_method = new_pm.value
+
+    name = await _actor_name(session, operator)
+    session.add(ReservationEvent(
+        reservation_id=res_id, actor_id=operator, actor_name=name, action="payment",
+        detail=f"Правка оплаты: {old_amt} → {new_amt} сум ({PAYMENT_METHOD_LABELS.get(new_pm, new_pm.value)})",
+    ))
+    await session.commit()
+    res = await session.get(Reservation, res_id)
+    return await _reservation_out(session, res)
+
+
+@router.delete("/{res_id}/payments/{income_id}")
+async def delete_payment(
+    res_id: int,
+    income_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Remove a partial payment; reverses report income, cash wallet and the mirrored
+    Prepayment, and logs it."""
+    income = await session.get(IncomeEntry, income_id)
+    if not income or income.reservation_id != res_id:
+        raise HTTPException(status_code=404, detail="payment not found")
+    operator = user.get("telegram_id")
+    amt = round(float(income.amount))
+    pm = income.payment_method
+    report = await session.get(StructuredReport, income.report_id)
+    if report is not None:
+        report.total_income = (report.total_income or 0) - amt
+        if pm == PaymentMethod.CASH:
+            session.add(WalletTransaction(
+                sender_telegram_id=report.submitted_by, amount=-amt,
+                transaction_type=WalletTransactionType.ADJUSTMENT,
+                status=WalletTransactionStatus.COMPLETED,
+                report_id=income.report_id, business_unit=BusinessUnit.RESORT,
+                note="Удаление оплаты брони",
+            ))
+    # Delete the mirrored prepayment first (its FK to the income row is SET NULL on delete).
+    prep = (
+        await session.execute(select(Prepayment).where(Prepayment.income_entry_id == income_id))
+    ).scalar_one_or_none()
+    if prep is not None:
+        await session.delete(prep)
+    name = await _actor_name(session, operator)
+    session.add(ReservationEvent(
+        reservation_id=res_id, actor_id=operator, actor_name=name, action="payment",
+        detail=f"Удаление оплаты: −{amt} сум ({PAYMENT_METHOD_LABELS.get(pm, pm.value if pm else '')})",
+    ))
+    await session.delete(income)
+    await session.commit()
+    res = await session.get(Reservation, res_id)
+    return await _reservation_out(session, res)
 
 
 @router.get("/{res_id}/events")

@@ -276,6 +276,26 @@ async def run_migrations():
             END IF;
         END $$;
         """,
+        # Two-step booking: Telegram link to customer + unpaid-hold timers on reservations
+        """
+        DO $$
+        BEGIN
+            ALTER TABLE reservations ADD COLUMN IF NOT EXISTS telegram_username VARCHAR(100);
+            ALTER TABLE reservations ADD COLUMN IF NOT EXISTS telegram_user_id BIGINT;
+            ALTER TABLE reservations ADD COLUMN IF NOT EXISTS hold_warn_at TIMESTAMPTZ;
+            ALTER TABLE reservations ADD COLUMN IF NOT EXISTS hold_warned_at TIMESTAMPTZ;
+            ALTER TABLE reservations ADD COLUMN IF NOT EXISTS hold_expires_at TIMESTAMPTZ;
+        END $$;
+        """,
+        # Prepayment <-> booking links (calendar-originated partial prepayments mirror here)
+        """
+        DO $$
+        BEGIN
+            ALTER TABLE prepayments ADD COLUMN IF NOT EXISTS reservation_id INTEGER REFERENCES reservations(id) ON DELETE SET NULL;
+            ALTER TABLE prepayments ADD COLUMN IF NOT EXISTS income_entry_id INTEGER REFERENCES income_entries(id) ON DELETE SET NULL;
+            CREATE INDEX IF NOT EXISTS ix_prepayments_reservation ON prepayments (reservation_id);
+        END $$;
+        """,
         # btree_gist + exclusion constraint: no overlapping dates on the same unit.
         # Wrapped in a sub-block so a missing extension / permission issue logs a
         # warning instead of aborting the whole migration transaction.
@@ -372,6 +392,19 @@ async def run_migrations():
             END IF;
         END $$;
         """,
+        # Two-step booking: EXPIRED reservation status (lapsed unpaid holds)
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_enum
+                WHERE enumlabel = 'EXPIRED'
+                  AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'reservationstatus')
+            ) THEN
+                ALTER TYPE reservationstatus ADD VALUE 'EXPIRED';
+            END IF;
+        END $$;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in enum_additions:
@@ -414,6 +447,23 @@ async def run_migrations():
         """,
         """
         CREATE INDEX IF NOT EXISTS ix_purchase_entries_report ON purchase_entries (report_id);
+        """,
+        # Free the date for expired holds: rebuild the overlap constraint to also
+        # exclude EXPIRED (now that the enum value is committed).
+        """
+        DO $$
+        BEGIN
+            BEGIN
+                ALTER TABLE reservations DROP CONSTRAINT IF EXISTS reservations_no_overlap;
+                ALTER TABLE reservations ADD CONSTRAINT reservations_no_overlap
+                EXCLUDE USING gist (
+                    property_id WITH =,
+                    daterange(check_in, check_out, '[)') WITH &&
+                ) WHERE (status NOT IN ('CANCELLED','NO_SHOW','EXPIRED'));
+            EXCEPTION WHEN OTHERS THEN
+                RAISE WARNING 'reservations_no_overlap rebuild failed: %', SQLERRM;
+            END;
+        END $$;
         """,
     ]
     async with engine.begin() as conn:

@@ -30,6 +30,10 @@ async def sync_reservation_for_prepayment(session: AsyncSession, prepayment: Pre
     # Snapshot all needed values BEFORE any commit/rollback (a rollback expires
     # the ORM object, and a later attribute access would raise MissingGreenlet).
     pid = prepayment.id
+    # Prepayments created FROM the bookings calendar already have their reservation
+    # (they mirror a payment on it) — never spawn a duplicate booking for those.
+    if getattr(prepayment, "reservation_id", None):
+        return
     p_property_id = prepayment.property_id
     p_check_in = prepayment.check_in_date
     p_check_out = prepayment.check_out_date

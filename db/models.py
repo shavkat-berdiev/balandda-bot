@@ -337,6 +337,14 @@ class Prepayment(Base):
     settled_in_report_id: Mapped[int | None] = mapped_column(
         ForeignKey("structured_reports.id"), nullable=True
     )
+    # Links when a prepayment is created/mirrored from the bookings calendar.
+    # One reservation can have many (partial) prepayments; each mirrors one income line.
+    reservation_id: Mapped[int | None] = mapped_column(
+        ForeignKey("reservations.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    income_entry_id: Mapped[int | None] = mapped_column(
+        ForeignKey("income_entries.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
@@ -424,6 +432,10 @@ class Reservation(Base):
     guest_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     guest_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
     guest_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Telegram link to the customer chat — @nickname now (agent-entered or self-service),
+    # numeric user id filled once the customer has interacted with the bot (needed to DM them).
+    telegram_username: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    telegram_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     check_in: Mapped[date] = mapped_column(Date, index=True)
     check_out: Mapped[date] = mapped_column(Date)
     status: Mapped[ReservationStatus] = mapped_column(
@@ -435,6 +447,9 @@ class Reservation(Base):
     total_amount: Mapped[float | None] = mapped_column(Numeric(15, 2), nullable=True)
     deposit_amount: Mapped[float | None] = mapped_column(Numeric(15, 2), nullable=True)
     prepayment_id: Mapped[int | None] = mapped_column(ForeignKey("prepayments.id"), nullable=True)
+    # Unpaid-hold lifecycle (working-hours aware, set at creation, cleared on first payment)
+    hold_warn_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    hold_warned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     hold_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

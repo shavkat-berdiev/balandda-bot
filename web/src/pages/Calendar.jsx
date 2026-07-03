@@ -3,13 +3,14 @@ import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react';
 import { api } from '../api';
 
 const STATUS_STYLE = {
-  HOLD: { cell: 'bg-amber-200 hover:bg-amber-300', label: 'Бронь (ожидает)' },
+  HOLD: { cell: 'bg-red-300 hover:bg-red-400', label: 'Бронь (не оплачено)' },
   CONFIRMED: { cell: 'bg-blue-300 hover:bg-blue-400', label: 'Подтверждено' },
   CHECKED_IN: { cell: 'bg-green-300 hover:bg-green-400', label: 'Заселён' },
   CHECKED_OUT: { cell: 'bg-slate-300 hover:bg-slate-400', label: 'Выселен' },
   BLOCKED: { cell: 'bg-gray-400 hover:bg-gray-500', label: 'Заблокировано' },
-  NO_SHOW: { cell: 'bg-red-200', label: 'Не приехал' },
+  NO_SHOW: { cell: 'bg-gray-200', label: 'Не приехал' },
   CANCELLED: { cell: 'bg-white', label: 'Отменено' },
+  EXPIRED: { cell: 'bg-gray-100', label: 'Истекло (не оплачено)' },
 };
 const STATUS_OPTIONS = ['CONFIRMED', 'HOLD', 'BLOCKED'];
 const SOURCE_OPTIONS = ['MANUAL', 'PHONE', 'DIRECT', 'TELEGRAM', 'INSTAGRAM', 'BOOKING_COM', 'AIRBNB'];
@@ -53,6 +54,7 @@ function fmtDateTime(iso) {
 // Bar colour: no-show grey, fully paid green, past+unpaid orange (debt), else status colour.
 function barClass(r, todayStr) {
   if (r.status === 'NO_SHOW') return 'bg-gray-200 hover:bg-gray-300 line-through text-gray-500';
+  if (r.status === 'HOLD') return 'bg-red-300 hover:bg-red-400'; // unpaid hold — awaiting prepayment
   const total = r.total_amount, paid = r.paid_amount || 0;
   const fullyPaid = total != null && total > 0 && paid + 1 >= total;
   if (fullyPaid) return 'bg-green-300 hover:bg-green-400';
@@ -89,6 +91,8 @@ export default function Calendar() {
   const [savingDetail, setSavingDetail] = useState(false);
   const [payForm, setPayForm] = useState(null);
   const [savingPay, setSavingPay] = useState(false);
+  const [payments, setPayments] = useState([]);   // payment ledger for the selected booking
+  const [editPay, setEditPay] = useState(null);    // {id, amount, method} inline edit
 
   const isOwner = useMemo(() => (currentUser().role || '').toUpperCase() === 'OWNER', []);
 
@@ -117,25 +121,31 @@ export default function Calendar() {
 
   useEffect(() => { load(); }, [load]);
 
-  // When a booking is selected: load an editable copy + its change log.
+  // When a booking is selected: load an editable copy + its change log + payment ledger.
   useEffect(() => {
-    if (!detail) { setDetailForm(null); setEvents([]); setPayForm(null); return; }
-    setPayForm(null);
+    if (!detail) { setDetailForm(null); setEvents([]); setPayForm(null); setPayments([]); setEditPay(null); return; }
+    setPayForm(null); setEditPay(null);
     setDetailForm({
       status: detail.status,
       check_in: detail.check_in, check_out: detail.check_out,
       guest_name: detail.guest_name || '', guest_phone: detail.guest_phone || '',
+      telegram_username: detail.telegram_username || '',
       guest_count: detail.guest_count ?? '', total_amount: detail.total_amount ?? '',
       deposit_amount: detail.deposit_amount ?? '', note: detail.note || '',
     });
     api.getReservationEvents(detail.id).then(setEvents).catch(() => setEvents([]));
+    api.getReservationPayments(detail.id).then(setPayments).catch(() => setPayments([]));
   }, [detail]);
+
+  async function reloadPayments(id) {
+    try { setPayments(await api.getReservationPayments(id)); } catch { /* ignore */ }
+  }
 
   // index: `${property_id}|${ymd}` -> reservation covering that night
   const byCell = useMemo(() => {
     const m = new Map();
     for (const r of reservations) {
-      if (r.status === 'CANCELLED') continue; // cancelled frees the dates; no-show stays visible
+      if (r.status === 'CANCELLED' || r.status === 'EXPIRED') continue; // freed dates; no-show stays visible
       let d = new Date(r.check_in + 'T00:00:00');
       const end = new Date(r.check_out + 'T00:00:00');
       while (d < end) {
@@ -155,7 +165,7 @@ export default function Calendar() {
     const total = stayTotal(u, ci, co);
     return {
       total_amount: total ? String(total) : '',
-      deposit_amount: total ? String(Math.round(total * 0.3)) : '',
+      deposit_amount: total ? String(Math.round(total * 0.2)) : '',
     };
   }
 
@@ -164,11 +174,13 @@ export default function Calendar() {
     const check_in = date ? ymd(date) : rangeFrom;
     const check_out = date ? ymd(addDays(date, 1)) : ymd(addDays(start, 1));
     setForm({
+      step: 1, createdRes: null,
       property_id, check_in, check_out,
-      guest_name: '', guest_phone: '', guest_count: '',
-      status: 'CONFIRMED', source: 'MANUAL',
+      guest_name: '', guest_phone: '', guest_count: '', telegram_username: '',
+      status: 'HOLD', source: 'MANUAL',
       ...calcAmounts(property_id, check_in, check_out),
       note: '',
+      payMethod: 'CASH', payAmount: '',
     });
   }
 
@@ -196,6 +208,7 @@ export default function Calendar() {
     }
   }
 
+  // Step 1: create the booking (HOLD → red until a prepayment is added).
   async function submitNew(e) {
     e.preventDefault();
     try {
@@ -206,17 +219,34 @@ export default function Calendar() {
         guest_name: form.guest_name || null,
         guest_phone: form.guest_phone || null,
         guest_count: form.guest_count ? Number(form.guest_count) : null,
+        telegram_username: form.telegram_username || null,
         status: form.status,
         source: form.source,
         total_amount: form.total_amount ? Number(form.total_amount) : null,
         deposit_amount: form.deposit_amount ? Number(form.deposit_amount) : null,
         note: form.note || null,
       };
-      await api.createReservation(body);
+      const res = await api.createReservation(body);
+      await load();
+      if (form.status === 'BLOCKED') { setForm(null); return; }
+      // Step 2: prepayment (prefill the 20% deposit, editable up).
+      setForm((f) => ({ ...f, step: 2, createdRes: res, payAmount: f.deposit_amount || '', payMethod: 'CASH' }));
+    } catch (e) {
+      alert(e.message || 'Не удалось создать');
+    }
+  }
+
+  // Step 2: register the prepayment against the just-created booking (flips it out of red).
+  async function submitPrepay() {
+    if (!form?.createdRes) { setForm(null); return; }
+    const amt = Number(form.payAmount);
+    if (!amt || amt <= 0) { alert('Введите сумму предоплаты'); return; }
+    try {
+      await api.acceptPayment(form.createdRes.id, { amount: amt, payment_method: form.payMethod });
       setForm(null);
       await load();
     } catch (e) {
-      alert(e.message || 'Не удалось создать');
+      alert(e.message || 'Не удалось провести предоплату');
     }
   }
 
@@ -231,10 +261,10 @@ export default function Calendar() {
     }
   }
 
-  // Cancelled bookings overlapping the visible range — kept (struck-through) so
-  // they can be restored; the dates themselves read as free for new bookings.
-  const cancelled = useMemo(
-    () => reservations.filter((r) => r.status === 'CANCELLED'),
+  // Cancelled + expired bookings in range — kept (struck-through) so they can be
+  // restored; their dates read as free for new bookings.
+  const freed = useMemo(
+    () => reservations.filter((r) => r.status === 'CANCELLED' || r.status === 'EXPIRED'),
     [reservations]
   );
 
@@ -269,6 +299,7 @@ export default function Calendar() {
         guest_name: detailForm.guest_name || null,
         guest_phone: detailForm.guest_phone || null,
         guest_count: detailForm.guest_count ? Number(detailForm.guest_count) : null,
+        telegram_username: detailForm.telegram_username || null,
         total_amount: detailForm.total_amount ? Number(detailForm.total_amount) : null,
         deposit_amount: detailForm.deposit_amount ? Number(detailForm.deposit_amount) : null,
         note: detailForm.note || null,
@@ -286,13 +317,37 @@ export default function Calendar() {
     if (!payForm || !payForm.amount || Number(payForm.amount) <= 0) { alert('Введите сумму'); return; }
     setSavingPay(true);
     try {
-      await api.acceptPayment(detail.id, { amount: Number(payForm.amount), payment_method: payForm.method });
-      setDetail(null);
-      await load();
+      const updated = await api.acceptPayment(detail.id, { amount: Number(payForm.amount), payment_method: payForm.method });
+      setPayForm(null);
+      setDetail(updated);   // refreshes paid/balance/status + reloads ledger via effect
+      await load();         // refresh calendar colours (red → confirmed / green)
     } catch (e) {
       alert(e.message || 'Не удалось принять оплату');
     } finally {
       setSavingPay(false);
+    }
+  }
+
+  async function saveEditPay() {
+    if (!editPay || !editPay.amount || Number(editPay.amount) <= 0) { alert('Введите сумму'); return; }
+    try {
+      const updated = await api.editReservationPayment(detail.id, editPay.id, { amount: Number(editPay.amount), payment_method: editPay.method });
+      setEditPay(null);
+      setDetail(updated);
+      await load();
+    } catch (e) {
+      alert(e.message || 'Не удалось изменить оплату');
+    }
+  }
+
+  async function deletePay(incomeId) {
+    if (!confirm('Удалить эту оплату? Сумма будет вычтена из дохода и кошелька.')) return;
+    try {
+      const updated = await api.deleteReservationPayment(detail.id, incomeId);
+      setDetail(updated);
+      await load();
+    } catch (e) {
+      alert(e.message || 'Не удалось удалить оплату');
     }
   }
 
@@ -321,12 +376,12 @@ export default function Calendar() {
 
       {/* Legend */}
       <div className="flex flex-wrap gap-3 mb-3 text-xs text-gray-600">
-        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-green-300" />Оплачено</span>
+        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-red-300" />Не оплачено</span>
         <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-blue-300" />Подтверждено</span>
-        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-amber-200" />Бронь (ожидает)</span>
-        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-orange-300" />Долг (не оплачено)</span>
+        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-green-300" />Оплачено</span>
+        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-orange-300" />Долг</span>
         <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-gray-400" />Блок</span>
-        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-gray-200" />Не приехал</span>
+        <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-gray-100 border border-gray-200" />Истекло</span>
       </div>
 
       {loading ? (
@@ -360,15 +415,16 @@ export default function Calendar() {
         </div>
       )}
 
-      {/* Cancelled bookings in range — restore or permanently delete */}
-      {cancelled.length > 0 && (
+      {/* Cancelled + expired bookings in range — restore or permanently delete */}
+      {freed.length > 0 && (
         <div className="mt-5 border border-gray-200 rounded-xl bg-white p-4">
-          <div className="text-sm font-semibold text-gray-600 mb-1">Отменённые брони в этом периоде</div>
-          <p className="text-xs text-gray-400 mb-3">Даты свободны для новых броней. Можно восстановить ошибочно отменённую бронь{isOwner ? ' или удалить её навсегда' : ''}.</p>
+          <div className="text-sm font-semibold text-gray-600 mb-1">Отменённые и истёкшие брони в этом периоде</div>
+          <p className="text-xs text-gray-400 mb-3">Даты свободны для новых броней. Можно восстановить бронь{isOwner ? ' или удалить её навсегда' : ''}.</p>
           <ul className="space-y-2">
-            {cancelled.map((r) => (
+            {freed.map((r) => (
               <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 border-t border-gray-100 pt-2 first:border-t-0 first:pt-0">
                 <span className="text-sm text-gray-400 line-through">
+                  <span className="not-italic no-underline text-gray-300 mr-1">{r.status === 'EXPIRED' ? '⌛' : '✕'}</span>
                   {r.property_name} · {r.guest_name || r.source_label} · {r.check_in}→{r.check_out}
                   {r.total_amount != null ? ` · ${money(r.total_amount)} сум` : ''}
                 </span>
@@ -384,46 +440,76 @@ export default function Calendar() {
         </div>
       )}
 
-      {/* New reservation modal */}
+      {/* New booking — step 1 (details) → step 2 (prepayment) */}
       {form && (
-        <Modal onClose={() => setForm(null)} title="Новая бронь / блок">
-          <form onSubmit={submitNew} className="space-y-3">
-            <Field label="Объект">
-              <select required value={form.property_id} onChange={(e) => updateForm({ property_id: e.target.value })} className="input">
-                {units.map((u) => <option key={u.id} value={u.id}>{u.name_ru}</option>)}
-              </select>
-            </Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Заезд"><input type="date" required value={form.check_in} onChange={(e) => updateForm({ check_in: e.target.value })} className="input" /></Field>
-              <Field label="Выезд"><input type="date" required value={form.check_out} onChange={(e) => updateForm({ check_out: e.target.value })} className="input" /></Field>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Статус">
-                <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="input">
-                  {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{STATUS_STYLE[s].label}</option>)}
+        <Modal onClose={() => setForm(null)} title={form.step === 2 ? 'Предоплата · шаг 2 из 2' : 'Новая бронь · шаг 1 из 2'}>
+          {form.step === 1 ? (
+            <form onSubmit={submitNew} className="space-y-3">
+              <Field label="Объект">
+                <select required value={form.property_id} onChange={(e) => updateForm({ property_id: e.target.value })} className="input">
+                  {units.map((u) => <option key={u.id} value={u.id}>{u.name_ru}</option>)}
                 </select>
               </Field>
-              <Field label="Источник">
-                <select value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} className="input">
-                  {SOURCE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
-              </Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Заезд"><input type="date" required value={form.check_in} onChange={(e) => updateForm({ check_in: e.target.value })} className="input" /></Field>
+                <Field label="Выезд"><input type="date" required value={form.check_out} onChange={(e) => updateForm({ check_out: e.target.value })} className="input" /></Field>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Статус">
+                  <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="input">
+                    {STATUS_OPTIONS.map((s) => <option key={s} value={s}>{STATUS_STYLE[s].label}</option>)}
+                  </select>
+                </Field>
+                <Field label="Источник">
+                  <select value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} className="input">
+                    {SOURCE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </Field>
+              </div>
+              <Field label="Имя гостя"><input value={form.guest_name} onChange={(e) => setForm({ ...form, guest_name: e.target.value })} className="input" /></Field>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Телефон"><input value={form.guest_phone} onChange={(e) => setForm({ ...form, guest_phone: e.target.value })} className="input" placeholder="+998…" /></Field>
+                <Field label="Telegram (ник)"><input value={form.telegram_username} onChange={(e) => setForm({ ...form, telegram_username: e.target.value })} className="input" placeholder="@username" /></Field>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Гостей"><input type="number" min="1" value={form.guest_count} onChange={(e) => setForm({ ...form, guest_count: e.target.value })} className="input" /></Field>
+                <Field label="Сумма (сум)"><input type="number" value={form.total_amount} onChange={(e) => setForm({ ...form, total_amount: e.target.value })} className="input" /></Field>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Предоплата 20% (сум)"><input type="number" value={form.deposit_amount} onChange={(e) => setForm({ ...form, deposit_amount: e.target.value })} className="input" /></Field>
+                <Field label="Заметка"><input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="input" /></Field>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setForm(null)} className="px-4 py-2 rounded-lg border border-gray-200 text-sm">Отмена</button>
+                <button type="submit" className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">
+                  {form.status === 'BLOCKED' ? 'Создать блок' : 'Далее → предоплата'}
+                </button>
+              </div>
+            </form>
+          ) : (
+            <div className="space-y-3">
+              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+                Бронь создана и <b>ждёт предоплаты</b> (красная). Без предоплаты в течение рабочего часа она освободит дату автоматически.
+              </div>
+              <div className="text-sm text-gray-600">
+                {form.createdRes?.property_name} · {form.check_in}→{form.check_out}
+                {form.total_amount ? <> · сумма {money(form.total_amount)} сум</> : null}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Сумма предоплаты (сум)"><input type="number" value={form.payAmount} onChange={(e) => setForm({ ...form, payAmount: e.target.value })} className="input" /></Field>
+                <Field label="Способ оплаты">
+                  <select value={form.payMethod} onChange={(e) => setForm({ ...form, payMethod: e.target.value })} className="input">
+                    {PAYMENT_METHODS.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
+                  </select>
+                </Field>
+              </div>
+              <p className="text-xs text-gray-400">Предзаполнено 20% — измените, если клиент платит больше.</p>
+              <div className="flex justify-between gap-2 pt-2">
+                <button type="button" onClick={() => setForm(null)} className="px-4 py-2 rounded-lg border border-gray-200 text-sm">Позже (оставить красной)</button>
+                <button type="button" onClick={submitPrepay} className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700">Провести предоплату</button>
+              </div>
             </div>
-            <Field label="Имя гостя"><input value={form.guest_name} onChange={(e) => setForm({ ...form, guest_name: e.target.value })} className="input" /></Field>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Телефон"><input value={form.guest_phone} onChange={(e) => setForm({ ...form, guest_phone: e.target.value })} className="input" /></Field>
-              <Field label="Гостей"><input type="number" min="1" value={form.guest_count} onChange={(e) => setForm({ ...form, guest_count: e.target.value })} className="input" /></Field>
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Сумма (сум)"><input type="number" value={form.total_amount} onChange={(e) => setForm({ ...form, total_amount: e.target.value })} className="input" /></Field>
-              <Field label="Предоплата (сум)"><input type="number" value={form.deposit_amount} onChange={(e) => setForm({ ...form, deposit_amount: e.target.value })} className="input" /></Field>
-            </div>
-            <Field label="Заметка"><input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="input" /></Field>
-            <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={() => setForm(null)} className="px-4 py-2 rounded-lg border border-gray-200 text-sm">Отмена</button>
-              <button type="submit" className="px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-medium hover:bg-blue-700">Создать</button>
-            </div>
-          </form>
+          )}
         </Modal>
       )}
 
@@ -439,11 +525,40 @@ export default function Calendar() {
             </span>
           </div>
 
+          {/* Payment ledger — partial payments (each editable / removable) */}
+          {payments.length > 0 && (
+            <div className="mb-3 rounded-lg border border-gray-200 divide-y divide-gray-100">
+              {payments.map((p) => (
+                <div key={p.id} className="px-3 py-2 text-sm">
+                  {editPay && editPay.id === p.id ? (
+                    <div className="flex items-center gap-2">
+                      <input type="number" value={editPay.amount} onChange={(e) => setEditPay({ ...editPay, amount: e.target.value })} className="input flex-1" />
+                      <select value={editPay.method} onChange={(e) => setEditPay({ ...editPay, method: e.target.value })} className="input flex-1">
+                        {PAYMENT_METHODS.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
+                      </select>
+                      <button onClick={saveEditPay} className="text-blue-600 text-xs font-semibold">OK</button>
+                      <button onClick={() => setEditPay(null)} className="text-gray-400 text-sm">×</button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-gray-700"><b>{money(p.amount)}</b> сум · {p.payment_method_label}</span>
+                      <span className="flex items-center gap-2.5 text-xs">
+                        <span className="text-gray-400">{p.report_date}</span>
+                        <button onClick={() => setEditPay({ id: p.id, amount: String(Math.round(p.amount)), method: p.payment_method })} className="text-blue-600 hover:underline">изм.</button>
+                        <button onClick={() => deletePay(p.id)} className="text-red-500 hover:underline">удал.</button>
+                      </span>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
           {!payForm ? (
             <button
               onClick={() => setPayForm({ amount: String(Math.max(0, Math.round(detail.balance ?? 0)) || ''), method: 'CASH' })}
               className="w-full mb-3 px-3 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700"
-            >💵 Принять оплату</button>
+            >➕ Добавить оплату / предоплату</button>
           ) : (
             <div className="mb-3 p-3 rounded-lg border border-green-200 bg-green-50 space-y-2">
               <div className="grid grid-cols-2 gap-2">
@@ -465,18 +580,19 @@ export default function Calendar() {
             </div>
             <Field label="Статус">
               <select value={detailForm.status} onChange={(e) => setDetailForm({ ...detailForm, status: e.target.value })} className="input">
-                {Object.keys(STATUS_STYLE).filter((s) => s !== 'CANCELLED').map((s) => <option key={s} value={s}>{STATUS_STYLE[s].label}</option>)}
+                {Object.keys(STATUS_STYLE).filter((s) => s !== 'CANCELLED' && s !== 'EXPIRED').map((s) => <option key={s} value={s}>{STATUS_STYLE[s].label}</option>)}
               </select>
             </Field>
             <Field label="Имя гостя"><input value={detailForm.guest_name} onChange={(e) => setDetailForm({ ...detailForm, guest_name: e.target.value })} className="input" /></Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Телефон"><input value={detailForm.guest_phone} onChange={(e) => setDetailForm({ ...detailForm, guest_phone: e.target.value })} className="input" /></Field>
-              <Field label="Гостей"><input type="number" min="1" value={detailForm.guest_count} onChange={(e) => setDetailForm({ ...detailForm, guest_count: e.target.value })} className="input" /></Field>
+              <Field label="Telegram (ник)"><input value={detailForm.telegram_username} onChange={(e) => setDetailForm({ ...detailForm, telegram_username: e.target.value })} className="input" placeholder="@username" /></Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
+              <Field label="Гостей"><input type="number" min="1" value={detailForm.guest_count} onChange={(e) => setDetailForm({ ...detailForm, guest_count: e.target.value })} className="input" /></Field>
               <Field label="Сумма (сум)"><input type="number" value={detailForm.total_amount} onChange={(e) => setDetailForm({ ...detailForm, total_amount: e.target.value })} className="input" /></Field>
-              <Field label="Предоплата (сум)"><input type="number" value={detailForm.deposit_amount} onChange={(e) => setDetailForm({ ...detailForm, deposit_amount: e.target.value })} className="input" /></Field>
             </div>
+            <Field label="Депозит-ориентир 20% (сум)"><input type="number" value={detailForm.deposit_amount} onChange={(e) => setDetailForm({ ...detailForm, deposit_amount: e.target.value })} className="input" /></Field>
             <Field label="Заметка"><input value={detailForm.note} onChange={(e) => setDetailForm({ ...detailForm, note: e.target.value })} className="input" /></Field>
           </div>
           <div className="flex justify-between items-center gap-2 pt-4">

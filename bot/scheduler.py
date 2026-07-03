@@ -1,12 +1,13 @@
 """Daily auto-report sender — sends summary at 21:00 Tashkent time."""
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -16,12 +17,15 @@ from db.enums import (
     EXPENSE_CATEGORY_LABELS,
     PAYMENT_METHOD_LABELS,
     ReportStatus,
+    ReservationStatus,
 )
 from db.models import (
     ExpenseEntry,
     IncomeEntry,
     MinibarItem,
     Property,
+    Reservation,
+    ReservationEvent,
     ServiceItem,
     StructuredReport,
     User,
@@ -181,9 +185,78 @@ async def send_balance_reminders(bot: Bot):
             logger.error(f"Balance reminder failed for {u.telegram_id}: {e}")
 
 
+async def _safe_send(bot: Bot, chat_id: int, text: str) -> None:
+    try:
+        await bot.send_message(chat_id, text)
+    except Exception as e:
+        logger.warning(f"Hold notification to {chat_id} failed: {e}")
+
+
+async def process_hold_expiries(bot: Bot):
+    """Warn and expire unpaid booking holds.
+
+    Timers (warn +30m, expire +60m of working time) were computed at booking creation,
+    so we only compare against them here. Runs every few minutes. First payment already
+    cleared the timers, so only still-unpaid HOLDs are ever touched.
+    """
+    now = datetime.now(timezone.utc)
+    async with async_session() as session:
+        holds = (
+            await session.execute(
+                select(Reservation).where(
+                    Reservation.status == ReservationStatus.HOLD,
+                    Reservation.hold_expires_at.is_not(None),
+                )
+            )
+        ).scalars().all()
+
+        for res in holds:
+            prop = await session.get(Property, res.property_id)
+            unit = prop.name_ru if prop else str(res.property_id)
+            who = res.guest_name or (f"@{res.telegram_username}" if res.telegram_username else "гость")
+            dates = f"{res.check_in.strftime('%d.%m')}–{res.check_out.strftime('%d.%m')}"
+            label = f"{unit} · {who} · {dates}"
+
+            # Expire (checked first, in case the scheduler was paused past both points)
+            if res.hold_expires_at and now >= res.hold_expires_at:
+                res.status = ReservationStatus.EXPIRED
+                session.add(ReservationEvent(
+                    reservation_id=res.id, actor_name="Авто (таймер)", action="auto",
+                    detail="Бронь истекла: предоплата не внесена вовремя. Дата освобождена.",
+                ))
+                await session.commit()
+                if res.created_by:
+                    await _safe_send(bot, res.created_by, f"⌛️ Бронь истекла (не оплачена): {label}. Дата освобождена.")
+                if res.telegram_user_id:
+                    await _safe_send(bot, res.telegram_user_id,
+                                     f"К сожалению, ваша бронь ({unit}, {dates}) отменена — предоплата не поступила вовремя.")
+                continue
+
+            # Warn once
+            if res.hold_warn_at and now >= res.hold_warn_at and res.hold_warned_at is None:
+                res.hold_warned_at = now
+                await session.commit()
+                if res.created_by:
+                    tg = f" (@{res.telegram_username})" if res.telegram_username else ""
+                    await _safe_send(bot, res.created_by,
+                                     f"⚠️ Бронь без предоплаты: {label}{tg}. Свяжитесь с клиентом — через 30 минут авто-отмена.")
+                if res.telegram_user_id:
+                    await _safe_send(bot, res.telegram_user_id,
+                                     f"⚠️ Ваша бронь ({unit}, {dates}) ещё не оплачена. Пожалуйста, внесите предоплату в течение 30 минут, иначе бронь будет отменена.")
+
+
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """Set up and return the APScheduler instance."""
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
+
+    scheduler.add_job(
+        process_hold_expiries,
+        IntervalTrigger(minutes=5),
+        args=[bot],
+        id="hold_expiries",
+        name="Booking hold expiries",
+        replace_existing=True,
+    )
 
     scheduler.add_job(
         send_daily_report,

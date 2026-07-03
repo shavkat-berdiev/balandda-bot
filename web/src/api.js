@@ -193,6 +193,9 @@ export const api = {
   getReservationEvents: (id) => request(`/reservations/${id}/events`),
   getAllReservationEvents: (limit = 300) => request(`/reservations/events?limit=${limit}`),
   acceptPayment: (id, data) => request(`/reservations/${id}/payment`, { method: 'POST', body: JSON.stringify(data) }),
+  getReservationPayments: (id) => request(`/reservations/${id}/payments`),
+  editReservationPayment: (id, incomeId, data) => request(`/reservations/${id}/payments/${incomeId}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteReservationPayment: (id, incomeId) => request(`/reservations/${id}/payments/${incomeId}`, { method: 'DELETE' }),
   getAvailability: (checkIn, checkOut, guests = 1) =>
     request(`/public/availability?check_in=${checkIn}&check_out=${checkOut}&guests=${guests}`),
 };
