@@ -22,6 +22,9 @@ const PAYMENT_METHODS = [
   { v: 'PAYME', l: 'PayMe' },
 ];
 
+const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+
 function ymd(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
@@ -75,8 +78,8 @@ function stayTotal(unit, ciStr, coStr) {
 
 export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, title = 'Календарь броней', showImport = true, expires = true } = {}) {
   const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
-  const [start, setStart] = useState(() => addDays(today, -5)); // default window opens 5 days in the past
-  const span = 18; // fixed: 5 past days + today + 12 future days
+  const [start, setStart] = useState(() => addDays(today, -1)); // opens on yesterday
+  const span = 14; // yesterday + today + 12 future days
   const [importing, setImporting] = useState(false);
   const [units, setUnits] = useState([]);
   const [reservations, setReservations] = useState([]);
@@ -98,6 +101,13 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
     () => Array.from({ length: span }, (_, i) => addDays(start, i)),
     [start, span]
   );
+  const rangeLabel = useMemo(() => {
+    const a = days[0], b = days[days.length - 1];
+    const ma = a.getMonth(), mb = b.getMonth(), ya = a.getFullYear(), yb = b.getFullYear();
+    if (ma === mb && ya === yb) return `${MONTHS[ma]} ${ya}`;
+    if (ya === yb) return `${MONTHS[ma]} – ${MONTHS[mb]} ${yb}`;
+    return `${MONTHS[ma]} ${ya} – ${MONTHS[mb]} ${yb}`;
+  }, [days]);
   const rangeFrom = ymd(start);
   const rangeTo = ymd(addDays(start, span));
 
@@ -400,7 +410,8 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
           <button onClick={() => setStart(addDays(start, -7))} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"><ChevronLeft size={18} /></button>
           <input type="date" value={ymd(start)} onChange={(e) => setStart(new Date(e.target.value + 'T00:00:00'))} className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
           <button onClick={() => setStart(addDays(start, 7))} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"><ChevronRight size={18} /></button>
-          <button onClick={() => setStart(addDays(today, -5))} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Сегодня</button>
+          <span className="px-1 text-sm font-semibold text-gray-800 whitespace-nowrap">{rangeLabel}</span>
+          <button onClick={() => setStart(addDays(today, -1))} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Сегодня</button>
           <button onClick={() => openNew(null, null)} className="flex items-center gap-1.5 bg-blue-600 text-white rounded-lg px-3 py-2 text-sm font-medium hover:bg-blue-700"><Plus size={16} /> Бронь</button>
           {showImport && <button onClick={importPreps} disabled={importing} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{importing ? 'Импорт…' : 'Импорт предоплат'}</button>}
         </div>
@@ -426,13 +437,14 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
             <thead>
               <tr>
                 <th className="sticky left-0 z-10 bg-gray-50 border-b border-r border-gray-200 px-3 py-2 text-left font-semibold text-gray-700 min-w-[150px]">Объект</th>
-                {days.map((d) => {
+                {days.map((d, idx) => {
                   const isSat = d.getDay() === 6;
                   const isToday = ymd(d) === ymd(today);
+                  const showMonth = idx === 0 || d.getDate() === 1;
                   return (
                     <th key={ymd(d)} className={`border-b border-gray-200 px-1 py-2 text-center font-medium min-w-[72px] ${isToday ? 'bg-blue-50 text-blue-700' : isSat ? 'bg-rose-50 text-rose-600' : 'text-gray-500'}`}>
                       <div className="text-[10px] leading-none">{isToday ? 'сегодня' : dow[d.getDay()]}</div>
-                      <div>{d.getDate()}</div>
+                      <div>{d.getDate()}{showMonth ? <span className="text-[10px] font-normal"> {MONTHS_SHORT[d.getMonth()]}</span> : ''}</div>
                     </th>
                   );
                 })}
