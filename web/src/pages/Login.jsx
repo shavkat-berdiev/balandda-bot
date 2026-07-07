@@ -7,6 +7,19 @@ export default function Login({ onLogin }) {
   const [devMode, setDevMode] = useState(false);
   const [devTelegramId, setDevTelegramId] = useState('');
   const [registerBot, setRegisterBot] = useState('berdiev_shavkat_bot');
+  const [login, setLogin] = useState('');
+  const [password, setPassword] = useState('');
+
+  const handlePasswordLogin = async (e) => {
+    e.preventDefault();
+    try {
+      setError('');
+      const result = await api.passwordLogin({ login, password });
+      onLogin(result.user, result.token);
+    } catch (err) {
+      setError(err.message || 'Ошибка входа');
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -86,8 +99,27 @@ export default function Login({ onLogin }) {
           <p className="text-gray-500 mt-1">Sign in to access the dashboard</p>
         </div>
 
+        {/* Username / password login (browser can save it) */}
+        <form onSubmit={handlePasswordLogin} className="space-y-3 text-left" autoComplete="on">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Логин</label>
+            <input name="username" autoComplete="username" value={login} onChange={(e) => setLogin(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="логин" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Пароль</label>
+            <input name="password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500" placeholder="пароль" />
+          </div>
+          <button type="submit" className="w-full py-2.5 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700">Войти</button>
+        </form>
+
+        <div className="flex items-center gap-3 my-5 text-xs text-gray-400">
+          <div className="flex-1 h-px bg-gray-200" />или<div className="flex-1 h-px bg-gray-200" />
+        </div>
+
         {/* Telegram Widget */}
-        <div className="flex justify-center my-8" ref={widgetRef}></div>
+        <div className="flex justify-center mb-2" ref={widgetRef}></div>
 
         {error && (
           <div className="bg-red-50 text-red-600 rounded-lg px-4 py-3 text-sm mt-4">

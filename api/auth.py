@@ -11,6 +11,7 @@ Flow:
 import hashlib
 import hmac
 import json
+import os
 import time
 from datetime import datetime, timedelta
 
@@ -53,12 +54,33 @@ def verify_telegram_auth(auth_data: dict) -> bool:
     return False
 
 
+# ── Password login (owner-assigned username/password) ──────────────
+
+def hash_password(password: str) -> str:
+    """PBKDF2-SHA256 hash: pbkdf2_sha256$iterations$salt_hex$hash_hex."""
+    salt = os.urandom(16)
+    iters = 120_000
+    dk = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iters)
+    return f"pbkdf2_sha256${iters}${salt.hex()}${dk.hex()}"
+
+
+def verify_password(password: str, stored: str | None) -> bool:
+    if not stored:
+        return False
+    try:
+        algo, iters, salt_hex, hash_hex = stored.split("$")
+        dk = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt_hex), int(iters))
+        return hmac.compare_digest(dk.hex(), hash_hex)
+    except (ValueError, TypeError):
+        return False
+
+
 def create_session_token(telegram_id: int, role: str) -> str:
     """Create a simple signed session token."""
     payload = {
         "telegram_id": telegram_id,
         "role": role,
-        "exp": int(time.time()) + 86400 * 7,  # 7 days
+        "exp": int(time.time()) + 86400 * 30,  # 30 days
     }
     payload_str = json.dumps(payload, sort_keys=True)
     signature = hmac.new(

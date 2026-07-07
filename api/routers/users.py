@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.auth import get_current_user, require_admin
+from api.auth import get_current_user, hash_password, require_admin, require_owner
 from db.database import get_session
 from db.models import BusinessUnit, Language, User, UserRole
 
@@ -21,8 +21,15 @@ class UserOut(BaseModel):
     active_section: str
     is_active: bool
     created_at: str
+    login: str | None = None
+    has_password: bool = False
 
     model_config = {"from_attributes": True}
+
+
+class CredentialsData(BaseModel):
+    login: str
+    password: str | None = None  # omit to change only the login
 
 
 class UserCreate(BaseModel):
@@ -57,6 +64,8 @@ async def list_users(
             active_section=u.active_section.value,
             is_active=u.is_active,
             created_at=u.created_at.isoformat() if u.created_at else "",
+            login=u.login,
+            has_password=bool(u.password_hash),
         )
         for u in users
     ]
@@ -98,6 +107,8 @@ async def create_user(
         active_section=new_user.active_section.value,
         is_active=new_user.is_active,
         created_at=new_user.created_at.isoformat() if new_user.created_at else "",
+        login=new_user.login,
+        has_password=bool(new_user.password_hash),
     )
 
 
@@ -131,4 +142,38 @@ async def update_user(
         active_section=target.active_section.value,
         is_active=target.is_active,
         created_at=target.created_at.isoformat() if target.created_at else "",
+        login=target.login,
+        has_password=bool(target.password_hash),
     )
+
+
+@router.put("/{user_id}/credentials")
+async def set_credentials(
+    user_id: int,
+    data: CredentialsData,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Owner: assign a login (username) and/or password to a user for password login."""
+    require_owner(user)
+
+    target = (await session.execute(select(User).where(User.id == user_id))).scalar_one_or_none()
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    login = data.login.strip().lower()
+    if not login:
+        raise HTTPException(status_code=400, detail="Логин обязателен")
+    clash = (
+        await session.execute(select(User).where(User.login == login, User.id != user_id))
+    ).scalar_one_or_none()
+    if clash:
+        raise HTTPException(status_code=409, detail="Такой логин уже занят")
+
+    target.login = login
+    if data.password:
+        if len(data.password) < 4:
+            raise HTTPException(status_code=400, detail="Пароль слишком короткий (мин. 4 символа)")
+        target.password_hash = hash_password(data.password)
+    await session.commit()
+    return {"ok": True, "login": login, "has_password": bool(target.password_hash)}

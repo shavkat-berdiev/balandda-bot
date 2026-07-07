@@ -101,6 +101,10 @@ class User(Base):
     active_section: Mapped[BusinessUnit] = mapped_column(
         Enum(BusinessUnit), default=BusinessUnit.RESORT
     )
+    # Optional username/password login (assigned by the owner) as an alternative to
+    # the Telegram Login Widget — survives Telegram's in-app browser wiping storage.
+    login: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 

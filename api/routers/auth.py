@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from api.auth import create_session_token, verify_telegram_auth
+from api.auth import create_session_token, verify_password, verify_telegram_auth
 from db.database import async_session
 from db.models import User
 
@@ -15,6 +15,11 @@ router = APIRouter()
 
 class DevLoginData(BaseModel):
     telegram_id: int
+
+
+class PasswordLoginData(BaseModel):
+    login: str
+    password: str
 
 
 class TelegramAuthData(BaseModel):
@@ -50,6 +55,31 @@ async def dev_login(data: DevLoginData):
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+
+    token = create_session_token(user.telegram_id, user.role.value)
+    return TokenResponse(
+        token=token,
+        user={
+            "telegram_id": user.telegram_id,
+            "full_name": user.full_name,
+            "role": user.role.value,
+            "language": user.language.value,
+        },
+    )
+
+
+@router.post("/password", response_model=TokenResponse)
+async def password_login(data: PasswordLoginData):
+    """Authenticate with an owner-assigned username + password."""
+    login = data.login.strip().lower()
+    async with async_session() as session:
+        result = await session.execute(select(User).where(User.login == login))
+        user = result.scalar_one_or_none()
+
+    if not user or not verify_password(data.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Неверный логин или пароль")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Учётная запись отключена")
 
     token = create_session_token(user.telegram_id, user.role.value)
     return TokenResponse(

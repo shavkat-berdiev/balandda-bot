@@ -16,8 +16,26 @@ export default function Users() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ telegram_id: '', full_name: '', role: 'RESORT_MANAGER' });
   const [error, setError] = useState('');
+  const [credFor, setCredFor] = useState(null);
+  const [cred, setCred] = useState({ login: '', password: '' });
+  const isOwner = (() => {
+    try { return (JSON.parse(localStorage.getItem('user') || '{}').role || '').toUpperCase() === 'OWNER'; }
+    catch { return false; }
+  })();
 
   useEffect(() => { loadUsers(); }, []);
+
+  async function saveCred(userId) {
+    try {
+      setError('');
+      await api.setUserCredentials(userId, { login: cred.login, password: cred.password || undefined });
+      setCredFor(null);
+      setCred({ login: '', password: '' });
+      loadUsers();
+    } catch (err) {
+      setError(err.message);
+    }
+  }
 
   async function loadUsers() {
     setLoading(true);
@@ -181,6 +199,30 @@ export default function Users() {
                   {user.is_active ? 'Active' : 'Inactive'}
                 </span>
               </div>
+              {isOwner && (
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                  {credFor === user.id ? (
+                    <div className="space-y-2">
+                      <input value={cred.login} onChange={(e) => setCred({ ...cred, login: e.target.value })}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs" placeholder="логин (напр. anvar)" autoComplete="off" />
+                      <input type="text" value={cred.password} onChange={(e) => setCred({ ...cred, password: e.target.value })}
+                        className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-xs" placeholder={user.has_password ? 'новый пароль (пусто = без изменений)' : 'пароль'} autoComplete="off" />
+                      <div className="flex gap-2">
+                        <button onClick={() => saveCred(user.id)} className="flex-1 px-2 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700">Сохранить</button>
+                        <button onClick={() => { setCredFor(null); setCred({ login: '', password: '' }); }} className="px-2 py-1.5 rounded-lg bg-gray-100 text-gray-700 text-xs">Отмена</button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-gray-500">
+                        {user.login ? <>🔑 {user.login}{user.has_password ? '' : ' · без пароля'}</> : 'Нет логина'}
+                      </span>
+                      <button onClick={() => { setCredFor(user.id); setCred({ login: user.login || '', password: '' }); }}
+                        className="text-xs text-blue-600 hover:underline">{user.login ? 'Изменить' : 'Задать логин/пароль'}</button>
+                    </div>
+                  )}
+                </div>
+              )}
               {user.created_at && (
                 <p className="text-xs text-gray-400 mt-3">
                   Added: {new Date(user.created_at).toLocaleDateString('ru-RU')}

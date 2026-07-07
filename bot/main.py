@@ -276,6 +276,15 @@ async def run_migrations():
             END IF;
         END $$;
         """,
+        # Username/password login credentials on users (owner-assigned)
+        """
+        DO $$
+        BEGIN
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS login VARCHAR(64);
+            ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(255);
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_users_login ON users (login) WHERE login IS NOT NULL;
+        END $$;
+        """,
         # Two-step booking: Telegram link to customer + unpaid-hold timers on reservations
         """
         DO $$

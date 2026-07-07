@@ -36,6 +36,7 @@ async function request(path, options = {}) {
 export const api = {
   // Auth
   telegramLogin: (data) => request('/auth/telegram', { method: 'POST', body: JSON.stringify(data) }),
+  passwordLogin: (data) => request('/auth/password', { method: 'POST', body: JSON.stringify(data) }),
 
   // Transactions
   getTransactions: (params = '') => request(`/transactions/${params ? '?' + params : ''}`),
@@ -54,6 +55,7 @@ export const api = {
   getUsers: () => request('/users/'),
   createUser: (data) => request('/users/', { method: 'POST', body: JSON.stringify(data) }),
   updateUser: (id, data) => request(`/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  setUserCredentials: (id, data) => request(`/users/${id}/credentials`, { method: 'PUT', body: JSON.stringify(data) }),
 
   // Analytics Dashboard
   getDailyReports: (from, to) =>
