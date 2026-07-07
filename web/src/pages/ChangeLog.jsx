@@ -90,9 +90,9 @@ export default function ChangeLog() {
 
       {inactive.length > 0 && (
         <div className="mb-6 border border-gray-200 rounded-xl bg-white p-4">
-          <div className="text-sm font-semibold text-gray-700 mb-1">Отменённые и истёкшие брони — можно восстановить</div>
+          <div className="text-sm font-semibold text-gray-700 mb-1">Отменённые и истёкшие брони — можно восстановить ({inactive.length})</div>
           <p className="text-xs text-gray-400 mb-3">Даты сейчас свободны. Восстановление вернёт бронь как «Подтверждено», если даты ещё не заняты другой бронью.</p>
-          <ul className="divide-y divide-gray-100">
+          <ul className="divide-y divide-gray-100 max-h-64 overflow-y-auto">
             {inactive.map((r) => (
               <li key={r.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
                 <span className="text-sm text-gray-500">
@@ -110,6 +110,7 @@ export default function ChangeLog() {
         </div>
       )}
 
+      <div className="text-sm font-semibold text-gray-700 mb-2">История изменений (все действия)</div>
       {loading ? (
         <div className="py-16 text-center text-gray-400">Загрузка…</div>
       ) : (
