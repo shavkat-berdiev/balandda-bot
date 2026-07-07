@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.config import settings
 from db.database import get_session
 from db.models import Property, Reservation
-from services.customer_notify import booking_received_text
+from services.customer_notify import booking_received_text, get_prepayment_instructions
 
 router = APIRouter()
 
@@ -53,8 +53,9 @@ async def telegram_connect(
     prop = await session.get(Property, res.property_id)
     await session.commit()
 
+    prepay_text = await get_prepayment_instructions()
     return {
         "ok": True,
         "already": already,
-        "message": booking_received_text(res, prop.name_ru if prop else ""),
+        "message": booking_received_text(res, prop.name_ru if prop else "", prepay_text),
     }

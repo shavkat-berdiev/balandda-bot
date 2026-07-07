@@ -37,6 +37,8 @@ class Settings(BaseSettings):
         "💳 Карта: 8600 XXXX XXXX XXXX (ИМЯ ФАМИЛИЯ)\n"
         "После оплаты отправьте скриншот в этом чате."
     )
+    # Live-editable prepayment text (balandda.uz/admin?view=rates); falls back to the default above
+    prepayment_url: str = "https://www.balandda.uz/prepayment.php"
 
     @property
     def database_url(self) -> str:

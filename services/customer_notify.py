@@ -7,12 +7,37 @@ must never break the booking flow.
 """
 
 import logging
+import time
 
 import aiohttp
 
 from bot.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Cache the live-editable prepayment text briefly so we don't hit the website on every send.
+_prepay_cache: dict = {"text": None, "ts": 0.0}
+
+
+async def get_prepayment_instructions() -> str:
+    """Fetch the current prepayment text from the website admin, cached ~60s;
+    falls back to the config default if the site is unreachable or empty."""
+    now = time.time()
+    if _prepay_cache["text"] is not None and now - _prepay_cache["ts"] < 60:
+        return _prepay_cache["text"]
+    text = settings.prepayment_instructions
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(settings.prepayment_url, timeout=aiohttp.ClientTimeout(total=6)) as r:
+                if r.status < 400:
+                    fetched = (await r.text()).strip()
+                    if fetched:
+                        text = fetched
+    except Exception as e:  # noqa: BLE001 - best effort, keep default
+        logger.warning("prepayment text fetch failed: %s", e)
+    _prepay_cache["text"] = text
+    _prepay_cache["ts"] = now
+    return text
 
 
 async def send_customer_message(telegram_user_id: int | None, text: str) -> bool:
@@ -48,7 +73,7 @@ def _dates(res) -> str:
     return f"{res.check_in.strftime('%d.%m.%Y')} — {res.check_out.strftime('%d.%m.%Y')}"
 
 
-def booking_received_text(res, property_name: str) -> str:
+def booking_received_text(res, property_name: str, prepay_text: str | None = None) -> str:
     lines = [
         "🏔 <b>Balandda Chimgan</b>",
         "",
@@ -58,7 +83,7 @@ def booking_received_text(res, property_name: str) -> str:
     ]
     if res.total_amount:
         lines.append(f"• Сумма: <b>{_fmt_amount(res.total_amount)}</b> сум")
-    lines += ["", settings.prepayment_instructions]
+    lines += ["", prepay_text or settings.prepayment_instructions]
     return "\n".join(lines)
 
 
