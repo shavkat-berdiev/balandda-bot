@@ -187,6 +187,10 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
   function updateForm(patch) {
     setForm((f) => {
       const next = { ...f, ...patch };
+      // Keep check-out strictly after check-in: if the arrival moved to/past it, bump it.
+      if ('check_in' in patch && next.check_in && next.check_out <= next.check_in) {
+        next.check_out = ymd(addDays(new Date(next.check_in + 'T00:00:00'), 1));
+      }
       if ('property_id' in patch || 'check_in' in patch || 'check_out' in patch) {
         Object.assign(next, calcAmounts(next.property_id, next.check_in, next.check_out));
       }
@@ -210,6 +214,10 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
   // Step 1: create the booking (HOLD → red until a prepayment is added).
   async function submitNew(e) {
     e.preventDefault();
+    if (!form.check_out || form.check_out <= form.check_in) {
+      alert('Дата выезда должна быть позже даты заезда.');
+      return;
+    }
     try {
       const body = {
         property_id: Number(form.property_id),
