@@ -283,6 +283,16 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
     }
   }
 
+  async function doConnectLink() {
+    try {
+      const r = await api.connectLink(detail.id);
+      try { await navigator.clipboard.writeText(r.url); } catch { /* clipboard may be blocked */ }
+      window.prompt('Ссылка скопирована. Отправьте её клиенту в Telegram:', r.url);
+    } catch (e) {
+      alert(e.message || 'Не удалось получить ссылку');
+    }
+  }
+
   // Cancelled + expired bookings in range — kept (struck-through) so they can be
   // restored; their dates read as free for new bookings.
   const freed = useMemo(
@@ -544,6 +554,11 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
               {detail.balance != null && detail.balance <= 0 ? ' ✓' : ''}
             </span>
           </div>
+
+          {/* Telegram: connect link to message the customer via @balandda_bot */}
+          <button onClick={doConnectLink} className="w-full mb-3 px-3 py-2 rounded-lg bg-sky-50 text-sky-700 text-sm font-medium hover:bg-sky-100">
+            {detail.telegram_user_id ? '🔗 Telegram привязан · ещё раз ссылку' : '🔗 Ссылка для клиента (Telegram)'}
+          </button>
 
           {/* Unpaid hold → agent can grant more time or waive prepayment */}
           {detail.status === 'HOLD' && (

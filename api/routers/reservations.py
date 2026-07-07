@@ -13,9 +13,13 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import secrets
+
 from api.auth import get_current_user, require_owner
+from bot.config import settings
 from db.database import get_session
 from db.hold_timing import add_working_minutes
+from services.customer_notify import booking_confirmed_text, send_customer_message
 from db.enums import (
     BusinessUnit,
     PAYMENT_METHOD_LABELS,
@@ -436,8 +440,39 @@ async def waive_prepayment(
     res.hold_warned_at = None
     await session.commit()
     await _log(session, res_id, user, "updated", "Подтверждено без предоплаты")
+    await _notify_confirmed(session, res)
     await session.refresh(res)
     return await _reservation_out(session, res)
+
+
+async def _notify_confirmed(session: AsyncSession, res: Reservation) -> None:
+    """Send the customer the final booking-confirmed message once (if we have their ID)."""
+    if not res.telegram_user_id or res.confirmed_notified_at:
+        return
+    prop = await session.get(Property, res.property_id)
+    if await send_customer_message(res.telegram_user_id, booking_confirmed_text(res, prop.name_ru if prop else "")):
+        res.confirmed_notified_at = datetime.now(timezone.utc)
+        await session.commit()
+
+
+@router.post("/{res_id}/connect-link")
+async def connect_link(
+    res_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Return a t.me/@balandda_bot deep-link the agent sends the customer; tapping it
+    links their Telegram to this booking and triggers the booking-received message."""
+    res = await session.get(Reservation, res_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="not found")
+    if not res.connect_token:
+        res.connect_token = secrets.token_urlsafe(12)[:16]
+        await session.commit()
+    return {
+        "url": f"https://t.me/{settings.customer_bot_username}?start=connect_{res.connect_token}",
+        "token": res.connect_token,
+    }
 
 
 @router.post("/{res_id}/restore")
@@ -610,6 +645,7 @@ async def accept_payment(
         detail=f"Оплата: +{amt} сум ({PAYMENT_METHOD_LABELS.get(pm, pm.value)}) · отчёт #{report.id}",
     ))
     await session.commit()
+    await _notify_confirmed(session, res)  # prepayment received → final confirmation
     await session.refresh(res)
     return await _reservation_out(session, res)
 

@@ -190,6 +190,7 @@ export const api = {
   updateReservation: (id, data) => request(`/reservations/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   cancelReservation: (id) => request(`/reservations/${id}/cancel`, { method: 'POST' }),
   extendHold: (id) => request(`/reservations/${id}/extend-hold`, { method: 'POST' }),
+  connectLink: (id) => request(`/reservations/${id}/connect-link`, { method: 'POST' }),
   waivePrepayment: (id) => request(`/reservations/${id}/waive-prepayment`, { method: 'POST' }),
   restoreReservation: (id) => request(`/reservations/${id}/restore`, { method: 'POST' }),
   deleteReservation: (id) => request(`/reservations/${id}`, { method: 'DELETE' }),

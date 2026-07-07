@@ -28,6 +28,16 @@ class Settings(BaseSettings):
     # Admin
     admin_user_id: int | None = None
 
+    # Customer messaging bridge (@balandda_bot lives in the CRM project)
+    customer_bot_username: str = "balandda_bot"           # for connect deep-links
+    crm_api_url: str = "https://crm.balandda.uz"          # CRM sends customer messages via @balandda_bot
+    bridge_secret: str = ""                               # shared secret with the CRM (== CRM INTAKE_SECRET)
+    prepayment_instructions: str = (
+        "Для подтверждения брони внесите предоплату 20% в течение часа:\n"
+        "💳 Карта: 8600 XXXX XXXX XXXX (ИМЯ ФАМИЛИЯ)\n"
+        "После оплаты отправьте скриншот в этом чате."
+    )
+
     @property
     def database_url(self) -> str:
         return (

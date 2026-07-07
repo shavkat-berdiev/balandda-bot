@@ -296,6 +296,16 @@ async def run_migrations():
             ALTER TABLE reservations ADD COLUMN IF NOT EXISTS hold_expires_at TIMESTAMPTZ;
         END $$;
         """,
+        # Customer Telegram messaging: connect deep-link token + one-time send guards
+        """
+        DO $$
+        BEGIN
+            ALTER TABLE reservations ADD COLUMN IF NOT EXISTS connect_token VARCHAR(32);
+            ALTER TABLE reservations ADD COLUMN IF NOT EXISTS booking_notified_at TIMESTAMPTZ;
+            ALTER TABLE reservations ADD COLUMN IF NOT EXISTS confirmed_notified_at TIMESTAMPTZ;
+            CREATE UNIQUE INDEX IF NOT EXISTS ix_reservations_connect_token ON reservations (connect_token) WHERE connect_token IS NOT NULL;
+        END $$;
+        """,
         # Prepayment <-> booking links (calendar-originated partial prepayments mirror here)
         """
         DO $$
