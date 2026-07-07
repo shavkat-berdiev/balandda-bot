@@ -134,6 +134,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
     if (!detail) { setDetailForm(null); setEvents([]); setPayForm(null); setPayments([]); setEditPay(null); return; }
     setPayForm(null); setEditPay(null);
     setDetailForm({
+      property_id: detail.property_id,
       status: detail.status,
       check_in: detail.check_in, check_out: detail.check_out,
       guest_name: detail.guest_name || '', guest_phone: detail.guest_phone || '',
@@ -352,6 +353,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
         telegram_username: detailForm.telegram_username || null,
         total_amount: detailForm.total_amount ? Number(detailForm.total_amount) : null,
         note: detailForm.note || null,
+        property_id: detailForm.property_id ? Number(detailForm.property_id) : undefined,
       });
       setDetail(null);
       await load();
@@ -637,6 +639,11 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
             </div>
           )}
           <div className="space-y-3">
+            <Field label="Объект">
+              <select value={detailForm.property_id} onChange={(e) => setDetailForm({ ...detailForm, property_id: e.target.value })} className="input">
+                {units.map((u) => <option key={u.id} value={u.id}>{u.name_ru}</option>)}
+              </select>
+            </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="Заезд"><input type="date" value={detailForm.check_in} onChange={(e) => setDetailForm({ ...detailForm, check_in: e.target.value })} className="input" /></Field>
               <Field label="Выезд"><input type="date" value={detailForm.check_out} onChange={(e) => setDetailForm({ ...detailForm, check_out: e.target.value })} className="input" /></Field>

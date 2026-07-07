@@ -82,7 +82,10 @@ def booking_received_text(res, property_name: str, prepay_text: str | None = Non
         f"• Даты: <b>{_dates(res)}</b>",
     ]
     if res.total_amount:
-        lines.append(f"• Сумма: <b>{_fmt_amount(res.total_amount)}</b> сум")
+        total = float(res.total_amount)
+        deposit = round(total * 0.2)
+        lines.append(f"• Сумма: <b>{_fmt_amount(total)}</b> сум")
+        lines.append(f"• Предоплата 20%: <b>{_fmt_amount(deposit)}</b> сум")
     lines += ["", prepay_text or settings.prepayment_instructions]
     return "\n".join(lines)
 
@@ -93,4 +96,32 @@ def booking_confirmed_text(res, property_name: str) -> str:
         f"• Объект: <b>{property_name}</b>\n"
         f"• Даты: <b>{_dates(res)}</b>\n\n"
         "Спасибо, что выбрали Balandda Chimgan. Ждём вас! 🏔"
+    )
+
+
+def booking_payment_text(res, property_name: str, amount, paid, total) -> str:
+    lines = ["💳 <b>Оплата получена</b>", "", f"Спасибо! Мы получили {_fmt_amount(amount)} сум."]
+    if total:
+        balance = max(0, float(total) - float(paid))
+        tail = " ✓ Оплачено полностью" if balance <= 0 else f" · остаток {_fmt_amount(balance)} сум"
+        lines.append(f"Оплачено: {_fmt_amount(paid)} из {_fmt_amount(total)} сум{tail}")
+    lines += ["", f"Объект: <b>{property_name}</b> · {_dates(res)}"]
+    return "\n".join(lines)
+
+
+def booking_cancelled_text(res, property_name: str) -> str:
+    return (
+        "❌ <b>Ваша бронь отменена</b>\n\n"
+        f"• Объект: <b>{property_name}</b>\n"
+        f"• Даты: <b>{_dates(res)}</b>\n\n"
+        "Если это ошибка — пожалуйста, свяжитесь с нами."
+    )
+
+
+def booking_changed_text(res, property_name: str) -> str:
+    return (
+        "✏️ <b>Ваша бронь изменена</b>\n\n"
+        "Актуальные данные:\n"
+        f"• Объект: <b>{property_name}</b>\n"
+        f"• Даты: <b>{_dates(res)}</b>"
     )

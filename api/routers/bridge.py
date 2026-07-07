@@ -128,4 +128,12 @@ async def self_book(
     await session.commit()
 
     prepay_text = await get_prepayment_instructions()
-    return {"ok": True, "booking_id": res.id, "message": booking_received_text(res, prop.name_ru, prepay_text)}
+    return {
+        "ok": True,
+        "booking_id": res.id,
+        "unit_name": prop.name_ru,
+        "check_in": data.check_in.isoformat(),
+        "check_out": data.check_out.isoformat(),
+        "guest_name": data.guest_name,
+        "message": booking_received_text(res, prop.name_ru, prepay_text),
+    }

@@ -19,7 +19,13 @@ from api.auth import get_current_user, require_owner
 from bot.config import settings
 from db.database import get_session
 from db.hold_timing import add_working_minutes
-from services.customer_notify import booking_confirmed_text, send_customer_message
+from services.customer_notify import (
+    booking_cancelled_text,
+    booking_changed_text,
+    booking_confirmed_text,
+    booking_payment_text,
+    send_customer_message,
+)
 from db.enums import (
     BusinessUnit,
     PAYMENT_METHOD_LABELS,
@@ -63,6 +69,7 @@ class PaymentInput(BaseModel):
 
 
 class ReservationUpdate(BaseModel):
+    property_id: int | None = None   # move the booking to a different unit/type
     check_in: date | None = None
     check_out: date | None = None
     guest_name: str | None = None
@@ -356,6 +363,9 @@ async def update_reservation(
     if not res:
         raise HTTPException(status_code=404, detail="not found")
     old = {f: getattr(res, f) for f in _FIELDS}
+    old_property_id, old_ci, old_co = res.property_id, res.check_in, res.check_out
+    if data.property_id is not None and data.property_id != res.property_id:
+        res.property_id = data.property_id
     if data.status is not None:
         res.status = _parse_status(data.status)
     for field in ("check_in", "check_out", "guest_name", "guest_phone",
@@ -376,8 +386,14 @@ async def update_reservation(
         await session.rollback()
         raise HTTPException(status_code=409, detail="Unit is not available for these dates")
     detail = _diff_text(old, new)
+    if res.property_id != old_property_id:
+        detail = ("Смена объекта; " + detail) if detail else "Смена объекта"
     if detail:
         await _log(session, res_id, user, "updated", detail)
+    # Notify the customer if the unit or the dates changed.
+    if res.telegram_user_id and (res.property_id != old_property_id or res.check_in != old_ci or res.check_out != old_co):
+        prop = await session.get(Property, res.property_id)
+        await send_customer_message(res.telegram_user_id, booking_changed_text(res, prop.name_ru if prop else ""))
     await session.refresh(res)
     return _out(res)
 
@@ -394,6 +410,9 @@ async def cancel_reservation(
     res.status = ReservationStatus.CANCELLED
     await session.commit()
     await _log(session, res_id, user, "cancelled", "Бронь отменена")
+    if res.telegram_user_id:
+        prop = await session.get(Property, res.property_id)
+        await send_customer_message(res.telegram_user_id, booking_cancelled_text(res, prop.name_ru if prop else ""))
     await session.refresh(res)
     return _out(res)
 
@@ -645,7 +664,17 @@ async def accept_payment(
         detail=f"Оплата: +{amt} сум ({PAYMENT_METHOD_LABELS.get(pm, pm.value)}) · отчёт #{report.id}",
     ))
     await session.commit()
-    await _notify_confirmed(session, res)  # prepayment received → final confirmation
+    # Tell the customer their payment was received (amount + running balance).
+    if res.telegram_user_id:
+        prop2 = await session.get(Property, res.property_id)
+        paid_sum = (await session.execute(
+            select(func.coalesce(func.sum(IncomeEntry.amount), 0)).where(IncomeEntry.reservation_id == res.id)
+        )).scalar() or 0
+        total_amt = float(res.total_amount) if res.total_amount is not None else _stay_price(prop2, res.check_in, res.check_out)
+        await send_customer_message(
+            res.telegram_user_id,
+            booking_payment_text(res, prop2.name_ru if prop2 else "", amt, float(paid_sum), total_amt),
+        )
     await session.refresh(res)
     return await _reservation_out(session, res)
 
