@@ -394,6 +394,52 @@ async def cancel_reservation(
     return _out(res)
 
 
+@router.post("/{res_id}/extend-hold")
+async def extend_hold(
+    res_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Give an unpaid hold 24 more hours to be prepaid (agent confirmed the customer is
+    real). Re-arms a reminder ~1h before the new deadline."""
+    res = await session.get(Reservation, res_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="not found")
+    if res.status != ReservationStatus.HOLD:
+        raise HTTPException(status_code=400, detail="Продлевать можно только бронь, ожидающую предоплаты")
+    now = datetime.now(timezone.utc)
+    res.hold_expires_at = now + timedelta(hours=24)
+    res.hold_warn_at = now + timedelta(hours=23)
+    res.hold_warned_at = None
+    await session.commit()
+    await _log(session, res_id, user, "updated", "Окно предоплаты продлено до 24 часов")
+    await session.refresh(res)
+    return await _reservation_out(session, res)
+
+
+@router.post("/{res_id}/waive-prepayment")
+async def waive_prepayment(
+    res_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Confirm a booking without requiring prepayment (contract guests, arriving from
+    abroad, etc.). Stops the expiry timer; a payment can still be added later."""
+    res = await session.get(Reservation, res_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="not found")
+    if res.status != ReservationStatus.HOLD:
+        raise HTTPException(status_code=400, detail="Действие доступно только для брони, ожидающей предоплаты")
+    res.status = ReservationStatus.CONFIRMED
+    res.hold_warn_at = None
+    res.hold_expires_at = None
+    res.hold_warned_at = None
+    await session.commit()
+    await _log(session, res_id, user, "updated", "Подтверждено без предоплаты")
+    await session.refresh(res)
+    return await _reservation_out(session, res)
+
+
 @router.post("/{res_id}/restore")
 async def restore_reservation(
     res_id: int,

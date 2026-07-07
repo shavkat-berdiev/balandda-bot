@@ -262,6 +262,27 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
     }
   }
 
+  async function doExtendHold() {
+    try {
+      const u = await api.extendHold(detail.id);
+      setDetail(u);
+      await load();
+    } catch (e) {
+      alert(e.message || 'Не удалось продлить');
+    }
+  }
+
+  async function doWaivePrepay() {
+    if (!confirm('Отметить бронь как «без предоплаты»? Она станет подтверждённой и перестанет истекать.')) return;
+    try {
+      const u = await api.waivePrepayment(detail.id);
+      setDetail(u);
+      await load();
+    } catch (e) {
+      alert(e.message || 'Не удалось');
+    }
+  }
+
   // Cancelled + expired bookings in range — kept (struck-through) so they can be
   // restored; their dates read as free for new bookings.
   const freed = useMemo(
@@ -523,6 +544,14 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
               {detail.balance != null && detail.balance <= 0 ? ' ✓' : ''}
             </span>
           </div>
+
+          {/* Unpaid hold → agent can grant more time or waive prepayment */}
+          {detail.status === 'HOLD' && (
+            <div className="mb-3 grid grid-cols-2 gap-2">
+              <button onClick={doExtendHold} className="px-3 py-2 rounded-lg bg-amber-50 text-amber-700 text-sm font-medium hover:bg-amber-100">⏳ Продлить до 24 ч</button>
+              <button onClick={doWaivePrepay} className="px-3 py-2 rounded-lg bg-blue-50 text-blue-700 text-sm font-medium hover:bg-blue-100">Без предоплаты</button>
+            </div>
+          )}
 
           {/* Payment ledger — partial payments (each editable / removable) */}
           {payments.length > 0 && (
