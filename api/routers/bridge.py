@@ -5,6 +5,7 @@ here; we attach it to the booking and return the booking-received text for the C
 to reply with.
 """
 
+import secrets
 from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException
@@ -134,6 +135,89 @@ async def self_book(
         "unit_name": prop.name_ru,
         "check_in": data.check_in.isoformat(),
         "check_out": data.check_out.isoformat(),
+        "guest_name": data.guest_name,
+        "message": booking_received_text(res, prop.name_ru, prepay_text),
+    }
+
+
+class WebBookData(BaseModel):
+    property_code: str
+    check_in: date
+    check_out: date
+    guests: int | None = None
+    guest_name: str
+    guest_phone: str
+
+
+@router.post("/web-book")
+async def web_book(
+    data: WebBookData,
+    session: AsyncSession = Depends(get_session),
+    x_bridge_secret: str | None = Header(default=None),
+):
+    """Self-booking from the balandda.uz website (no Telegram id yet).
+
+    Creates an unpaid HOLD (source=DIRECT) on the chosen unit and returns a
+    connect_token so the site can offer a "Continue in Telegram" deep-link
+    (@balandda_bot?start=connect_<token>) that later attaches the customer's chat.
+    The DB overlap constraint prevents double-booking → returns unavailable on conflict.
+    """
+    _check_secret(x_bridge_secret)
+    if data.check_out <= data.check_in:
+        raise HTTPException(status_code=400, detail="check_out must be after check_in")
+    prop = (
+        await session.execute(
+            select(Property).where(Property.code == data.property_code, Property.is_active.is_(True))
+        )
+    ).scalar_one_or_none()
+    if not prop:
+        raise HTTPException(status_code=404, detail="unit not found")
+
+    now = datetime.now(timezone.utc)
+    total = _stay_total(prop.price_weekday, prop.price_weekend, data.check_in, data.check_out)
+    res = Reservation(
+        property_id=prop.id,
+        check_in=data.check_in,
+        check_out=data.check_out,
+        guest_name=data.guest_name,
+        guest_phone=data.guest_phone,
+        guest_count=data.guests,
+        status=ReservationStatus.HOLD,
+        source=ReservationSource.DIRECT,
+        total_amount=total or None,
+        connect_token=secrets.token_urlsafe(12)[:16],
+        hold_warn_at=add_working_minutes(now, 30),
+        hold_expires_at=add_working_minutes(now, 60),
+        booking_notified_at=now,
+    )
+    session.add(res)
+    try:
+        await session.commit()
+    except IntegrityError:
+        await session.rollback()
+        return {"ok": False, "error": "unavailable"}
+    await session.refresh(res)
+    session.add(ReservationEvent(
+        reservation_id=res.id, actor_name="Клиент (сайт)", action="created",
+        detail=f"Онлайн-бронь (сайт): {prop.name_ru} · {data.check_in}→{data.check_out}",
+    ))
+    await session.commit()
+
+    prepay_text = await get_prepayment_instructions()
+    prepay_amount = int(round((total or 0) * 0.2))
+    connect_url = f"https://t.me/{settings.customer_bot_username}?start=connect_{res.connect_token}"
+    return {
+        "ok": True,
+        "booking_id": res.id,
+        "unit_name": prop.name_ru,
+        "check_in": data.check_in.isoformat(),
+        "check_out": data.check_out.isoformat(),
+        "nights": (data.check_out - data.check_in).days,
+        "total_amount": total,
+        "prepay_amount": prepay_amount,
+        "prepay_text": prepay_text,
+        "connect_token": res.connect_token,
+        "connect_url": connect_url,
         "guest_name": data.guest_name,
         "message": booking_received_text(res, prop.name_ru, prepay_text),
     }
