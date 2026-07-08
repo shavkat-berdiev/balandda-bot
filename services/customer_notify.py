@@ -62,6 +62,37 @@ async def send_customer_message(telegram_user_id: int | None, text: str) -> bool
         return False
 
 
+async def notify_operators_booking(res, unit_name: str, source_label: str = "сайт") -> bool:
+    """Announce a non-bot booking (website self-booking) to the operators' Брони topic
+    via the CRM. Best-effort — never breaks the booking flow."""
+    if not settings.bridge_secret:
+        return False
+    url = settings.crm_api_url.rstrip("/") + "/api/operator-booking"
+    payload = {
+        "booking_id": res.id,
+        "unit_name": unit_name,
+        "check_in": res.check_in.isoformat(),
+        "check_out": res.check_out.isoformat(),
+        "guest_name": res.guest_name,
+        "guest_phone": res.guest_phone,
+        "source_label": source_label,
+    }
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(
+                url, json=payload,
+                headers={"X-Bridge-Secret": settings.bridge_secret},
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as r:
+                if r.status >= 400:
+                    logger.warning("operator-booking CRM failed %s: %s", r.status, await r.text())
+                    return False
+                return True
+    except Exception as e:  # noqa: BLE001 - best effort
+        logger.warning("operator-booking CRM error: %s", e)
+        return False
+
+
 def _fmt_amount(n) -> str:
     try:
         return f"{int(round(float(n))):,}".replace(",", " ")

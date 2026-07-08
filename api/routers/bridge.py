@@ -20,7 +20,11 @@ from db.database import get_session
 from db.enums import ReservationSource, ReservationStatus
 from db.hold_timing import add_working_minutes
 from db.models import Property, Reservation, ReservationEvent
-from services.customer_notify import booking_received_text, get_prepayment_instructions
+from services.customer_notify import (
+    booking_received_text,
+    get_prepayment_instructions,
+    notify_operators_booking,
+)
 
 router = APIRouter()
 
@@ -202,6 +206,9 @@ async def web_book(
         detail=f"Онлайн-бронь (сайт): {prop.name_ru} · {data.check_in}→{data.check_out}",
     ))
     await session.commit()
+
+    # Announce to the operators' Брони topic (website bookings have no bot to do it).
+    await notify_operators_booking(res, prop.name_ru, "сайт")
 
     prepay_text = await get_prepayment_instructions()
     prepay_amount = int(round((total or 0) * 0.2))
