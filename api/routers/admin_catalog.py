@@ -19,6 +19,7 @@ from db.models import (
     BusinessUnit,
     MinibarItem,
     Property,
+    PropertyTypeLabel,
     ServiceItem,
     StaffMember,
 )
@@ -37,6 +38,7 @@ class PropertyCreate(BaseModel):
     code: str
     name_ru: str
     name_uz: str
+    name_en: str | None = None
     property_type: str
     unit_number: str | None = None
     capacity: int = 2
@@ -52,6 +54,7 @@ class PropertyUpdate(BaseModel):
     code: str | None = None
     name_ru: str | None = None
     name_uz: str | None = None
+    name_en: str | None = None
     property_type: str | None = None
     unit_number: str | None = None
     capacity: int | None = None
@@ -69,6 +72,7 @@ class PropertyOut(BaseModel):
     code: str
     name_ru: str
     name_uz: str
+    name_en: str | None
     property_type: str
     property_type_label: str
     unit_number: str | None
@@ -186,6 +190,66 @@ async def list_enums(user: dict = Depends(get_current_user)):
     }
 
 
+# ── Type-label CRUD (editable category titles per language) ───────
+
+
+class TypeLabelOut(BaseModel):
+    property_type: str
+    label_ru: str
+    label_uz: str
+    label_en: str | None
+
+
+class TypeLabelUpdate(BaseModel):
+    label_ru: str | None = None
+    label_uz: str | None = None
+    label_en: str | None = None
+
+
+@router.get("/type-labels", response_model=list[TypeLabelOut])
+async def list_type_labels(
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """All editable stay-type labels, one row per PropertyType (falls back to enum defaults)."""
+    rows = {r.property_type: r for r in (await session.execute(select(PropertyTypeLabel))).scalars().all()}
+    out: list[TypeLabelOut] = []
+    for pt in PropertyType:
+        r = rows.get(pt.value)
+        if r:
+            out.append(TypeLabelOut(property_type=pt.value, label_ru=r.label_ru, label_uz=r.label_uz, label_en=r.label_en))
+        else:
+            ru = PROPERTY_TYPE_LABELS.get(pt, pt.value)
+            out.append(TypeLabelOut(property_type=pt.value, label_ru=ru, label_uz=ru, label_en=ru))
+    return out
+
+
+@router.put("/type-labels/{property_type}", response_model=TypeLabelOut)
+async def update_type_label(
+    property_type: str,
+    data: TypeLabelUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    if property_type not in {pt.value for pt in PropertyType}:
+        raise HTTPException(status_code=404, detail="Unknown property type")
+    row = (
+        await session.execute(select(PropertyTypeLabel).where(PropertyTypeLabel.property_type == property_type))
+    ).scalar_one_or_none()
+    if not row:
+        base = PROPERTY_TYPE_LABELS.get(PropertyType(property_type), property_type)
+        row = PropertyTypeLabel(property_type=property_type, label_ru=base, label_uz=base, label_en=base)
+        session.add(row)
+    for field, value in data.model_dump(exclude_none=True).items():
+        setattr(row, field, value)
+    await session.commit()
+    await session.refresh(row)
+    return TypeLabelOut(
+        property_type=row.property_type, label_ru=row.label_ru, label_uz=row.label_uz, label_en=row.label_en
+    )
+
+
 # ── Property CRUD ─────────────────────────────────────────────────
 
 
@@ -195,6 +259,7 @@ def _property_out(p: Property) -> PropertyOut:
         code=p.code,
         name_ru=p.name_ru,
         name_uz=p.name_uz,
+        name_en=p.name_en,
         property_type=p.property_type.value,
         property_type_label=PROPERTY_TYPE_LABELS.get(p.property_type, p.property_type.value),
         unit_number=p.unit_number,
@@ -229,6 +294,7 @@ async def create_property(
         code=data.code,
         name_ru=data.name_ru,
         name_uz=data.name_uz,
+        name_en=data.name_en,
         property_type=PropertyType(data.property_type),
         unit_number=data.unit_number,
         capacity=data.capacity,

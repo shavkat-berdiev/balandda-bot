@@ -79,6 +79,10 @@ export const api = {
   createAdminProperty: (data) => request('/admin/properties', { method: 'POST', body: JSON.stringify(data) }),
   updateAdminProperty: (id, data) => request(`/admin/properties/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
+  // Admin — Type labels (editable category titles per language)
+  getTypeLabels: () => request('/admin/type-labels'),
+  updateTypeLabel: (type, data) => request(`/admin/type-labels/${type}`, { method: 'PUT', body: JSON.stringify(data) }),
+
   // Admin — Services
   getAdminServices: () => request('/admin/services'),
   createAdminService: (data) => request('/admin/services', { method: 'POST', body: JSON.stringify(data) }),

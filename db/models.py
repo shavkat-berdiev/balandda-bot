@@ -74,7 +74,7 @@ __all__ = [
     "UserRole",
     "User", "Category", "Transaction",
     "DailyReport", "ReportLineItem", "ReportExpense",
-    "Property", "ServiceItem", "MinibarItem", "StaffMember",
+    "Property", "PropertyTypeLabel", "ServiceItem", "MinibarItem", "StaffMember",
     "StructuredReport", "IncomeEntry", "ExpenseEntry",
     "Prepayment",
     "WalletTransaction",
@@ -202,6 +202,7 @@ class Property(Base):
     code: Mapped[str] = mapped_column(String(20), unique=True, index=True)
     name_ru: Mapped[str] = mapped_column(String(100))
     name_uz: Mapped[str] = mapped_column(String(100))
+    name_en: Mapped[str | None] = mapped_column(String(100), nullable=True)
     property_type: Mapped[PropertyType] = mapped_column(Enum(PropertyType))
     unit_number: Mapped[str | None] = mapped_column(String(10), nullable=True)
     capacity: Mapped[int] = mapped_column(Integer)
@@ -214,6 +215,21 @@ class Property(Base):
     business_unit: Mapped[BusinessUnit] = mapped_column(Enum(BusinessUnit), default=BusinessUnit.RESORT)
 
     income_entries: Mapped[list["IncomeEntry"]] = relationship(back_populates="property", cascade="all, delete-orphan")
+
+
+class PropertyTypeLabel(Base):
+    """Editable display labels for each PropertyType, per language.
+
+    Overrides the hard-coded PROPERTY_TYPE_LABELS so staff can rename the
+    stay categories (e.g. 'Белое Шале' / 'OQ Chalet') from the admin panel.
+    Consumed by the public catalog → bot + website.
+    """
+    __tablename__ = "property_type_labels"
+
+    property_type: Mapped[str] = mapped_column(String(40), primary_key=True)
+    label_ru: Mapped[str] = mapped_column(String(100))
+    label_uz: Mapped[str] = mapped_column(String(100))
+    label_en: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
 
 class ServiceItem(Base):

@@ -8,6 +8,7 @@ import Users from './pages/Users';
 import Transactions from './pages/Transactions';
 import Analytics from './pages/Analytics';
 import AdminProperties from './pages/AdminProperties';
+import AdminTypeLabels from './pages/AdminTypeLabels';
 import AdminServices from './pages/AdminServices';
 import AdminMinibar from './pages/AdminMinibar';
 import AdminStaff from './pages/AdminStaff';
@@ -78,6 +79,7 @@ export default function App() {
         <Route path="/transactions" element={<Transactions />} />
         <Route path="/analytics/*" element={<Analytics user={user} onLogout={handleLogout} />} />
         <Route path="/admin/properties" element={<AdminProperties />} />
+        <Route path="/admin/type-labels" element={<AdminTypeLabels />} />
         <Route path="/admin/services" element={<AdminServices />} />
         <Route path="/admin/minibar" element={<AdminMinibar />} />
         <Route path="/admin/staff" element={<AdminStaff />} />

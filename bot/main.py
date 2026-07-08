@@ -335,6 +335,38 @@ async def run_migrations():
             END;
         END $$;
         """,
+        # ── Editable titles: per-unit EN name + per-type label table ──
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'properties' AND column_name = 'name_en'
+            ) THEN
+                ALTER TABLE properties ADD COLUMN name_en VARCHAR(100) NULL;
+            END IF;
+        END $$;
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS property_type_labels (
+            property_type VARCHAR(40) PRIMARY KEY,
+            label_ru VARCHAR(100) NOT NULL,
+            label_uz VARCHAR(100) NOT NULL,
+            label_en VARCHAR(100) NULL
+        );
+        """,
+        # Seed default labels (idempotent — never overwrites edits)
+        """
+        INSERT INTO property_type_labels (property_type, label_ru, label_uz, label_en) VALUES
+            ('APARTMENT',            'Апартаменты',      'Apartamentlar',       'Apartments'),
+            ('WHITE_CHALET',         'Белое шале',       'Oq shale',            'White chalet'),
+            ('CHALET_WITH_SAUNA',    'Домик с сауной',   'Saunali uy',          'Chalet with sauna'),
+            ('CHALET_WITHOUT_SAUNA', 'Домик без сауны',  'Saunasiz uy',         'Chalet without sauna'),
+            ('PENTHOUSE',            'Пентхаус',         'Penthaus',            'Penthouse'),
+            ('VILLA',                'Вилла',            'Villa',               'Villa'),
+            ('SPA_SUITE',            'SPA Сьют',         'SPA Suite',           'SPA Suite')
+        ON CONFLICT (property_type) DO NOTHING;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:

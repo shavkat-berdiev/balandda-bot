@@ -3,7 +3,7 @@ import { Plus, Pencil, Check, X, ToggleLeft, ToggleRight, Copy } from 'lucide-re
 import { api } from '../api';
 
 const EMPTY_FORM = {
-  code: '', name_ru: '', name_uz: '', property_type: '', unit_number: '',
+  code: '', name_ru: '', name_uz: '', name_en: '', property_type: '', unit_number: '',
   capacity: 2, has_sauna: false, price_weekday: 0, price_weekend: 0,
   emoji: '🏠', sort_order: 0, business_unit: 'RESORT',
 };
@@ -38,6 +38,7 @@ export default function AdminProperties() {
       code: item.code,
       name_ru: item.name_ru,
       name_uz: item.name_uz,
+      name_en: item.name_en || '',
       property_type: item.property_type,
       unit_number: item.unit_number || '',
       capacity: item.capacity,
@@ -65,6 +66,7 @@ export default function AdminProperties() {
       code: item.code + '-copy',
       name_ru: item.name_ru,
       name_uz: item.name_uz,
+      name_en: item.name_en || '',
       property_type: item.property_type,
       unit_number: '',
       capacity: item.capacity,
@@ -146,6 +148,11 @@ export default function AdminProperties() {
               <label className="block text-sm font-medium text-gray-700 mb-1">Название (UZ)</label>
               <input type="text" value={form.name_uz} onChange={(e) => setForm({ ...form, name_uz: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Uycha №1" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Название (EN)</label>
+              <input type="text" value={form.name_en} onChange={(e) => setForm({ ...form, name_en: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" placeholder="House №1" />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Тип</label>

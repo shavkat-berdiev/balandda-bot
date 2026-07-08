@@ -18,9 +18,20 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from bot.config import settings
 from db.database import get_session
 from db.enums import PROPERTY_TYPE_LABELS, PropertyType, ReservationStatus
-from db.models import BusinessUnit, Property, Reservation, ServiceItem
+from db.models import BusinessUnit, Property, PropertyTypeLabel, Reservation, ServiceItem
 
 router = APIRouter()
+
+
+async def load_type_labels(session: AsyncSession) -> dict[str, dict]:
+    """Editable per-type display labels {ru,uz,en}, with fallback to the enum defaults."""
+    rows = (await session.execute(select(PropertyTypeLabel))).scalars().all()
+    out = {r.property_type: {"ru": r.label_ru, "uz": r.label_uz, "en": r.label_en or r.label_ru} for r in rows}
+    for pt in PropertyType:
+        if pt.value not in out:
+            ru = PROPERTY_TYPE_LABELS.get(pt, pt.value)
+            out[pt.value] = {"ru": ru, "uz": ru, "en": ru}
+    return out
 
 # Map each property type to the website page that represents it.
 # NOTE: the site currently serves "Shale with/without sauna" from one page
@@ -80,16 +91,19 @@ async def public_catalog(
         )
     ).scalars().all()
 
+    labels = await load_type_labels(session)
     units = []
     for p in prop_rows:
+        lbl = labels.get(p.property_type.value, {})
         units.append(
             {
                 "code": p.code,
                 "unit_number": p.unit_number,
                 "type": p.property_type.value,
-                "type_label": PROPERTY_TYPE_LABELS.get(p.property_type, p.property_type.value),
+                "type_label": lbl.get("ru", p.property_type.value),
+                "type_labels": lbl,
                 "web_slug": TYPE_TO_WEB_SLUG.get(p.property_type),
-                "name": {"ru": p.name_ru, "uz": p.name_uz},
+                "name": {"ru": p.name_ru, "uz": p.name_uz, "en": p.name_en or p.name_ru},
                 "capacity": p.capacity,
                 "has_sauna": p.has_sauna,
                 "emoji": p.emoji,
@@ -106,6 +120,7 @@ async def public_catalog(
             types[t] = {
                 "type": t,
                 "label": u["type_label"],
+                "labels": u["type_labels"],
                 "web_slug": u["web_slug"],
                 "units": 1,
                 "capacity_max": u["capacity"],
@@ -204,16 +219,19 @@ async def public_availability(
         )
     ).scalars().all()
 
+    labels = await load_type_labels(session)
     nights = (check_out - check_in).days
     units = []
     for p in rows:
         total = _stay_total(p.price_weekday, p.price_weekend, check_in, check_out)
+        lbl = labels.get(p.property_type.value, {})
         units.append({
             "code": p.code,
             "type": p.property_type.value,
-            "type_label": PROPERTY_TYPE_LABELS.get(p.property_type, p.property_type.value),
+            "type_label": lbl.get("ru", p.property_type.value),
+            "type_labels": lbl,
             "web_slug": TYPE_TO_WEB_SLUG.get(p.property_type),
-            "name": {"ru": p.name_ru, "uz": p.name_uz},
+            "name": {"ru": p.name_ru, "uz": p.name_uz, "en": p.name_en or p.name_ru},
             "capacity": p.capacity,
             "has_sauna": p.has_sauna,
             "price_total": total,
@@ -225,7 +243,7 @@ async def public_availability(
         agg = types.get(t)
         if agg is None:
             types[t] = {
-                "type": t, "label": u["type_label"], "web_slug": u["web_slug"],
+                "type": t, "label": u["type_label"], "labels": u["type_labels"], "web_slug": u["web_slug"],
                 "units_available": 1, "capacity_max": u["capacity"],
                 "price_from_total": u["price_total"],
             }
