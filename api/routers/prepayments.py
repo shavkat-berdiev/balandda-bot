@@ -234,19 +234,22 @@ async def prepayments_by_reservation(
 @router.post("/from-reservation")
 async def create_prepayment_from_reservation(
     reservation_id: int = Form(...),
-    amount: float = Form(...),
+    amount: float | None = Form(None),
     note: str | None = Form(None),
     screenshot: UploadFile | None = File(None),
     user: dict = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Agent adds a prepayment + proof screenshot from the calendar. Saved to the SAME
-    prepayments table as the bot flow (status PENDING → confirm via /status)."""
+    """Agent adds a proof-of-payment screenshot for a booking. Saved to the SAME
+    prepayments table as the bot flow. Amount is optional (the screenshot is just proof of
+    what was already recorded) — defaults to the booking's deposit."""
     res = (
         await session.execute(select(Reservation).where(Reservation.id == reservation_id))
     ).scalar_one_or_none()
     if not res:
         raise HTTPException(404, "Reservation not found")
+    if amount is None:
+        amount = float(res.deposit_amount or 0)
 
     screenshot_url = None
     if screenshot is not None and (screenshot.filename or ""):

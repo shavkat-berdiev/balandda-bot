@@ -79,7 +79,7 @@ function stayTotal(unit, ciStr, coStr) {
 export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, title = 'Календарь броней', showImport = true, expires = true } = {}) {
   const today = useMemo(() => { const d = new Date(); d.setHours(0, 0, 0, 0); return d; }, []);
   const [start, setStart] = useState(() => addDays(today, -1)); // opens on yesterday
-  const span = 14; // yesterday + today + 12 future days
+  const [span, setSpan] = useState(31); // yesterday + 30 days; "load more" extends it
   const [importing, setImporting] = useState(false);
   const [units, setUnits] = useState([]);
   const [reservations, setReservations] = useState([]);
@@ -95,7 +95,6 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
   const [payments, setPayments] = useState([]);   // payment ledger for the selected booking
   const [editPay, setEditPay] = useState(null);    // {id, amount, method} inline edit
   const [prepays, setPrepays] = useState([]);      // prepayments (with proof) for the selected booking
-  const [preAmount, setPreAmount] = useState('');
   const [preFile, setPreFile] = useState(null);
   const [savingPre, setSavingPre] = useState(false);
   const [shotUrls, setShotUrls] = useState({});    // prepaymentId -> object URL (auth-fetched image)
@@ -136,8 +135,8 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
 
   // When a booking is selected: load an editable copy + its change log + payment ledger.
   useEffect(() => {
-    if (!detail) { setDetailForm(null); setEvents([]); setPayForm(null); setPayments([]); setEditPay(null); setPrepays([]); setPreAmount(''); setPreFile(null); setShotUrls({}); return; }
-    setPayForm(null); setEditPay(null); setPreAmount(''); setPreFile(null); setShotUrls({});
+    if (!detail) { setDetailForm(null); setEvents([]); setPayForm(null); setPayments([]); setEditPay(null); setPrepays([]); setPreFile(null); setShotUrls({}); return; }
+    setPayForm(null); setEditPay(null); setPreFile(null); setShotUrls({});
     setDetailForm({
       property_id: detail.property_id,
       status: detail.status,
@@ -157,15 +156,14 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
   }
 
   async function addPrepay() {
-    if (!detail || !preAmount) return;
+    if (!detail || !preFile) return;
     setSavingPre(true);
     try {
       const fd = new FormData();
       fd.append('reservation_id', detail.id);
-      fd.append('amount', preAmount);
-      if (preFile) fd.append('screenshot', preFile);
+      fd.append('screenshot', preFile);
       await api.addPrepaymentFromReservation(fd);
-      setPreAmount(''); setPreFile(null);
+      setPreFile(null);
       setPrepays(await api.prepaymentsByReservation(detail.id));
     } catch (e) { setError(e.message); }
     setSavingPre(false);
@@ -435,17 +433,12 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
 
   return (
     <div>
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-        <h1 className="text-2xl font-bold text-gray-800">{title}</h1>
-        <div className="flex flex-wrap items-center gap-2">
-          <button onClick={() => setStart(addDays(start, -7))} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"><ChevronLeft size={18} /></button>
-          <input type="date" value={ymd(start)} onChange={(e) => setStart(new Date(e.target.value + 'T00:00:00'))} className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-          <button onClick={() => setStart(addDays(start, 7))} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"><ChevronRight size={18} /></button>
-          <span className="px-1 text-sm font-semibold text-gray-800 whitespace-nowrap">{rangeLabel}</span>
-          <button onClick={() => setStart(addDays(today, -1))} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Сегодня</button>
-          <button onClick={() => openNew(null, null)} className="flex items-center gap-1.5 bg-blue-600 text-white rounded-lg px-3 py-2 text-sm font-medium hover:bg-blue-700"><Plus size={16} /> Бронь</button>
-          {showImport && <button onClick={importPreps} disabled={importing} className="rounded-lg border border-gray-200 px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50 disabled:opacity-50">{importing ? 'Импорт…' : 'Импорт предоплат'}</button>}
-        </div>
+      <div className="flex items-center gap-2 mb-4">
+        <h1 className="text-xl font-bold text-gray-800 mr-auto">{title}</h1>
+        <button onClick={() => setStart(addDays(start, -(span - 1)))} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50" title="Раньше"><ChevronLeft size={18} /></button>
+        <input type="date" value={ymd(start)} onChange={(e) => { setStart(new Date(e.target.value + 'T00:00:00')); setSpan(31); }} className="border border-gray-200 rounded-lg px-2 py-2 text-sm" />
+        <button onClick={() => setStart(addDays(start, span - 1))} className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50" title="Позже"><ChevronRight size={18} /></button>
+        <button onClick={() => openNew(null, null)} className="flex items-center gap-1.5 bg-blue-600 text-white rounded-lg px-3 py-2 text-sm font-medium hover:bg-blue-700"><Plus size={16} /> Бронь</button>
       </div>
 
       {error && <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">{error}</div>}
@@ -468,14 +461,14 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
             <thead>
               <tr>
                 <th className="sticky left-0 z-10 bg-gray-50 border-b border-r border-gray-200 px-3 py-2 text-left font-semibold text-gray-700 min-w-[150px]">Объект</th>
-                {days.map((d, idx) => {
+                {days.map((d) => {
                   const isSat = d.getDay() === 6;
                   const isToday = ymd(d) === ymd(today);
-                  const showMonth = idx === 0 || d.getDate() === 1;
+                  const mon = MONTHS_SHORT[d.getMonth()];
                   return (
                     <th key={ymd(d)} className={`border-b border-gray-200 px-1 py-2 text-center font-medium min-w-[72px] ${isToday ? 'bg-blue-50 text-blue-700' : isSat ? 'bg-rose-50 text-rose-600' : 'text-gray-500'}`}>
                       <div className="text-[10px] leading-none">{isToday ? 'сегодня' : dow[d.getDay()]}</div>
-                      <div>{d.getDate()}{showMonth ? <span className="text-[10px] font-normal"> {MONTHS_SHORT[d.getMonth()]}</span> : ''}</div>
+                      <div>{String(d.getDate()).padStart(2, '0')}<span className="text-[10px] font-normal">, {mon.charAt(0).toUpperCase() + mon.slice(1)}</span></div>
                     </th>
                   );
                 })}
@@ -490,6 +483,12 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {!loading && units.length > 0 && (
+        <div className="mt-3 text-center">
+          <button onClick={() => setSpan((s) => s + 30)} className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Показать ещё 30 дней →</button>
         </div>
       )}
 
@@ -683,14 +682,13 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
               </ul>
             )}
             <div className="flex items-center gap-2 flex-wrap">
-              <input type="number" placeholder="Сумма" value={preAmount} onChange={(e) => setPreAmount(e.target.value)} className="input" style={{ maxWidth: '140px' }} />
               <label className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm cursor-pointer hover:bg-gray-50">
-                {preFile ? '✅ Фото выбрано' : '📎 Скриншот'}
+                {preFile ? '✅ Фото выбрано' : '📎 Выбрать скриншот'}
                 <input type="file" accept="image/*" hidden onChange={(e) => setPreFile(e.target.files[0] || null)} />
               </label>
-              <button onClick={addPrepay} disabled={savingPre || !preAmount} className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50">{savingPre ? '…' : 'Добавить'}</button>
+              <button onClick={addPrepay} disabled={savingPre || !preFile} className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50">{savingPre ? '…' : 'Добавить скриншот'}</button>
             </div>
-            <p className="text-xs text-gray-400 mt-1">Сохраняется в общую базу предоплат (как из бота @berdiev_shavkat_bot).</p>
+            <p className="text-xs text-gray-400 mt-1">Скриншот-подтверждение оплаты. Сохраняется в общую базу предоплат (как из бота @berdiev_shavkat_bot).</p>
           </div>
           <div className="space-y-3">
             <Field label="Объект">
