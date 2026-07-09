@@ -347,6 +347,18 @@ async def run_migrations():
             END IF;
         END $$;
         """,
+        # Web-uploaded prepayment screenshot (disk path), alongside the bot's Telegram file_id.
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'prepayments' AND column_name = 'screenshot_url'
+            ) THEN
+                ALTER TABLE prepayments ADD COLUMN screenshot_url VARCHAR(255) NULL;
+            END IF;
+        END $$;
+        """,
         """
         CREATE TABLE IF NOT EXISTS property_type_labels (
             property_type VARCHAR(40) PRIMARY KEY,

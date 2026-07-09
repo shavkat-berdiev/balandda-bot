@@ -352,6 +352,7 @@ class Prepayment(Base):
         Enum(PrepaymentStatus), default=PrepaymentStatus.PENDING
     )
     screenshot_file_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    screenshot_url: Mapped[str | None] = mapped_column(String(255), nullable=True)  # web-uploaded proof (disk path)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
     operator_telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
     settled_in_report_id: Mapped[int | None] = mapped_column(

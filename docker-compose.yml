@@ -34,6 +34,8 @@ services:
       dockerfile: Dockerfile
     container_name: balandda-api
     env_file: .env
+    volumes:
+      - ./docker/uploads:/app/uploads   # web-uploaded prepayment screenshots (persist across rebuilds)
     ports:
       - "8000:8000"
     depends_on:

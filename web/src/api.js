@@ -33,6 +33,33 @@ async function request(path, options = {}) {
   return res.json();
 }
 
+// Multipart upload (no JSON Content-Type — browser sets the boundary).
+async function upload(path, formData) {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: formData,
+    credentials: 'include',
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Upload failed' }));
+    throw new Error(typeof err.detail === 'string' ? err.detail : 'Upload failed');
+  }
+  return res.json();
+}
+
+// Fetch an auth-protected image and return an object URL (for <img src>).
+async function blobUrl(path) {
+  const token = getToken();
+  const res = await fetch(`${API_BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error('image failed');
+  return URL.createObjectURL(await res.blob());
+}
+
 export const api = {
   // Auth
   telegramLogin: (data) => request('/auth/telegram', { method: 'POST', body: JSON.stringify(data) }),
@@ -78,6 +105,11 @@ export const api = {
   getAdminProperties: () => request('/admin/properties'),
   createAdminProperty: (data) => request('/admin/properties', { method: 'POST', body: JSON.stringify(data) }),
   updateAdminProperty: (id, data) => request(`/admin/properties/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Prepayments — add from a booking (with screenshot) + view screenshot
+  prepaymentsByReservation: (rid) => request(`/prepayments/by-reservation/${rid}`),
+  addPrepaymentFromReservation: (formData) => upload('/prepayments/from-reservation', formData),
+  prepaymentScreenshotUrl: (id) => blobUrl(`/prepayments/screenshot-image/${id}`),
 
   // Admin — Type labels (editable category titles per language)
   getTypeLabels: () => request('/admin/type-labels'),

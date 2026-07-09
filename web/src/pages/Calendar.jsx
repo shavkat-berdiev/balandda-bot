@@ -94,6 +94,11 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
   const [savingPay, setSavingPay] = useState(false);
   const [payments, setPayments] = useState([]);   // payment ledger for the selected booking
   const [editPay, setEditPay] = useState(null);    // {id, amount, method} inline edit
+  const [prepays, setPrepays] = useState([]);      // prepayments (with proof) for the selected booking
+  const [preAmount, setPreAmount] = useState('');
+  const [preFile, setPreFile] = useState(null);
+  const [savingPre, setSavingPre] = useState(false);
+  const [shotUrls, setShotUrls] = useState({});    // prepaymentId -> object URL (auth-fetched image)
 
   const isOwner = useMemo(() => (currentUser().role || '').toUpperCase() === 'OWNER', []);
 
@@ -131,8 +136,8 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
 
   // When a booking is selected: load an editable copy + its change log + payment ledger.
   useEffect(() => {
-    if (!detail) { setDetailForm(null); setEvents([]); setPayForm(null); setPayments([]); setEditPay(null); return; }
-    setPayForm(null); setEditPay(null);
+    if (!detail) { setDetailForm(null); setEvents([]); setPayForm(null); setPayments([]); setEditPay(null); setPrepays([]); setPreAmount(''); setPreFile(null); setShotUrls({}); return; }
+    setPayForm(null); setEditPay(null); setPreAmount(''); setPreFile(null); setShotUrls({});
     setDetailForm({
       property_id: detail.property_id,
       status: detail.status,
@@ -144,10 +149,34 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
     });
     api.getReservationEvents(detail.id).then(setEvents).catch(() => setEvents([]));
     api.getReservationPayments(detail.id).then(setPayments).catch(() => setPayments([]));
+    api.prepaymentsByReservation(detail.id).then(setPrepays).catch(() => setPrepays([]));
   }, [detail]);
 
   async function reloadPayments(id) {
     try { setPayments(await api.getReservationPayments(id)); } catch { /* ignore */ }
+  }
+
+  async function addPrepay() {
+    if (!detail || !preAmount) return;
+    setSavingPre(true);
+    try {
+      const fd = new FormData();
+      fd.append('reservation_id', detail.id);
+      fd.append('amount', preAmount);
+      if (preFile) fd.append('screenshot', preFile);
+      await api.addPrepaymentFromReservation(fd);
+      setPreAmount(''); setPreFile(null);
+      setPrepays(await api.prepaymentsByReservation(detail.id));
+    } catch (e) { setError(e.message); }
+    setSavingPre(false);
+  }
+
+  async function viewShot(id) {
+    try {
+      const u = shotUrls[id] || await api.prepaymentScreenshotUrl(id);
+      if (!shotUrls[id]) setShotUrls((s) => ({ ...s, [id]: u }));
+      window.open(u, '_blank');
+    } catch { setError('Не удалось загрузить скриншот'); }
   }
 
   // index: `${property_id}|${ymd}` -> reservation covering that night
@@ -638,6 +667,31 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
               </div>
             </div>
           )}
+          {/* Prepayment with proof screenshot — saved to the SAME prepayments table as the bot */}
+          <div className="mb-4 pt-3 border-t border-gray-100">
+            <div className="text-xs font-semibold text-gray-500 mb-2">Предоплаты (скриншот-подтверждение)</div>
+            {prepays.length > 0 && (
+              <ul className="space-y-1.5 mb-2">
+                {prepays.map((p) => (
+                  <li key={p.id} className="flex items-center justify-between text-sm bg-gray-50 rounded-lg px-3 py-1.5">
+                    <span>{Number(p.amount).toLocaleString('ru-RU')} сум · <span className="text-gray-500">{p.status_label}</span></span>
+                    {p.has_screenshot
+                      ? <button onClick={() => viewShot(p.id)} className="text-blue-600 hover:underline text-xs">📸 Скриншот</button>
+                      : <span className="text-gray-400 text-xs">без фото</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex items-center gap-2 flex-wrap">
+              <input type="number" placeholder="Сумма" value={preAmount} onChange={(e) => setPreAmount(e.target.value)} className="input" style={{ maxWidth: '140px' }} />
+              <label className="px-3 py-1.5 rounded-lg border border-gray-200 text-sm cursor-pointer hover:bg-gray-50">
+                {preFile ? '✅ Фото выбрано' : '📎 Скриншот'}
+                <input type="file" accept="image/*" hidden onChange={(e) => setPreFile(e.target.files[0] || null)} />
+              </label>
+              <button onClick={addPrepay} disabled={savingPre || !preAmount} className="px-3 py-1.5 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700 disabled:opacity-50">{savingPre ? '…' : 'Добавить'}</button>
+            </div>
+            <p className="text-xs text-gray-400 mt-1">Сохраняется в общую базу предоплат (как из бота @berdiev_shavkat_bot).</p>
+          </div>
           <div className="space-y-3">
             <Field label="Объект">
               <select value={detailForm.property_id} onChange={(e) => setDetailForm({ ...detailForm, property_id: e.target.value })} className="input">
