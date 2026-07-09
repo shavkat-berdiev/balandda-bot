@@ -98,6 +98,14 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
   const [preFile, setPreFile] = useState(null);
   const [savingPre, setSavingPre] = useState(false);
   const [shotUrls, setShotUrls] = useState({});    // prepaymentId -> object URL (auth-fetched image)
+  const [connectUrl, setConnectUrl] = useState(''); // generated client Telegram deep-link
+  const [linkCopied, setLinkCopied] = useState(false);
+  const [bookMsgs, setBookMsgs] = useState(null);   // editable invitation text {ru,uz,en,zh} from balandda.uz
+  const [msgLang, setMsgLang] = useState('ru');
+
+  useEffect(() => {
+    fetch('https://www.balandda.uz/bookingmsg.php').then((r) => (r.ok ? r.json() : null)).then((m) => { if (m) setBookMsgs(m); }).catch(() => {});
+  }, []);
 
   const isOwner = useMemo(() => (currentUser().role || '').toUpperCase() === 'OWNER', []);
 
@@ -136,7 +144,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
   // When a booking is selected: load an editable copy + its change log + payment ledger.
   useEffect(() => {
     if (!detail) { setDetailForm(null); setEvents([]); setPayForm(null); setPayments([]); setEditPay(null); setPrepays([]); setPreFile(null); setShotUrls({}); return; }
-    setPayForm(null); setEditPay(null); setPreFile(null); setShotUrls({});
+    setPayForm(null); setEditPay(null); setPreFile(null); setShotUrls({}); setConnectUrl(''); setLinkCopied(false);
     setDetailForm({
       property_id: detail.property_id,
       status: detail.status,
@@ -329,14 +337,26 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
     }
   }
 
+  function connectText(url = connectUrl) {
+    const msg = bookMsgs && bookMsgs[msgLang];
+    return (msg ? msg + '\n\n' : '') + url;
+  }
+
   async function doConnectLink() {
     try {
       const r = await api.connectLink(detail.id);
-      try { await navigator.clipboard.writeText(r.url); } catch { /* clipboard may be blocked */ }
-      window.prompt('Ссылка скопирована. Отправьте её клиенту в Telegram:', r.url);
+      setConnectUrl(r.url); setLinkCopied(false);
+      try { await navigator.clipboard.writeText(connectText(r.url)); setLinkCopied(true); } catch { /* clipboard may be blocked */ }
     } catch (e) {
       alert(e.message || 'Не удалось получить ссылку');
     }
+  }
+
+  async function copyConnectUrl() {
+    try {
+      await navigator.clipboard.writeText(connectText());
+      setLinkCopied(true); setTimeout(() => setLinkCopied(false), 1800);
+    } catch { /* clipboard blocked — user can select the field manually */ }
   }
 
   // Cancelled + expired bookings in range — kept (struck-through) so they can be
@@ -606,9 +626,25 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
           </div>
 
           {/* Telegram: connect link to message the customer via @balandda_bot */}
-          <button onClick={doConnectLink} className="w-full mb-3 px-3 py-2 rounded-lg bg-sky-50 text-sky-700 text-sm font-medium hover:bg-sky-100">
+          <button onClick={doConnectLink} className="w-full mb-2 px-3 py-2 rounded-lg bg-sky-50 text-sky-700 text-sm font-medium hover:bg-sky-100">
             {detail.telegram_user_id ? '🔗 Telegram привязан · ещё раз ссылку' : '🔗 Ссылка для клиента (Telegram)'}
           </button>
+          {connectUrl && (
+            <div className="mb-3 bg-sky-50 rounded-lg p-2 space-y-2">
+              {bookMsgs && (
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs text-sky-700">Язык:</span>
+                  {[['ru', 'RU'], ['uz', 'UZ'], ['en', 'EN'], ['zh', '中文']].map(([code, lbl]) => (
+                    <button key={code} onClick={() => setMsgLang(code)} className={`px-2 py-0.5 rounded text-xs font-medium ${msgLang === code ? 'bg-sky-600 text-white' : 'bg-white text-sky-700 border border-sky-200'}`}>{lbl}</button>
+                  ))}
+                </div>
+              )}
+              <textarea readOnly value={connectText()} onFocus={(e) => e.target.select()} className="w-full bg-white/70 rounded-md text-xs text-sky-900 p-2 outline-none resize-none" rows={bookMsgs ? 4 : 2} />
+              <button onClick={copyConnectUrl} className="w-full px-2.5 py-1.5 rounded-md bg-sky-600 text-white text-xs font-medium hover:bg-sky-700">
+                {linkCopied ? 'Скопировано ✓' : '📋 Копировать сообщение + ссылку'}
+              </button>
+            </div>
+          )}
 
           {/* Unpaid hold → agent can grant more time or waive prepayment */}
           {detail.status === 'HOLD' && (
