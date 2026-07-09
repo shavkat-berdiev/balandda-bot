@@ -480,7 +480,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
           <table className="border-collapse text-sm">
             <thead>
               <tr>
-                <th className="sticky left-0 z-10 bg-gray-50 border-b border-r border-gray-200 px-3 py-2 text-left font-semibold text-gray-700 min-w-[150px]">Объект</th>
+                <th className="sticky left-0 z-10 bg-gray-50 border-b border-r border-gray-200 px-2 py-2 text-left font-semibold text-gray-700 min-w-[92px] w-[92px]">Объект</th>
                 {days.map((d) => {
                   const isSat = d.getDay() === 6;
                   const isToday = ymd(d) === ymd(today);
@@ -786,6 +786,17 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
 
 // One unit's row as a tape chart: bookings render as bars (colSpan over their nights)
 // showing guest name + phone; empty days are clickable to create a booking.
+// Compact display names for the narrow unit column (agents know the units well).
+function shortName(n) {
+  return String(n || '')
+    .replace(/Белое\s*Шале/gi, 'Белое')
+    .replace(/Апартаменты?/gi, 'Апарт.')
+    .replace(/SPA\s*Сьют|Спа\s*(номер|сьют)?/gi, 'SPA')
+    .replace(/Вилла\s*Infinity|Infinity\s*Villa/gi, 'Вилла')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function UnitRow({ unit, days, byCell, onOpen, onDetail, todayStr }) {
   const cells = [];
   let i = 0;
@@ -824,8 +835,8 @@ function UnitRow({ unit, days, byCell, onOpen, onDetail, todayStr }) {
   }
   return (
     <tr>
-      <td className="sticky left-0 z-10 bg-white border-b border-r border-gray-200 px-3 py-1.5 font-medium text-gray-800 whitespace-nowrap">
-        {unit.name_ru} <span className="text-gray-400 text-xs">· {unit.capacity}👤</span>
+      <td className="sticky left-0 z-10 bg-white border-b border-r border-gray-200 px-2 py-1.5 font-medium text-gray-800 text-xs leading-tight min-w-[92px] w-[92px]">
+        {shortName(unit.name_ru)}
       </td>
       {cells}
     </tr>
