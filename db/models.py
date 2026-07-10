@@ -316,6 +316,33 @@ service_locations = Table(
 )
 
 
+class SpaAppointment(Base):
+    """A scheduled SPA procedure: a service performed by a master, in a room, at a time."""
+    __tablename__ = "spa_appointments"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("service_items.id"))
+    master_id: Mapped[int] = mapped_column(ForeignKey("spa_masters.id"))
+    location_id: Mapped[int | None] = mapped_column(ForeignKey("spa_locations.id", ondelete="SET NULL"), nullable=True)
+    # optional link to a resort reservation/guest
+    reservation_id: Mapped[int | None] = mapped_column(ForeignKey("reservations.id", ondelete="SET NULL"), nullable=True)
+    customer_name: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    customer_phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    start_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # planned | done | cancelled | no_show
+    status: Mapped[str] = mapped_column(String(16), default="planned")
+    price: Mapped[float] = mapped_column(Numeric(15, 2), default=0)
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    service: Mapped["ServiceItem"] = relationship(foreign_keys=[service_id])
+    master: Mapped["SpaMaster"] = relationship(foreign_keys=[master_id])
+    location: Mapped["SpaLocation | None"] = relationship(foreign_keys=[location_id])
+
+
 class MinibarItem(Base):
     """Minibar product catalog."""
     __tablename__ = "minibar_items"

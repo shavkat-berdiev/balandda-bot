@@ -443,6 +443,35 @@ async def run_migrations():
         INSERT INTO app_settings (key, value) VALUES ('spa_admin_percent', '0')
         ON CONFLICT (key) DO NOTHING;
         """,
+        # ── SPA module (Phase 2): appointments / scheduling ──
+        """
+        CREATE TABLE IF NOT EXISTS spa_appointments (
+            id SERIAL PRIMARY KEY,
+            service_id INTEGER NOT NULL REFERENCES service_items(id),
+            master_id INTEGER NOT NULL REFERENCES spa_masters(id),
+            location_id INTEGER NULL REFERENCES spa_locations(id) ON DELETE SET NULL,
+            reservation_id INTEGER NULL REFERENCES reservations(id) ON DELETE SET NULL,
+            customer_name VARCHAR(150) NULL,
+            customer_phone VARCHAR(30) NULL,
+            start_at TIMESTAMPTZ NOT NULL,
+            end_at TIMESTAMPTZ NOT NULL,
+            status VARCHAR(16) NOT NULL DEFAULT 'planned',
+            price NUMERIC(15,2) NOT NULL DEFAULT 0,
+            note TEXT NULL,
+            created_by BIGINT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_spa_appt_master_start ON spa_appointments (master_id, start_at);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_spa_appt_location_start ON spa_appointments (location_id, start_at);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_spa_appt_start ON spa_appointments (start_at);
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:

@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from api.routers import admin_catalog, auth, bridge, categories, daily_reports, prepayments, public, registration, reports, reservations, structured_reports, transactions, users, wallets
+from api.routers import admin_catalog, auth, bridge, categories, daily_reports, prepayments, public, registration, reports, reservations, spa_schedule, structured_reports, transactions, users, wallets
 
 app = FastAPI(
     title="Balandda Analytics API",
@@ -41,6 +41,7 @@ app.include_router(registration.router, prefix="/api/v1/registration", tags=["re
 app.include_router(public.router, prefix="/api/v1/public", tags=["public"])
 app.include_router(reservations.router, prefix="/api/v1/reservations", tags=["reservations"])
 app.include_router(bridge.router, prefix="/api/v1/bridge", tags=["bridge"])
+app.include_router(spa_schedule.router, prefix="/api/v1/spa", tags=["spa-schedule"])
 
 
 @app.get("/api/health")

@@ -13,6 +13,7 @@ import AdminServices from './pages/AdminServices';
 import AdminServiceCategories from './pages/AdminServiceCategories';
 import AdminSpaLocations from './pages/AdminSpaLocations';
 import AdminSpaMasters from './pages/AdminSpaMasters';
+import SpaSchedule from './pages/SpaSchedule';
 import AdminMinibar from './pages/AdminMinibar';
 import AdminStaff from './pages/AdminStaff';
 import AdminReports from './pages/AdminReports';
@@ -66,6 +67,7 @@ export default function App() {
         <Routes>
           <Route path="/calendar" element={<Calendar />} />
           <Route path="/pool" element={<Calendar businessUnit="RESTAURANT" autoPrice={false} title="Бассейн" showImport={false} expires={false} />} />
+          <Route path="/spa-schedule" element={<SpaSchedule />} />
           <Route path="/changelog" element={<ChangeLog />} />
           <Route path="*" element={<Navigate to="/calendar" />} />
         </Routes>
