@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from api.auth import get_current_user, require_admin
 from db.database import get_session
@@ -20,9 +21,14 @@ from db.models import (
     MinibarItem,
     Property,
     PropertyTypeLabel,
+    ServiceCategory,
     ServiceItem,
+    SpaLocation,
+    SpaMaster,
     StaffMember,
 )
+
+LOCATION_MODES = {"room_only", "room_or_cottage", "cottage_only"}
 
 router = APIRouter()
 
@@ -96,6 +102,11 @@ class ServiceCreate(BaseModel):
     duration_minutes: int = 0
     price: float = 0
     sort_order: int = 0
+    category_id: int | None = None
+    location_mode: str = "room_or_cottage"
+    master_percent: float = 0
+    master_ids: list[int] = []
+    location_ids: list[int] = []
 
 
 class ServiceUpdate(BaseModel):
@@ -106,6 +117,11 @@ class ServiceUpdate(BaseModel):
     price: float | None = None
     sort_order: int | None = None
     is_active: bool | None = None
+    category_id: int | None = None
+    location_mode: str | None = None
+    master_percent: float | None = None
+    master_ids: list[int] | None = None
+    location_ids: list[int] | None = None
 
 
 class ServiceOut(BaseModel):
@@ -116,6 +132,78 @@ class ServiceOut(BaseModel):
     name_uz: str
     duration_minutes: int
     price: float
+    is_active: bool
+    sort_order: int
+    category_id: int | None
+    category_name: str | None
+    location_mode: str
+    master_percent: float
+    master_ids: list[int]
+    location_ids: list[int]
+
+
+# ── SPA category / location / master schemas ──────────────────────
+
+
+class CategoryCreate(BaseModel):
+    name_ru: str
+    name_uz: str
+    sort_order: int = 0
+
+
+class CategoryUpdate(BaseModel):
+    name_ru: str | None = None
+    name_uz: str | None = None
+    sort_order: int | None = None
+    is_active: bool | None = None
+
+
+class CategoryOut(BaseModel):
+    id: int
+    name_ru: str
+    name_uz: str
+    is_active: bool
+    sort_order: int
+
+
+class SpaLocationCreate(BaseModel):
+    name_ru: str
+    name_uz: str
+    sort_order: int = 0
+
+
+class SpaLocationUpdate(BaseModel):
+    name_ru: str | None = None
+    name_uz: str | None = None
+    sort_order: int | None = None
+    is_active: bool | None = None
+
+
+class SpaLocationOut(BaseModel):
+    id: int
+    name_ru: str
+    name_uz: str
+    is_active: bool
+    sort_order: int
+
+
+class SpaMasterCreate(BaseModel):
+    name: str
+    phone: str | None = None
+    sort_order: int = 0
+
+
+class SpaMasterUpdate(BaseModel):
+    name: str | None = None
+    phone: str | None = None
+    sort_order: int | None = None
+    is_active: bool | None = None
+
+
+class SpaMasterOut(BaseModel):
+    id: int
+    name: str
+    phone: str | None
     is_active: bool
     sort_order: int
 
@@ -345,6 +433,13 @@ async def update_property(
 # ── Service CRUD ──────────────────────────────────────────────────
 
 
+_SERVICE_OPTS = (
+    selectinload(ServiceItem.category),
+    selectinload(ServiceItem.masters),
+    selectinload(ServiceItem.allowed_locations),
+)
+
+
 def _service_out(s: ServiceItem) -> ServiceOut:
     return ServiceOut(
         id=s.id,
@@ -356,7 +451,34 @@ def _service_out(s: ServiceItem) -> ServiceOut:
         price=float(s.price),
         is_active=s.is_active,
         sort_order=s.sort_order,
+        category_id=s.category_id,
+        category_name=s.category.name_ru if s.category else None,
+        location_mode=s.location_mode or "room_or_cottage",
+        master_percent=float(s.master_percent or 0),
+        master_ids=sorted(m.id for m in s.masters),
+        location_ids=sorted(loc.id for loc in s.allowed_locations),
     )
+
+
+async def _load_service(session: AsyncSession, item_id: int) -> ServiceItem | None:
+    return (
+        await session.execute(
+            select(ServiceItem).options(*_SERVICE_OPTS).where(ServiceItem.id == item_id)
+        )
+    ).scalar_one_or_none()
+
+
+async def _apply_service_relations(session: AsyncSession, svc: ServiceItem, master_ids, location_ids):
+    if master_ids is not None:
+        svc.masters = (
+            list((await session.execute(select(SpaMaster).where(SpaMaster.id.in_(master_ids)))).scalars().all())
+            if master_ids else []
+        )
+    if location_ids is not None:
+        svc.allowed_locations = (
+            list((await session.execute(select(SpaLocation).where(SpaLocation.id.in_(location_ids)))).scalars().all())
+            if location_ids else []
+        )
 
 
 @router.get("/services", response_model=list[ServiceOut])
@@ -364,7 +486,9 @@ async def list_services(
     session: AsyncSession = Depends(get_session),
     user: dict = Depends(get_current_user),
 ):
-    result = await session.execute(select(ServiceItem).order_by(ServiceItem.sort_order))
+    result = await session.execute(
+        select(ServiceItem).options(*_SERVICE_OPTS).order_by(ServiceItem.sort_order)
+    )
     return [_service_out(s) for s in result.scalars().all()]
 
 
@@ -375,6 +499,8 @@ async def create_service(
     user: dict = Depends(get_current_user),
 ):
     _require_admin(user)
+    if data.location_mode not in LOCATION_MODES:
+        raise HTTPException(status_code=422, detail="Invalid location_mode")
     svc = ServiceItem(
         service_type=ServiceType(data.service_type),
         name_ru=data.name_ru,
@@ -382,11 +508,15 @@ async def create_service(
         duration_minutes=data.duration_minutes,
         price=Decimal(str(data.price)),
         sort_order=data.sort_order,
+        category_id=data.category_id,
+        location_mode=data.location_mode,
+        master_percent=Decimal(str(data.master_percent)),
     )
     session.add(svc)
+    await session.flush()
+    await _apply_service_relations(session, svc, data.master_ids, data.location_ids)
     await session.commit()
-    await session.refresh(svc)
-    return _service_out(svc)
+    return _service_out(await _load_service(session, svc.id))
 
 
 @router.put("/services/{item_id}", response_model=ServiceOut)
@@ -397,23 +527,172 @@ async def update_service(
     user: dict = Depends(get_current_user),
 ):
     _require_admin(user)
-    result = await session.execute(select(ServiceItem).where(ServiceItem.id == item_id))
-    svc = result.scalar_one_or_none()
+    svc = await _load_service(session, item_id)
     if not svc:
         raise HTTPException(status_code=404, detail="Service not found")
 
     updates = data.model_dump(exclude_none=True)
+    master_ids = updates.pop("master_ids", None)
+    location_ids = updates.pop("location_ids", None)
     if "service_type" in updates:
         updates["service_type"] = ServiceType(updates["service_type"])
     if "price" in updates:
         updates["price"] = Decimal(str(updates["price"]))
+    if "master_percent" in updates:
+        updates["master_percent"] = Decimal(str(updates["master_percent"]))
+    if "location_mode" in updates and updates["location_mode"] not in LOCATION_MODES:
+        raise HTTPException(status_code=422, detail="Invalid location_mode")
 
     for field, value in updates.items():
         setattr(svc, field, value)
+    await _apply_service_relations(session, svc, master_ids, location_ids)
 
     await session.commit()
-    await session.refresh(svc)
-    return _service_out(svc)
+    return _service_out(await _load_service(session, item_id))
+
+
+# ── SPA Category CRUD ─────────────────────────────────────────────
+
+
+def _category_out(c: ServiceCategory) -> CategoryOut:
+    return CategoryOut(id=c.id, name_ru=c.name_ru, name_uz=c.name_uz, is_active=c.is_active, sort_order=c.sort_order)
+
+
+@router.get("/service-categories", response_model=list[CategoryOut])
+async def list_categories(
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    result = await session.execute(select(ServiceCategory).order_by(ServiceCategory.sort_order))
+    return [_category_out(c) for c in result.scalars().all()]
+
+
+@router.post("/service-categories", response_model=CategoryOut)
+async def create_category(
+    data: CategoryCreate,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    c = ServiceCategory(name_ru=data.name_ru, name_uz=data.name_uz, sort_order=data.sort_order)
+    session.add(c)
+    await session.commit()
+    await session.refresh(c)
+    return _category_out(c)
+
+
+@router.put("/service-categories/{item_id}", response_model=CategoryOut)
+async def update_category(
+    item_id: int,
+    data: CategoryUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    c = (await session.execute(select(ServiceCategory).where(ServiceCategory.id == item_id))).scalar_one_or_none()
+    if not c:
+        raise HTTPException(status_code=404, detail="Category not found")
+    for field, value in data.model_dump(exclude_none=True).items():
+        setattr(c, field, value)
+    await session.commit()
+    await session.refresh(c)
+    return _category_out(c)
+
+
+# ── SPA Location CRUD ─────────────────────────────────────────────
+
+
+def _location_out(l: SpaLocation) -> SpaLocationOut:
+    return SpaLocationOut(id=l.id, name_ru=l.name_ru, name_uz=l.name_uz, is_active=l.is_active, sort_order=l.sort_order)
+
+
+@router.get("/spa-locations", response_model=list[SpaLocationOut])
+async def list_spa_locations(
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    result = await session.execute(select(SpaLocation).order_by(SpaLocation.sort_order))
+    return [_location_out(l) for l in result.scalars().all()]
+
+
+@router.post("/spa-locations", response_model=SpaLocationOut)
+async def create_spa_location(
+    data: SpaLocationCreate,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    l = SpaLocation(name_ru=data.name_ru, name_uz=data.name_uz, sort_order=data.sort_order)
+    session.add(l)
+    await session.commit()
+    await session.refresh(l)
+    return _location_out(l)
+
+
+@router.put("/spa-locations/{item_id}", response_model=SpaLocationOut)
+async def update_spa_location(
+    item_id: int,
+    data: SpaLocationUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    l = (await session.execute(select(SpaLocation).where(SpaLocation.id == item_id))).scalar_one_or_none()
+    if not l:
+        raise HTTPException(status_code=404, detail="Location not found")
+    for field, value in data.model_dump(exclude_none=True).items():
+        setattr(l, field, value)
+    await session.commit()
+    await session.refresh(l)
+    return _location_out(l)
+
+
+# ── SPA Master CRUD ───────────────────────────────────────────────
+
+
+def _master_out(m: SpaMaster) -> SpaMasterOut:
+    return SpaMasterOut(id=m.id, name=m.name, phone=m.phone, is_active=m.is_active, sort_order=m.sort_order)
+
+
+@router.get("/spa-masters", response_model=list[SpaMasterOut])
+async def list_spa_masters(
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    result = await session.execute(select(SpaMaster).order_by(SpaMaster.sort_order))
+    return [_master_out(m) for m in result.scalars().all()]
+
+
+@router.post("/spa-masters", response_model=SpaMasterOut)
+async def create_spa_master(
+    data: SpaMasterCreate,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    m = SpaMaster(name=data.name, phone=data.phone, sort_order=data.sort_order)
+    session.add(m)
+    await session.commit()
+    await session.refresh(m)
+    return _master_out(m)
+
+
+@router.put("/spa-masters/{item_id}", response_model=SpaMasterOut)
+async def update_spa_master(
+    item_id: int,
+    data: SpaMasterUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    m = (await session.execute(select(SpaMaster).where(SpaMaster.id == item_id))).scalar_one_or_none()
+    if not m:
+        raise HTTPException(status_code=404, detail="Master not found")
+    for field, value in data.model_dump(exclude_none=True).items():
+        setattr(m, field, value)
+    await session.commit()
+    await session.refresh(m)
+    return _master_out(m)
 
 
 # ── Minibar CRUD ──────────────────────────────────────────────────

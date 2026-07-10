@@ -14,11 +14,19 @@ from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from bot.config import settings
 from db.database import get_session
 from db.enums import PROPERTY_TYPE_LABELS, PropertyType, ReservationStatus
-from db.models import BusinessUnit, Property, PropertyTypeLabel, Reservation, ServiceItem
+from db.models import (
+    BusinessUnit,
+    Property,
+    PropertyTypeLabel,
+    Reservation,
+    ServiceCategory,
+    ServiceItem,
+)
 
 router = APIRouter()
 
@@ -149,17 +157,35 @@ async def public_catalog(
 
     spa_rows = (
         await session.execute(
-            select(ServiceItem).where(ServiceItem.is_active.is_(True)).order_by(ServiceItem.sort_order)
+            select(ServiceItem)
+            .options(selectinload(ServiceItem.category))
+            .where(ServiceItem.is_active.is_(True))
+            .order_by(ServiceItem.sort_order)
         )
     ).scalars().all()
     spa = [
         {
+            "id": s.id,
             "code": s.service_type.value,
             "name": {"ru": s.name_ru, "uz": s.name_uz},
             "duration_minutes": s.duration_minutes,
             "price": _i(s.price),
+            "category_id": s.category_id,
+            "category": (
+                {"id": s.category.id, "name": {"ru": s.category.name_ru, "uz": s.category.name_uz}}
+                if s.category else None
+            ),
+            "location_mode": s.location_mode or "room_or_cottage",
         }
         for s in spa_rows
+    ]
+    spa_categories = [
+        {"id": c.id, "name": {"ru": c.name_ru, "uz": c.name_uz}, "sort_order": c.sort_order}
+        for c in (
+            await session.execute(
+                select(ServiceCategory).where(ServiceCategory.is_active.is_(True)).order_by(ServiceCategory.sort_order)
+            )
+        ).scalars().all()
     ]
 
     # Let clients (website/CRM) cache for a few minutes.
@@ -172,6 +198,7 @@ async def public_catalog(
         "types": list(types.values()),
         "pages": pages,
         "spa": spa,
+        "spa_categories": spa_categories,
         "policies": POLICIES,
     }
 

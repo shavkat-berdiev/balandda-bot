@@ -120,6 +120,21 @@ export const api = {
   createAdminService: (data) => request('/admin/services', { method: 'POST', body: JSON.stringify(data) }),
   updateAdminService: (id, data) => request(`/admin/services/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
+  // Admin — SPA categories
+  getServiceCategories: () => request('/admin/service-categories'),
+  createServiceCategory: (data) => request('/admin/service-categories', { method: 'POST', body: JSON.stringify(data) }),
+  updateServiceCategory: (id, data) => request(`/admin/service-categories/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Admin — SPA locations (rooms)
+  getSpaLocations: () => request('/admin/spa-locations'),
+  createSpaLocation: (data) => request('/admin/spa-locations', { method: 'POST', body: JSON.stringify(data) }),
+  updateSpaLocation: (id, data) => request(`/admin/spa-locations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // Admin — SPA masters
+  getSpaMasters: () => request('/admin/spa-masters'),
+  createSpaMaster: (data) => request('/admin/spa-masters', { method: 'POST', body: JSON.stringify(data) }),
+  updateSpaMaster: (id, data) => request(`/admin/spa-masters/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
   // Admin — Minibar
   getAdminMinibar: () => request('/admin/minibar'),
   createAdminMinibar: (data) => request('/admin/minibar', { method: 'POST', body: JSON.stringify(data) }),

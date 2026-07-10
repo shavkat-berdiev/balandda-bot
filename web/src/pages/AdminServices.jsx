@@ -2,11 +2,23 @@ import { useState, useEffect } from 'react';
 import { Plus, Pencil, Check, X, ToggleLeft, ToggleRight } from 'lucide-react';
 import { api } from '../api';
 
-const EMPTY_FORM = { service_type: '', name_ru: '', name_uz: '', duration_minutes: 0, price: 0, sort_order: 0 };
+const EMPTY_FORM = {
+  service_type: '', name_ru: '', name_uz: '', duration_minutes: 0, price: 0, sort_order: 0,
+  category_id: '', location_mode: 'room_or_cottage', master_percent: 0, master_ids: [], location_ids: [],
+};
+
+const LOCATION_MODES = [
+  { value: 'room_or_cottage', label: 'Кабинет или коттедж' },
+  { value: 'room_only', label: 'Только кабинет' },
+  { value: 'cottage_only', label: 'Только в коттедже' },
+];
 
 export default function AdminServices() {
   const [items, setItems] = useState([]);
   const [enums, setEnums] = useState({ service_types: [] });
+  const [categories, setCategories] = useState([]);
+  const [locations, setLocations] = useState([]);
+  const [masters, setMasters] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -16,12 +28,23 @@ export default function AdminServices() {
   useEffect(() => {
     load();
     api.getAdminEnums().then(setEnums).catch(() => {});
+    api.getServiceCategories().then(setCategories).catch(() => {});
+    api.getSpaLocations().then(setLocations).catch(() => {});
+    api.getSpaMasters().then(setMasters).catch(() => {});
   }, []);
 
   async function load() {
     setLoading(true);
     try { setItems(await api.getAdminServices()); } catch (err) { setError(err.message); }
     setLoading(false);
+  }
+
+  function toggleId(field, id) {
+    setForm(f => {
+      const set = new Set(f[field]);
+      if (set.has(id)) set.delete(id); else set.add(id);
+      return { ...f, [field]: [...set] };
+    });
   }
 
   function startEdit(item) {
@@ -33,6 +56,11 @@ export default function AdminServices() {
       duration_minutes: item.duration_minutes,
       price: item.price,
       sort_order: item.sort_order,
+      category_id: item.category_id || '',
+      location_mode: item.location_mode || 'room_or_cottage',
+      master_percent: item.master_percent || 0,
+      master_ids: item.master_ids || [],
+      location_ids: item.location_ids || [],
     });
     setShowForm(true);
     setError('');
@@ -41,7 +69,14 @@ export default function AdminServices() {
   async function handleSave() {
     try {
       setError('');
-      const payload = { ...form, duration_minutes: parseInt(form.duration_minutes), price: parseFloat(form.price), sort_order: parseInt(form.sort_order) };
+      const payload = {
+        ...form,
+        duration_minutes: parseInt(form.duration_minutes) || 0,
+        price: parseFloat(form.price) || 0,
+        sort_order: parseInt(form.sort_order) || 0,
+        master_percent: parseFloat(form.master_percent) || 0,
+        category_id: form.category_id === '' ? null : parseInt(form.category_id),
+      };
       if (editId) { await api.updateAdminService(editId, payload); } else { await api.createAdminService(payload); }
       setShowForm(false);
       load();
@@ -106,7 +141,62 @@ export default function AdminServices() {
               <input type="number" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
             </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Категория (SPA)</label>
+              <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                <option value="">— Без категории —</option>
+                {categories.map(c => <option key={c.id} value={c.id}>{c.name_ru}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Где проводится</label>
+              <select value={form.location_mode} onChange={(e) => setForm({ ...form, location_mode: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                {LOCATION_MODES.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">% мастеру</label>
+              <input type="number" step="0.5" value={form.master_percent} onChange={(e) => setForm({ ...form, master_percent: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+            </div>
           </div>
+
+          {form.location_mode !== 'cottage_only' && (
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Кабинеты (где можно проводить)</label>
+              {locations.length === 0 ? (
+                <p className="text-xs text-gray-400">Нет кабинетов — добавьте в разделе «SPA кабинеты».</p>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {locations.map(l => (
+                    <button type="button" key={l.id} onClick={() => toggleId('location_ids', l.id)}
+                      className={`px-3 py-1.5 rounded-lg text-sm border ${form.location_ids.includes(l.id) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}>
+                      {l.name_ru}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="mt-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Мастера (кто выполняет)</label>
+            {masters.length === 0 ? (
+              <p className="text-xs text-gray-400">Нет мастеров — добавьте в разделе «SPA мастера».</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {masters.map(m => (
+                  <button type="button" key={m.id} onClick={() => toggleId('master_ids', m.id)}
+                    className={`px-3 py-1.5 rounded-lg text-sm border ${form.master_ids.includes(m.id) ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-gray-50'}`}>
+                    {m.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="flex gap-3 mt-4">
             <button onClick={handleSave} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
               <Check size={16} /> {editId ? 'Сохранить' : 'Создать'}
@@ -127,7 +217,7 @@ export default function AdminServices() {
               <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wider">
                 <tr>
                   <th className="px-4 py-3 text-left">Услуга</th>
-                  <th className="px-4 py-3 text-left">Тип</th>
+                  <th className="px-4 py-3 text-left">Категория</th>
                   <th className="px-4 py-3 text-center">Мин.</th>
                   <th className="px-4 py-3 text-right">Цена</th>
                   <th className="px-4 py-3 text-center">Статус</th>
@@ -141,7 +231,7 @@ export default function AdminServices() {
                       <p className="font-medium text-gray-800">{item.name_ru}</p>
                       <p className="text-xs text-gray-500">{item.name_uz}</p>
                     </td>
-                    <td className="px-4 py-3 text-gray-600">{item.service_type_label}</td>
+                    <td className="px-4 py-3 text-gray-600">{item.category_name || <span className="text-gray-300">—</span>}</td>
                     <td className="px-4 py-3 text-center text-gray-600">{item.duration_minutes}</td>
                     <td className="px-4 py-3 text-right font-mono text-gray-800">{fmt(item.price)}</td>
                     <td className="px-4 py-3 text-center">

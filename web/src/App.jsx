@@ -10,6 +10,9 @@ import Analytics from './pages/Analytics';
 import AdminProperties from './pages/AdminProperties';
 import AdminTypeLabels from './pages/AdminTypeLabels';
 import AdminServices from './pages/AdminServices';
+import AdminServiceCategories from './pages/AdminServiceCategories';
+import AdminSpaLocations from './pages/AdminSpaLocations';
+import AdminSpaMasters from './pages/AdminSpaMasters';
 import AdminMinibar from './pages/AdminMinibar';
 import AdminStaff from './pages/AdminStaff';
 import AdminReports from './pages/AdminReports';
@@ -81,6 +84,9 @@ export default function App() {
         <Route path="/admin/properties" element={<AdminProperties />} />
         <Route path="/admin/type-labels" element={<AdminTypeLabels />} />
         <Route path="/admin/services" element={<AdminServices />} />
+        <Route path="/admin/service-categories" element={<AdminServiceCategories />} />
+        <Route path="/admin/spa-locations" element={<AdminSpaLocations />} />
+        <Route path="/admin/spa-masters" element={<AdminSpaMasters />} />
         <Route path="/admin/minibar" element={<AdminMinibar />} />
         <Route path="/admin/staff" element={<AdminStaff />} />
         <Route path="/admin/reports" element={<AdminReports user={user} />} />

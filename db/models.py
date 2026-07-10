@@ -3,6 +3,7 @@ from decimal import Decimal
 
 from sqlalchemy import (
     BigInteger,
+    Column,
     Date,
     DateTime,
     Enum,
@@ -10,6 +11,7 @@ from sqlalchemy import (
     Integer,
     Numeric,
     String,
+    Table,
     Text,
     func,
 )
@@ -245,7 +247,73 @@ class ServiceItem(Base):
     is_active: Mapped[bool] = mapped_column(default=True)
     sort_order: Mapped[int] = mapped_column(default=0)
 
+    # --- SPA module additions (Phase 1) ---
+    category_id: Mapped[int | None] = mapped_column(ForeignKey("service_categories.id", ondelete="SET NULL"), nullable=True)
+    # where the procedure can be performed: 'room_only' | 'room_or_cottage' | 'cottage_only'
+    location_mode: Mapped[str] = mapped_column(String(20), default="room_or_cottage")
+    # master commission % of this service's price (per-service)
+    master_percent: Mapped[float] = mapped_column(Numeric(5, 2), default=0)
+
+    category: Mapped["ServiceCategory | None"] = relationship(back_populates="services")
+    masters: Mapped[list["SpaMaster"]] = relationship(secondary="service_masters", back_populates="services")
+    allowed_locations: Mapped[list["SpaLocation"]] = relationship(secondary="service_locations", back_populates="services")
     income_entries: Mapped[list["IncomeEntry"]] = relationship(back_populates="service_item", cascade="all, delete-orphan")
+
+
+class ServiceCategory(Base):
+    """Editable SPA service groups (sortable)."""
+    __tablename__ = "service_categories"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name_ru: Mapped[str] = mapped_column(String(100))
+    name_uz: Mapped[str] = mapped_column(String(100))
+    is_active: Mapped[bool] = mapped_column(default=True)
+    sort_order: Mapped[int] = mapped_column(default=0)
+
+    services: Mapped[list["ServiceItem"]] = relationship(back_populates="category")
+
+
+class SpaLocation(Base):
+    """Editable SPA rooms/resources (hammam, massage rooms) — a limited resource."""
+    __tablename__ = "spa_locations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name_ru: Mapped[str] = mapped_column(String(100))
+    name_uz: Mapped[str] = mapped_column(String(100))
+    is_active: Mapped[bool] = mapped_column(default=True)
+    sort_order: Mapped[int] = mapped_column(default=0)
+
+    services: Mapped[list["ServiceItem"]] = relationship(secondary="service_locations", back_populates="allowed_locations")
+
+
+class SpaMaster(Base):
+    """SPA masters, assignable to services."""
+    __tablename__ = "spa_masters"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    sort_order: Mapped[int] = mapped_column(default=0)
+
+    services: Mapped[list["ServiceItem"]] = relationship(secondary="service_masters", back_populates="masters")
+
+
+# M2M association tables (created explicitly in run_migrations too).
+service_masters = Table(
+    "service_masters",
+    Base.metadata,
+    Column("service_id", ForeignKey("service_items.id", ondelete="CASCADE"), primary_key=True),
+    Column("master_id", ForeignKey("spa_masters.id", ondelete="CASCADE"), primary_key=True),
+)
+
+service_locations = Table(
+    "service_locations",
+    Base.metadata,
+    Column("service_id", ForeignKey("service_items.id", ondelete="CASCADE"), primary_key=True),
+    Column("location_id", ForeignKey("spa_locations.id", ondelete="CASCADE"), primary_key=True),
+)
 
 
 class MinibarItem(Base):

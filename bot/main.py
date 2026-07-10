@@ -379,6 +379,66 @@ async def run_migrations():
             ('SPA_SUITE',            'SPA Сьют',         'SPA Suite',           'SPA Suite')
         ON CONFLICT (property_type) DO NOTHING;
         """,
+        # ── SPA module (Phase 1): categories, rooms, masters, service fields ──
+        """
+        CREATE TABLE IF NOT EXISTS service_categories (
+            id SERIAL PRIMARY KEY,
+            name_ru VARCHAR(100) NOT NULL,
+            name_uz VARCHAR(100) NOT NULL,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS spa_locations (
+            id SERIAL PRIMARY KEY,
+            name_ru VARCHAR(100) NOT NULL,
+            name_uz VARCHAR(100) NOT NULL,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS spa_masters (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(100) NOT NULL,
+            phone VARCHAR(30) NULL,
+            telegram_id BIGINT NULL,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS service_masters (
+            service_id INTEGER NOT NULL REFERENCES service_items(id) ON DELETE CASCADE,
+            master_id  INTEGER NOT NULL REFERENCES spa_masters(id)  ON DELETE CASCADE,
+            PRIMARY KEY (service_id, master_id)
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS service_locations (
+            service_id  INTEGER NOT NULL REFERENCES service_items(id)  ON DELETE CASCADE,
+            location_id INTEGER NOT NULL REFERENCES spa_locations(id)  ON DELETE CASCADE,
+            PRIMARY KEY (service_id, location_id)
+        );
+        """,
+        """
+        ALTER TABLE service_items ADD COLUMN IF NOT EXISTS category_id INTEGER
+            REFERENCES service_categories(id) ON DELETE SET NULL;
+        ALTER TABLE service_items ADD COLUMN IF NOT EXISTS location_mode VARCHAR(20) NOT NULL DEFAULT 'room_or_cottage';
+        ALTER TABLE service_items ADD COLUMN IF NOT EXISTS master_percent NUMERIC(5,2) NOT NULL DEFAULT 0;
+        """,
+        # Global SPA settings (e.g. fixed SPA-admin % — used in Phase 4 payroll)
+        """
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key VARCHAR(64) PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        """,
+        """
+        INSERT INTO app_settings (key, value) VALUES ('spa_admin_percent', '0')
+        ON CONFLICT (key) DO NOTHING;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:
