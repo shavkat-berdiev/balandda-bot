@@ -425,7 +425,11 @@ async def run_migrations():
         """
         ALTER TABLE service_items ADD COLUMN IF NOT EXISTS category_id INTEGER
             REFERENCES service_categories(id) ON DELETE SET NULL;
+        """,
+        """
         ALTER TABLE service_items ADD COLUMN IF NOT EXISTS location_mode VARCHAR(20) NOT NULL DEFAULT 'room_or_cottage';
+        """,
+        """
         ALTER TABLE service_items ADD COLUMN IF NOT EXISTS master_percent NUMERIC(5,2) NOT NULL DEFAULT 0;
         """,
         # Global SPA settings (e.g. fixed SPA-admin % — used in Phase 4 payroll)
