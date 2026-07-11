@@ -316,6 +316,46 @@ service_locations = Table(
 )
 
 
+class BotTemplate(Base):
+    """Unified bot content: one reply template per menu button, rendered on BOTH
+    Telegram and Instagram. Single source of truth so the two channels can't drift.
+    Nesting is deliberately capped at two levels (menu → submenu) to keep the
+    admin screen a simple list rather than a flow-chart editor."""
+    __tablename__ = "bot_templates"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("bot_templates.id", ondelete="CASCADE"), nullable=True)
+    key: Mapped[str] = mapped_column(String(40), index=True)
+    # reply | submenu | book | agent
+    action: Mapped[str] = mapped_column(String(16), default="reply")
+
+    # Button labels. Instagram caps quick-reply titles at 20 chars, so it gets its own short label.
+    label_ru: Mapped[str] = mapped_column(String(100), default="")
+    label_uz: Mapped[str] = mapped_column(String(100), default="")
+    label_en: Mapped[str] = mapped_column(String(100), default="")
+    ig_label_ru: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ig_label_uz: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ig_label_en: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+    body_ru: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body_uz: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body_en: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # ["https://.../bot/xxx.jpg", ...] — public URLs (Meta must fetch them unauthenticated)
+    images: Mapped[str | None] = mapped_column(Text, nullable=True)   # JSON array
+
+    # none | houses | pool | spa — appends a LIVE price table from the catalog at send time
+    price_block: Mapped[str] = mapped_column(String(10), default="none")
+
+    sort_order: Mapped[int] = mapped_column(default=0)
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+    children: Mapped[list["BotTemplate"]] = relationship(
+        back_populates="parent", cascade="all, delete-orphan", order_by="BotTemplate.sort_order",
+    )
+    parent: Mapped["BotTemplate | None"] = relationship(back_populates="children", remote_side=[id])
+
+
 class SpaAppointment(Base):
     """A scheduled SPA procedure: a service performed by a master, in a room, at a time."""
     __tablename__ = "spa_appointments"

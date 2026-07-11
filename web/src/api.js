@@ -135,6 +135,13 @@ export const api = {
   createSpaMaster: (data) => request('/admin/spa-masters', { method: 'POST', body: JSON.stringify(data) }),
   updateSpaMaster: (id, data) => request(`/admin/spa-masters/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
+  // Unified bot content (Telegram + Instagram)
+  getBotTemplates: () => request('/bot-templates'),
+  createBotTemplate: (data) => request('/bot-templates', { method: 'POST', body: JSON.stringify(data) }),
+  updateBotTemplate: (id, data) => request(`/bot-templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteBotTemplate: (id) => request(`/bot-templates/${id}`, { method: 'DELETE' }),
+  uploadBotImage: (formData) => upload('/bot-templates/upload', formData),
+
   // SPA scheduling (appointments)
   getSpaAppointments: (date) => request(`/spa/appointments?date=${encodeURIComponent(date)}`),
   createSpaAppointment: (data) => request('/spa/appointments', { method: 'POST', body: JSON.stringify(data) }),

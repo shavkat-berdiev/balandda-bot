@@ -472,6 +472,34 @@ async def run_migrations():
         """
         CREATE INDEX IF NOT EXISTS ix_spa_appt_start ON spa_appointments (start_at);
         """,
+        # ── Unified bot content: one source for Telegram + Instagram ──
+        """
+        CREATE TABLE IF NOT EXISTS bot_templates (
+            id SERIAL PRIMARY KEY,
+            parent_id INTEGER NULL REFERENCES bot_templates(id) ON DELETE CASCADE,
+            key VARCHAR(40) NOT NULL,
+            action VARCHAR(16) NOT NULL DEFAULT 'reply',
+            label_ru VARCHAR(100) NOT NULL DEFAULT '',
+            label_uz VARCHAR(100) NOT NULL DEFAULT '',
+            label_en VARCHAR(100) NOT NULL DEFAULT '',
+            ig_label_ru VARCHAR(20) NULL,
+            ig_label_uz VARCHAR(20) NULL,
+            ig_label_en VARCHAR(20) NULL,
+            body_ru TEXT NULL,
+            body_uz TEXT NULL,
+            body_en TEXT NULL,
+            images TEXT NULL,
+            price_block VARCHAR(10) NOT NULL DEFAULT 'none',
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_bot_templates_key ON bot_templates (key);
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_bot_templates_parent ON bot_templates (parent_id, sort_order);
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:
