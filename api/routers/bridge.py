@@ -20,6 +20,7 @@ from db.database import get_session
 from db.enums import ReservationSource, ReservationStatus
 from db.hold_timing import add_working_minutes
 from db.models import Property, Reservation, ReservationEvent
+from services.beds24 import kick as beds24_kick  # OTA availability push
 from services.customer_notify import (
     booking_received_text,
     get_prepayment_instructions,
@@ -131,6 +132,7 @@ async def self_book(
         detail=f"Онлайн-бронь: {prop.name_ru} · {data.check_in}→{data.check_out}",
     ))
     await session.commit()
+    beds24_kick()
 
     prepay_text = await get_prepayment_instructions()
     return {
@@ -206,6 +208,7 @@ async def web_book(
         detail=f"Онлайн-бронь (сайт): {prop.name_ru} · {data.check_in}→{data.check_out}",
     ))
     await session.commit()
+    beds24_kick()
 
     # Announce to the operators' Брони topic (website bookings have no bot to do it).
     await notify_operators_booking(res, prop.name_ru, "сайт")

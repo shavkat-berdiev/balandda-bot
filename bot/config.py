@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     # Live-editable prepayment text (balandda.uz/admin?view=rates); falls back to the default above
     prepayment_url: str = "https://www.balandda.uz/prepayment.php"
 
+    # Beds24 channel manager (OTA sync: Booking.com / Airbnb / Trip.com)
+    beds24_enabled: bool = False
+    beds24_refresh_token: str = ""            # long-lived token (SETTINGS→API in Beds24)
+    beds24_property_id: int = 340623          # "Balandda Chimgan"
+    beds24_markup_percent: float = 20.0       # added on top of UZS price for OTA rates
+    beds24_usd_rate: float = 0                # manual UZS/USD override; 0 = auto CBU rate
+    beds24_sync_days: int = 365               # how far ahead to push availability/prices
+
     @property
     def database_url(self) -> str:
         return (

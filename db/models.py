@@ -572,6 +572,8 @@ class Reservation(Base):
     booking_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     confirmed_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Channel-manager (Beds24) booking id — dedupes OTA imports (Booking.com/Airbnb/Trip.com)
+    channel_booking_id: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
     created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

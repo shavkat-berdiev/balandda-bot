@@ -507,6 +507,19 @@ async def run_migrations():
             END IF;
         END $$;
         """,
+        # Added in v0.9: TRIP_COM reservation source (Beds24 channel manager)
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_enum
+                WHERE enumlabel = 'TRIP_COM'
+                  AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'reservationsource')
+            ) THEN
+                ALTER TYPE reservationsource ADD VALUE 'TRIP_COM';
+            END IF;
+        END $$;
+        """,
         # Added in v0.7: PURCHASE wallet transaction type
         """
         DO $$
@@ -646,6 +659,14 @@ async def run_migrations():
             END;
         END $$;
         """,
+        # Added in v0.9: Beds24 channel booking id (dedupes OTA imports)
+        """
+        ALTER TABLE reservations ADD COLUMN IF NOT EXISTS channel_booking_id VARCHAR(64) NULL;
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS ix_reservations_channel_booking_id
+        ON reservations (channel_booking_id) WHERE channel_booking_id IS NOT NULL;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in post_enum:
@@ -781,7 +802,7 @@ async def main():
     logger.info("Scheduler started")
 
     # Start polling
-    logger.info("Bot is running. Press Ctrl+C to stop.")
+    logger.info("Bot is running. Press Ctrl+C to stop.")  # (beds24 sync active via scheduler)
     try:
         await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
     finally:

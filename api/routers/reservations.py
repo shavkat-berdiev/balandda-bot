@@ -17,6 +17,7 @@ import secrets
 
 from api.auth import get_current_user, require_owner
 from bot.config import settings
+from services.beds24 import kick as beds24_kick
 from db.database import get_session
 from db.hold_timing import add_working_minutes
 from services.customer_notify import (
@@ -349,6 +350,7 @@ async def create_reservation(
     await session.refresh(res)
     await _log(session, res.id, user, "created",
                f"{data.guest_name or RESERVATION_SOURCE_LABELS.get(source, source.value)} · {data.check_in}→{data.check_out}")
+    beds24_kick()
     return _out(res)
 
 
@@ -395,6 +397,7 @@ async def update_reservation(
         prop = await session.get(Property, res.property_id)
         await send_customer_message(res.telegram_user_id, booking_changed_text(res, prop.name_ru if prop else ""))
     await session.refresh(res)
+    beds24_kick()
     return _out(res)
 
 
@@ -414,6 +417,7 @@ async def cancel_reservation(
         prop = await session.get(Property, res.property_id)
         await send_customer_message(res.telegram_user_id, booking_cancelled_text(res, prop.name_ru if prop else ""))
     await session.refresh(res)
+    beds24_kick()
     return _out(res)
 
 
@@ -521,6 +525,7 @@ async def restore_reservation(
         )
     await _log(session, res_id, user, "restored", "Бронь восстановлена")
     await session.refresh(res)
+    beds24_kick()
     return _out(res)
 
 
@@ -551,6 +556,7 @@ async def delete_reservation(
     await _log(session, res_id, user, "deleted", f"Бронь удалена навсегда: {snapshot}")
     await session.delete(res)
     await session.commit()
+    beds24_kick()
     return {"ok": True, "deleted": res_id}
 
 

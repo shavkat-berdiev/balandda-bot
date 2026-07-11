@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from bot.config import settings
 from db.database import async_session
+from services import beds24
 from db.enums import (
     EXPENSE_CATEGORY_LABELS,
     PAYMENT_METHOD_LABELS,
@@ -200,6 +201,7 @@ async def process_hold_expiries(bot: Bot):
     cleared the timers, so only still-unpaid HOLDs are ever touched.
     """
     now = datetime.now(timezone.utc)
+    expired_any = False
     async with async_session() as session:
         holds = (
             await session.execute(
@@ -220,6 +222,7 @@ async def process_hold_expiries(bot: Bot):
             # Expire (checked first, in case the scheduler was paused past both points)
             if res.hold_expires_at and now >= res.hold_expires_at:
                 res.status = ReservationStatus.EXPIRED
+                expired_any = True
                 session.add(ReservationEvent(
                     reservation_id=res.id, actor_name="Авто (таймер)", action="auto",
                     detail="Бронь истекла: предоплата не внесена вовремя. Дата освобождена.",
@@ -243,6 +246,9 @@ async def process_hold_expiries(bot: Bot):
                 if res.telegram_user_id:
                     await _safe_send(bot, res.telegram_user_id,
                                      f"⚠️ Ваша бронь ({unit}, {dates}) ещё не оплачена. Пожалуйста, внесите предоплату в течение 30 минут, иначе бронь будет отменена.")
+
+    if expired_any:
+        beds24.kick()  # expired holds freed dates → update the OTA channels
 
 
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
@@ -281,6 +287,22 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         args=[bot],
         id="balance_reminders",
         name="Balance Reminders",
+        replace_existing=True,
+    )
+
+    # Beds24 channel-manager sync (no-ops unless BEDS24_ENABLED)
+    scheduler.add_job(
+        beds24.pull_bookings,
+        IntervalTrigger(minutes=5),
+        id="beds24_pull",
+        name="Beds24: import OTA bookings",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        beds24.push_full,
+        IntervalTrigger(minutes=60),
+        id="beds24_push",
+        name="Beds24: full availability/price push",
         replace_existing=True,
     )
 

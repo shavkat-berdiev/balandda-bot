@@ -67,6 +67,7 @@ async def sync_reservation_for_prepayment(session: AsyncSession, prepayment: Pre
             detail=f"Обновлено из предоплаты (статус: {status.value})",
         ))
         await session.commit()
+        _beds24_kick()
         return
 
     if status == ReservationStatus.CANCELLED:
@@ -95,3 +96,13 @@ async def sync_reservation_for_prepayment(session: AsyncSession, prepayment: Pre
         detail=f"Создано из предоплаты: депозит {p_amount}",
     ))
     await session.commit()
+    _beds24_kick()
+
+
+def _beds24_kick() -> None:
+    """Deferred import to avoid a db → services import cycle."""
+    try:
+        from services.beds24 import kick
+        kick()
+    except Exception:  # noqa: BLE001 - sync must never break on channel push
+        logger.warning("beds24 kick failed", exc_info=True)

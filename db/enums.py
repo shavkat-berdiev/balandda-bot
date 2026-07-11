@@ -124,6 +124,7 @@ class ReservationSource(str, enum.Enum):
     INSTAGRAM = "INSTAGRAM"
     BOOKING_COM = "BOOKING_COM"
     AIRBNB = "AIRBNB"
+    TRIP_COM = "TRIP_COM"   # via Beds24 channel manager
     MANUAL = "MANUAL"        # entered by staff / manual block
 
 
@@ -145,6 +146,7 @@ RESERVATION_SOURCE_LABELS = {
     ReservationSource.INSTAGRAM: "Instagram",
     ReservationSource.BOOKING_COM: "Booking.com",
     ReservationSource.AIRBNB: "Airbnb",
+    ReservationSource.TRIP_COM: "Trip.com",
     ReservationSource.MANUAL: "Вручную",
 }
 
