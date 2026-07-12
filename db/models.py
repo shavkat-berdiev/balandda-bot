@@ -344,9 +344,12 @@ class BotTemplate(Base):
     # ["https://.../bot/xxx.jpg", ...] — public URLs (Meta must fetch them unauthenticated)
     images: Mapped[str | None] = mapped_column(Text, nullable=True)   # JSON array
 
-    # Comma-separated trigger words across all languages ("шале, chalet, shale").
-    # Most Instagram customers TYPE rather than tap, so this is how free text finds a reply.
-    keywords: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Comma-separated trigger words, PER LANGUAGE. Most Instagram customers type rather
+    # than tap, so this is how free text finds a reply — and because Uzbek speakers often
+    # write in Cyrillic, which keyword list matched is also our language signal.
+    keywords_ru: Mapped[str | None] = mapped_column(Text, nullable=True)
+    keywords_uz: Mapped[str | None] = mapped_column(Text, nullable=True)
+    keywords_en: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # none | houses | pool | spa — appends a LIVE price table from the catalog at send time
     price_block: Mapped[str] = mapped_column(String(10), default="none")

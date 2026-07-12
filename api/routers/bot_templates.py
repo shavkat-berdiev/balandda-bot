@@ -48,7 +48,9 @@ class TemplateIn(BaseModel):
     body_uz: str | None = None
     body_en: str | None = None
     images: list[str] = []
-    keywords: str | None = None
+    keywords_ru: str | None = None
+    keywords_uz: str | None = None
+    keywords_en: str | None = None
     price_block: str = "none"
     sort_order: int = 0
     is_active: bool = True
@@ -69,7 +71,9 @@ class TemplateOut(BaseModel):
     body_uz: str | None
     body_en: str | None
     images: list[str]
-    keywords: str | None
+    keywords_ru: str | None
+    keywords_uz: str | None
+    keywords_en: str | None
     price_block: str
     sort_order: int
     is_active: bool
@@ -89,7 +93,9 @@ def _out(t: BotTemplate) -> TemplateOut:
         label_ru=t.label_ru, label_uz=t.label_uz, label_en=t.label_en,
         ig_label_ru=t.ig_label_ru, ig_label_uz=t.ig_label_uz, ig_label_en=t.ig_label_en,
         body_ru=t.body_ru, body_uz=t.body_uz, body_en=t.body_en,
-        images=_imgs(t), keywords=t.keywords, price_block=t.price_block or "none",
+        images=_imgs(t),
+        keywords_ru=t.keywords_ru, keywords_uz=t.keywords_uz, keywords_en=t.keywords_en,
+        price_block=t.price_block or "none",
         sort_order=t.sort_order, is_active=t.is_active,
     )
 
@@ -127,7 +133,7 @@ async def create_template(
         ig_label_ru=data.ig_label_ru, ig_label_uz=data.ig_label_uz, ig_label_en=data.ig_label_en,
         body_ru=data.body_ru, body_uz=data.body_uz, body_en=data.body_en,
         images=json.dumps(data.images, ensure_ascii=False),
-        keywords=data.keywords,
+        keywords_ru=data.keywords_ru, keywords_uz=data.keywords_uz, keywords_en=data.keywords_en,
         price_block=data.price_block,
         sort_order=data.sort_order, is_active=data.is_active,
     )
@@ -155,7 +161,9 @@ async def update_template(
 
     for f in ("parent_id", "action", "label_ru", "label_uz", "label_en",
               "ig_label_ru", "ig_label_uz", "ig_label_en",
-              "body_ru", "body_uz", "body_en", "keywords", "price_block", "sort_order", "is_active"):
+              "body_ru", "body_uz", "body_en",
+              "keywords_ru", "keywords_uz", "keywords_en",
+              "price_block", "sort_order", "is_active"):
         setattr(t, f, getattr(data, f))
     if data.key:
         t.key = data.key
@@ -453,9 +461,14 @@ async def bot_flow(
             "ig_label": ig_label,
             "body": body,
             "images": _imgs(t),
-            "keywords": [
-                w.strip().lower() for w in (t.keywords or "").split(",") if w.strip()
-            ],
+            "keywords": {
+                lang: [
+                    w.strip().lower()
+                    for w in (getattr(t, f"keywords_{lang}") or "").split(",")
+                    if w.strip()
+                ]
+                for lang in LANGS
+            },
             "sort_order": t.sort_order,
         })
 

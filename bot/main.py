@@ -503,6 +503,20 @@ async def run_migrations():
         """
         ALTER TABLE bot_templates ADD COLUMN IF NOT EXISTS keywords TEXT NULL;
         """,
+        """
+        ALTER TABLE bot_templates ADD COLUMN IF NOT EXISTS keywords_ru TEXT NULL;
+        """,
+        """
+        ALTER TABLE bot_templates ADD COLUMN IF NOT EXISTS keywords_uz TEXT NULL;
+        """,
+        """
+        ALTER TABLE bot_templates ADD COLUMN IF NOT EXISTS keywords_en TEXT NULL;
+        """,
+        # Carry over anything typed into the old single-language field.
+        """
+        UPDATE bot_templates SET keywords_ru = keywords
+        WHERE keywords IS NOT NULL AND keywords <> '' AND (keywords_ru IS NULL OR keywords_ru = '');
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:

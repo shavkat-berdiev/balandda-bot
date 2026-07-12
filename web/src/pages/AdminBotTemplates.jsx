@@ -22,6 +22,12 @@ const PRICE_BLOCKS = [
   { value: 'spa', label: '+ Живые цены: SPA' },
 ];
 
+const KW_HINT = {
+  ru: 'шале, домик с сауной, коттедж',
+  uz: 'shale, saunali uy, шале, коттедж',   // Uzbek customers often type in Cyrillic
+  en: 'chalet, sauna house, cottage',
+};
+
 const FLD = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm';
 const LBL = 'block text-xs font-medium text-gray-600 mb-1';
 
@@ -30,7 +36,8 @@ const EMPTY = {
   label_ru: '', label_uz: '', label_en: '',
   ig_label_ru: '', ig_label_uz: '', ig_label_en: '',
   body_ru: '', body_uz: '', body_en: '',
-  images: [], keywords: '', price_block: 'none', sort_order: 0, is_active: true,
+  images: [], keywords_ru: '', keywords_uz: '', keywords_en: '',
+  price_block: 'none', sort_order: 0, is_active: true,
 };
 
 export default function AdminBotTemplates() {
@@ -230,11 +237,13 @@ function Row({ item, depth, ctx }) {
               </div>
 
               <div className="mb-3">
-                <label className={lbl}>Ключевые слова — если клиент их напишет, бот пришлёт этот ответ</label>
-                <input value={item.keywords || ''} onChange={e => patch(item.id, 'keywords', e.target.value)}
-                  className={fld} placeholder="шале, chalet, shale, домик с сауной" />
+                <label className={lbl}>Ключевые слова ({lang.toUpperCase()}) — если клиент их напишет, бот пришлёт этот ответ</label>
+                <input value={item[`keywords_${lang}`] || ''} onChange={e => patch(item.id, `keywords_${lang}`, e.target.value)}
+                  className={fld} placeholder={KW_HINT[lang]} />
                 <p className="text-[11px] text-gray-400 mt-1">
-                  Через запятую, на любых языках. Большинство клиентов в Instagram пишут словами, а не жмут кнопки.
+                  Через запятую. <b>Свой список для каждого языка</b> — по нему бот и определяет язык клиента.
+                  Узбекские клиенты часто пишут кириллицей, поэтому вписывайте такие варианты в узбекский список
+                  (например: <i>шале, шоле</i>).
                 </p>
               </div>
 
