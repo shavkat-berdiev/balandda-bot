@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronRight, ImagePlus, X, ArrowUp, ArrowDown, Save, CornerDownRight, Download } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronRight, ImagePlus, X, ArrowUp, ArrowDown, Save, CornerDownRight, Download, Eye, EyeOff } from 'lucide-react';
 import { api } from '../api';
 
 const LANGS = [
@@ -13,6 +13,7 @@ const ACTIONS = [
   { value: 'submenu', label: 'Открыть подменю' },
   { value: 'book', label: 'Начать бронирование' },
   { value: 'agent', label: 'Позвать оператора' },
+  { value: 'lang', label: 'Сменить язык' },
 ];
 
 const PRICE_BLOCKS = [
@@ -106,6 +107,24 @@ export default function AdminBotTemplates() {
     } catch (e) { setError(e.message); }
   }
 
+  // Instant show/hide — seasonal items disappear from both bots straight away.
+  async function toggleActive(item) {
+    const next = { ...item, is_active: !item.is_active };
+    setItems(items.map(i => (i.id === item.id ? next : i)));
+    try { await api.updateBotTemplate(item.id, next); setError(''); }
+    catch (e) { setError(e.message); load(); }
+  }
+
+  // Move a button into a submenu (or back to the main menu).
+  async function moveTo(item, parentValue) {
+    const parent_id = parentValue === '' ? null : Number(parentValue);
+    const siblings = parent_id ? kids(parent_id) : roots;
+    const next = { ...item, parent_id, sort_order: siblings.length };
+    setItems(items.map(i => (i.id === item.id ? next : i)));
+    try { await api.updateBotTemplate(item.id, next); setError(''); }
+    catch (e) { setError(e.message); load(); }   // reload on a rejected move (e.g. nesting too deep)
+  }
+
   async function move(item, dir) {
     const list = item.parent_id ? kids(item.parent_id) : roots;
     const idx = list.findIndex(i => i.id === item.id);
@@ -135,7 +154,9 @@ export default function AdminBotTemplates() {
     try { await api.updateBotTemplate(item.id, next); } catch (e) { setError(e.message); }
   }
 
-  const ctx = { lang, open, setOpen, patch, save, saving, remove, move, upload, dropImage, kids, add };
+  // Only top-level submenu items can hold children (the tree is capped at two levels).
+  const menus = roots.filter(r => r.action === 'submenu');
+  const ctx = { lang, open, setOpen, patch, save, saving, remove, move, upload, dropImage, kids, add, toggleActive, moveTo, menus };
 
   return (
     <div>
@@ -189,7 +210,8 @@ export default function AdminBotTemplates() {
    would treat it as a NEW component type on every keystroke, remount the row, and the
    input would lose focus after each character. */
 function Row({ item, depth, ctx }) {
-    const { lang, open, setOpen, patch, save, saving, remove, move, upload, dropImage, kids, add } = ctx;
+    const { lang, open, setOpen, patch, save, saving, remove, move, upload, dropImage, kids, add,
+            toggleActive, moveTo, menus } = ctx;
     const fld = FLD, lbl = LBL;
     const isOpen = !!open[item.id];
     const label = item[`label_${lang}`] || item.label_ru || '(без названия)';
@@ -208,6 +230,10 @@ function Row({ item, depth, ctx }) {
             <span className={`flex-1 text-sm font-medium ${item.is_active ? 'text-gray-800' : 'text-gray-400 line-through'}`}>{label}</span>
             <span className="text-[11px] text-gray-400">{ACTIONS.find(a => a.value === item.action)?.label}</span>
             {(item.images?.length > 0) && <span className="text-[11px] text-gray-400">🖼 {item.images.length}</span>}
+            <button onClick={() => toggleActive(item)} title={item.is_active ? 'Скрыть от клиентов' : 'Показать клиентам'}
+              className={`p-1 ${item.is_active ? 'text-emerald-600 hover:text-emerald-800' : 'text-gray-300 hover:text-gray-500'}`}>
+              {item.is_active ? <Eye size={15} /> : <EyeOff size={15} />}
+            </button>
             <button onClick={() => move(item, -1)} className="p-1 text-gray-300 hover:text-gray-700"><ArrowUp size={14} /></button>
             <button onClick={() => move(item, 1)} className="p-1 text-gray-300 hover:text-gray-700"><ArrowDown size={14} /></button>
             <button onClick={() => remove(item)} className="p-1 text-gray-300 hover:text-red-600"><Trash2 size={14} /></button>
@@ -234,6 +260,19 @@ function Row({ item, depth, ctx }) {
                     {ACTIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
                   </select>
                 </div>
+              </div>
+
+              <div className="mb-3">
+                <label className={lbl}>Где находится кнопка</label>
+                <select value={item.parent_id ?? ''} onChange={e => moveTo(item, e.target.value)} className={fld}>
+                  <option value="">Главное меню (первый экран)</option>
+                  {menus.filter(m => m.id !== item.id).map(m => (
+                    <option key={m.id} value={m.id}>Внутри: {m[`label_${lang}`] || m.label_ru}</option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  В главном меню держите 3 кнопки — остальное прячьте внутрь подменю. Вложенность — только один уровень.
+                </p>
               </div>
 
               <div className="mb-3">
@@ -289,9 +328,9 @@ function Row({ item, depth, ctx }) {
                   className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
                   <Save size={15} /> {saving === item.id ? 'Сохранение…' : 'Сохранить'}
                 </button>
-                <label className="flex items-center gap-1.5 text-sm text-gray-600 cursor-pointer">
-                  <input type="checkbox" checked={item.is_active} onChange={e => patch(item.id, 'is_active', e.target.checked)} /> Активна
-                </label>
+                <span className="text-xs text-gray-400">
+                  {item.is_active ? 'Показывается клиентам' : 'Скрыта от клиентов'} — переключается 👁 в строке
+                </span>
                 {item.action === 'submenu' && (
                   <button onClick={() => add(item.id)} className="ml-auto flex items-center gap-1.5 px-3 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200">
                     <Plus size={15} /> Пункт подменю

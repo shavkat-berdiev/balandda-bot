@@ -26,7 +26,7 @@ router = APIRouter()
 
 UPLOAD_DIR = "/app/uploads/bot"
 PUBLIC_BASE = "https://analytics.berdiev.uz/api/v1/public/bot-image/"
-ACTIONS = {"reply", "submenu", "book", "agent"}
+ACTIONS = {"reply", "submenu", "book", "agent", "lang"}
 PRICE_BLOCKS = {"none", "houses", "pool", "spa"}
 LANGS = ("ru", "uz", "en")
 
@@ -158,6 +158,24 @@ async def update_template(
         raise HTTPException(status_code=422, detail="Invalid action")
     if data.price_block not in PRICE_BLOCKS:
         raise HTTPException(status_code=422, detail="Invalid price_block")
+
+    # Moving items between menus: keep the tree exactly two levels deep, and never let a
+    # node become its own parent (either would make the menu unrenderable).
+    if data.parent_id is not None:
+        if data.parent_id == item_id:
+            raise HTTPException(status_code=422, detail="Пункт не может быть вложен сам в себя")
+        parent = (
+            await session.execute(select(BotTemplate).where(BotTemplate.id == data.parent_id))
+        ).scalar_one_or_none()
+        if not parent:
+            raise HTTPException(status_code=404, detail="Родительское меню не найдено")
+        if parent.parent_id is not None:
+            raise HTTPException(status_code=422, detail="Можно вкладывать только на один уровень")
+        has_kids = (
+            await session.execute(select(BotTemplate.id).where(BotTemplate.parent_id == item_id).limit(1))
+        ).scalar_one_or_none()
+        if has_kids:
+            raise HTTPException(status_code=422, detail="Сначала перенесите вложенные пункты — меню с подпунктами нельзя вкладывать")
 
     for f in ("parent_id", "action", "label_ru", "label_uz", "label_en",
               "ig_label_ru", "ig_label_uz", "ig_label_en",
