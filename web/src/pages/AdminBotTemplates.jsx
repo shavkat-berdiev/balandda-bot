@@ -22,6 +22,9 @@ const PRICE_BLOCKS = [
   { value: 'spa', label: '+ Живые цены: SPA' },
 ];
 
+const FLD = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm';
+const LBL = 'block text-xs font-medium text-gray-600 mb-1';
+
 const EMPTY = {
   parent_id: null, action: 'reply',
   label_ru: '', label_uz: '', label_en: '',
@@ -125,10 +128,62 @@ export default function AdminBotTemplates() {
     try { await api.updateBotTemplate(item.id, next); } catch (e) { setError(e.message); }
   }
 
-  const fld = 'w-full px-3 py-2 border border-gray-200 rounded-lg text-sm';
-  const lbl = 'block text-xs font-medium text-gray-600 mb-1';
+  const ctx = { lang, open, setOpen, patch, save, saving, remove, move, upload, dropImage, kids, add };
 
-  function Row({ item, depth }) {
+  return (
+    <div>
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-800">Ответы бота</h1>
+          <p className="text-gray-500 text-sm mt-1">Один источник для Telegram и Instagram — что здесь, то и в обоих ботах.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+            {LANGS.map(l => (
+              <button key={l.code} onClick={() => setLang(l.code)}
+                className={`px-3 py-2 text-sm ${lang === l.code ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
+                {l.label}
+              </button>
+            ))}
+          </div>
+          <button onClick={seed} disabled={seeding}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50">
+            <Download size={17} /> {seeding ? 'Импорт…' : 'Импорт из Telegram-бота'}
+          </button>
+          <button onClick={() => add(null)} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
+            <Plus size={18} /> Кнопка
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="bg-red-50 text-red-600 rounded-lg px-4 py-3 text-sm mb-4">{error}</div>}
+      {note && <div className="bg-emerald-50 text-emerald-700 rounded-lg px-4 py-3 text-sm mb-4">{note}</div>}
+
+      <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-sm text-blue-900 mb-5">
+        Заполняйте по одному языку за раз — переключатель справа сверху. Instagram обрезает кнопки до 20 знаков,
+        поэтому для длинных названий задайте короткий вариант. Цены не вписывайте руками — выберите «живые цены».
+        Изменения сохраняются кнопкой «Сохранить» в каждом блоке.
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>
+      ) : roots.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-500">
+          Пока нет кнопок. Нажмите «Импорт из Telegram-бота», чтобы создать меню автоматически.
+        </div>
+      ) : (
+        roots.map(r => <Row key={r.id} item={r} depth={0} ctx={ctx} />)
+      )}
+    </div>
+  );
+}
+
+/* Defined at module scope on purpose: if this lived inside the page component, React
+   would treat it as a NEW component type on every keystroke, remount the row, and the
+   input would lose focus after each character. */
+function Row({ item, depth, ctx }) {
+    const { lang, open, setOpen, patch, save, saving, remove, move, upload, dropImage, kids, add } = ctx;
+    const fld = FLD, lbl = LBL;
     const isOpen = !!open[item.id];
     const label = item[`label_${lang}`] || item.label_ru || '(без названия)';
     const igRaw = item[`ig_label_${lang}`] || '';
@@ -228,54 +283,7 @@ export default function AdminBotTemplates() {
             </div>
           )}
         </div>
-        {kids(item.id).map(k => <Row key={k.id} item={k} depth={depth + 1} />)}
+        {kids(item.id).map(k => <Row key={k.id} item={k} depth={depth + 1} ctx={ctx} />)}
       </div>
     );
-  }
-
-  return (
-    <div>
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">Ответы бота</h1>
-          <p className="text-gray-500 text-sm mt-1">Один источник для Telegram и Instagram — что здесь, то и в обоих ботах.</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-            {LANGS.map(l => (
-              <button key={l.code} onClick={() => setLang(l.code)}
-                className={`px-3 py-2 text-sm ${lang === l.code ? 'bg-blue-600 text-white' : 'bg-white text-gray-600 hover:bg-gray-50'}`}>
-                {l.label}
-              </button>
-            ))}
-          </div>
-          <button onClick={seed} disabled={seeding}
-            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50">
-            <Download size={17} /> {seeding ? 'Импорт…' : 'Импорт из Telegram-бота'}
-          </button>
-          <button onClick={() => add(null)} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
-            <Plus size={18} /> Кнопка
-          </button>
-        </div>
-      </div>
-
-      {error && <div className="bg-red-50 text-red-600 rounded-lg px-4 py-3 text-sm mb-4">{error}</div>}
-      {note && <div className="bg-emerald-50 text-emerald-700 rounded-lg px-4 py-3 text-sm mb-4">{note}</div>}
-
-      <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-sm text-blue-900 mb-5">
-        Заполняйте по одному языку за раз — переключатель справа сверху. Instagram обрезает кнопки до 20 знаков,
-        поэтому для длинных названий задайте короткий вариант. Цены не вписывайте руками — выберите «живые цены».
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center py-12"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div></div>
-      ) : roots.length === 0 ? (
-        <div className="bg-white rounded-xl border border-gray-200 p-10 text-center text-gray-500">
-          Пока нет кнопок. Нажмите «Кнопка», чтобы создать первую.
-        </div>
-      ) : (
-        roots.map(r => <Row key={r.id} item={r} depth={0} />)
-      )}
-    </div>
-  );
 }
