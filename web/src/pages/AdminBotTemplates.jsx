@@ -302,6 +302,12 @@ function Row({ item, depth, ctx }) {
                     </div>
                     <div>
                       <label className={lbl}>Фото (отправляются с ответом)</label>
+                      {(item.images || []).length === 0 && (
+                        <p className="text-[11px] text-gray-500 mb-1">
+                          Пусто → бот берёт галерею с сайта balandda.uz (раздел этого дома).
+                          Загрузите фото здесь, только если хотите <b>переопределить</b> сайт.
+                        </p>
+                      )}
                       <div className="flex flex-wrap items-center gap-2">
                         {(item.images || []).map(u => (
                           <div key={u} className="relative">

@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 from api.auth import get_current_user, require_admin
 from bot.config import settings
 from db.database import get_session
+from api.routers.public import TYPE_TO_WEB_SLUG
 from db.enums import PROPERTY_TYPE_LABELS, PropertyType
 from db.models import BotTemplate, BusinessUnit, Property, PropertyTypeLabel, ServiceItem
 
@@ -432,6 +433,57 @@ async def _price_text(session: AsyncSession, block: str, lang: str) -> str:
     return ""
 
 
+# ── Website photos: one source of images for the site AND both bots ──
+
+# Staff already maintain per-cottage galleries in balandda.uz/admin, and api-content.php
+# publishes them (that endpoint exists precisely so content is edited once). So a menu item
+# with no uploaded image inherits the website gallery instead of being blank.
+WEB_CONTENT_URL = "https://www.balandda.uz/api-content.php"
+_web_cache: dict = {"at": 0.0, "pages": {}}
+_WEB_TTL = 300.0
+
+
+async def _web_pages() -> dict:
+    import time
+    if time.time() - _web_cache["at"] < _WEB_TTL and _web_cache["pages"]:
+        return _web_cache["pages"]
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as s:
+            async with s.get(WEB_CONTENT_URL, timeout=aiohttp.ClientTimeout(total=6)) as r:
+                if r.status == 200:
+                    data = await r.json(content_type=None)
+                    pages = data.get("pages") or {}
+                    if isinstance(pages, dict):
+                        _web_cache["pages"] = pages
+                        _web_cache["at"] = time.time()
+    except Exception:
+        pass   # keep the last good copy — a website blip must not blank the bots' photos
+    return _web_cache["pages"]
+
+
+def _slug_for_key(key: str) -> str | None:
+    """Menu item key → the website page whose gallery it should use."""
+    if key in ("pool", "spa", "restaurant"):
+        return key
+    if key.startswith("type_"):
+        try:
+            pt = PropertyType(key[5:].upper())
+        except ValueError:
+            return None
+        page = TYPE_TO_WEB_SLUG.get(pt)
+        return page[:-5] if page else None   # strip ".html" — api-content.php keys have none
+    return None
+
+
+async def _website_photos(key: str) -> list[str]:
+    slug = _slug_for_key(key)
+    if not slug:
+        return []
+    page = (await _web_pages()).get(slug) or {}
+    return [p["url"] for p in (page.get("photos") or []) if p.get("url")][:9]
+
+
 # ── Public: the rendered flow the CRM feeds to Telegram + Instagram ──
 
 
@@ -478,7 +530,8 @@ async def bot_flow(
             "label": label,
             "ig_label": ig_label,
             "body": body,
-            "images": _imgs(t),
+            # Uploaded images win (an explicit override); otherwise inherit the website gallery.
+            "images": _imgs(t) or await _website_photos(t.key),
             "keywords": {
                 lang: [
                     w.strip().lower()

@@ -78,8 +78,11 @@ class SelfBookData(BaseModel):
     guests: int | None = None
     guest_name: str | None = None
     guest_phone: str | None = None
-    telegram_user_id: int
+    # Optional: Instagram customers self-book too, and they have no Telegram identity.
+    telegram_user_id: int | None = None
     telegram_username: str | None = None
+    # "TELEGRAM" (default) | "INSTAGRAM" — so the calendar shows where the booking came from.
+    source: str | None = None
 
 
 @router.post("/self-book")
@@ -114,7 +117,11 @@ async def self_book(
         telegram_user_id=data.telegram_user_id,
         telegram_username=(data.telegram_username.lstrip("@") if data.telegram_username else None),
         status=ReservationStatus.HOLD,
-        source=ReservationSource.TELEGRAM,
+        source=(
+            ReservationSource.INSTAGRAM
+            if (data.source or "").upper() == "INSTAGRAM"
+            else ReservationSource.TELEGRAM
+        ),
         total_amount=total or None,
         hold_warn_at=add_working_minutes(now, 30),
         hold_expires_at=add_working_minutes(now, 60),
