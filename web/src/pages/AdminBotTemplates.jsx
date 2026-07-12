@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, ChevronDown, ChevronRight, ImagePlus, X, ArrowUp, ArrowDown, Save, CornerDownRight } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronRight, ImagePlus, X, ArrowUp, ArrowDown, Save, CornerDownRight, Download } from 'lucide-react';
 import { api } from '../api';
 
 const LANGS = [
@@ -37,8 +37,22 @@ export default function AdminBotTemplates() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(null);
+  const [seeding, setSeeding] = useState(false);
+  const [note, setNote] = useState('');
 
   useEffect(() => { load(); }, []);
+
+  async function seed() {
+    const has = items.length > 0;
+    if (has && !confirm('Это удалит текущие кнопки и пересоздаст меню из Telegram-бота и каталога. Продолжить?')) return;
+    setSeeding(true); setError(''); setNote('');
+    try {
+      const r = await api.seedBotTemplates(has);
+      setNote(`Готово: создано ${r.created} кнопок, типов жилья — ${r.types}, импортировано текстов — ${r.texts_imported}.`);
+      await load();
+    } catch (e) { setError(e.message); }
+    setSeeding(false);
+  }
 
   async function load() {
     setLoading(true);
@@ -235,6 +249,10 @@ export default function AdminBotTemplates() {
               </button>
             ))}
           </div>
+          <button onClick={seed} disabled={seeding}
+            className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 disabled:opacity-50">
+            <Download size={17} /> {seeding ? 'Импорт…' : 'Импорт из Telegram-бота'}
+          </button>
           <button onClick={() => add(null)} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
             <Plus size={18} /> Кнопка
           </button>
@@ -242,6 +260,7 @@ export default function AdminBotTemplates() {
       </div>
 
       {error && <div className="bg-red-50 text-red-600 rounded-lg px-4 py-3 text-sm mb-4">{error}</div>}
+      {note && <div className="bg-emerald-50 text-emerald-700 rounded-lg px-4 py-3 text-sm mb-4">{note}</div>}
 
       <div className="bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-sm text-blue-900 mb-5">
         Заполняйте по одному языку за раз — переключатель справа сверху. Instagram обрезает кнопки до 20 знаков,

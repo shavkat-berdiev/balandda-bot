@@ -17,8 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from api.auth import get_current_user, require_admin
+from bot.config import settings
 from db.database import get_session
-from db.models import BotTemplate, BusinessUnit, Property, ServiceItem
+from db.enums import PROPERTY_TYPE_LABELS, PropertyType
+from db.models import BotTemplate, BusinessUnit, Property, PropertyTypeLabel, ServiceItem
 
 router = APIRouter()
 
@@ -199,6 +201,132 @@ async def upload_image(
     with open(path, "wb") as fh:
         fh.write(data)
     return {"url": PUBLIC_BASE + name}
+
+
+# ── One-time seed: build the menu from what the Telegram bot already says ──
+
+
+@router.post("/bot-templates/seed")
+async def seed_from_telegram(
+    force: bool = False,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Pre-fill the editor from the live Telegram bot: pulls the existing /tpl texts from
+    the CRM and one reply per accommodation type from the catalog. Idempotent — refuses to
+    run twice unless force=true."""
+    require_admin(user)
+
+    existing = (await session.execute(select(BotTemplate))).scalars().all()
+    if existing and not force:
+        raise HTTPException(status_code=409, detail="Уже заполнено. Используйте force=true, чтобы пересоздать.")
+    if existing and force:
+        for t in existing:
+            await session.delete(t)
+        await session.flush()
+
+    # 1) existing Telegram template texts, keyed by "key:lang"
+    tpl: dict[str, str] = {}
+    try:
+        import aiohttp
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                f"{settings.crm_api_url}/api/templates-export",
+                headers={"x-bridge-secret": settings.bridge_secret},
+                timeout=aiohttp.ClientTimeout(total=8),
+            ) as r:
+                if r.status == 200:
+                    data = await r.json()
+                    for row in data.get("templates", []):
+                        tpl[f"{row['key']}:{row['lang']}"] = row.get("body") or ""
+    except Exception:
+        pass  # CRM unreachable → seed the structure anyway, bodies stay empty
+
+    def body(key: str, lang: str) -> str:
+        return tpl.get(f"{key}:{lang}") or tpl.get(f"{key}:ru") or ""
+
+    # 2) accommodation types (editable labels) for the "Дома" submenu
+    labels = {r.property_type: r for r in (await session.execute(select(PropertyTypeLabel))).scalars().all()}
+    used_types: list[PropertyType] = []
+    for p in (
+        await session.execute(select(Property).where(Property.is_active.is_(True)).order_by(Property.sort_order))
+    ).scalars().all():
+        if p.business_unit == BusinessUnit.RESORT and p.property_type not in used_types:
+            used_types.append(p.property_type)
+
+    order = 0
+
+    def add(**kw) -> BotTemplate:
+        nonlocal order
+        t = BotTemplate(sort_order=order, **kw)
+        session.add(t)
+        order += 1
+        return t
+
+    houses = add(
+        key="houses", action="submenu",
+        label_ru="🏡 Дома и цены", label_uz="🏡 Uylar va narxlar", label_en="🏡 Houses & prices",
+        ig_label_ru="🏡 Дома", ig_label_uz="🏡 Uylar", ig_label_en="🏡 Houses",
+        images=json.dumps([]),
+    )
+    await session.flush()
+
+    sub = 0
+    for pt in used_types:
+        lab = labels.get(pt.value)
+        ru = lab.label_ru if lab else PROPERTY_TYPE_LABELS.get(pt, pt.value)
+        uz = lab.label_uz if lab else ru
+        en = (lab.label_en if lab and lab.label_en else ru)
+        session.add(BotTemplate(
+            parent_id=houses.id, key=f"type_{pt.value.lower()}", action="reply", sort_order=sub,
+            label_ru=ru, label_uz=uz, label_en=en,
+            ig_label_ru=ru[:20], ig_label_uz=uz[:20], ig_label_en=en[:20],
+            body_ru=body("price", "ru"), body_uz=body("price", "uz"), body_en=body("price", "en"),
+            images=json.dumps([]), price_block="houses",
+        ))
+        sub += 1
+
+    add(key="pool", action="reply",
+        label_ru="🏊 Бассейн", label_uz="🏊 Basseyn", label_en="🏊 Pool",
+        body_ru=body("pool", "ru"), body_uz=body("pool", "uz"), body_en=body("pool", "en"),
+        images=json.dumps([]), price_block="pool")
+
+    add(key="spa", action="reply",
+        label_ru="💆 SPA", label_uz="💆 SPA", label_en="💆 SPA",
+        body_ru=body("spa", "ru"), body_uz=body("spa", "uz"), body_en=body("spa", "en"),
+        images=json.dumps([]), price_block="spa")
+
+    add(key="directions", action="reply",
+        label_ru="📍 Как добраться", label_uz="📍 Qanday yetib borish", label_en="📍 Directions",
+        ig_label_ru="📍 Как добраться", ig_label_uz="📍 Manzil", ig_label_en="📍 Directions",
+        body_ru=body("directions", "ru"), body_uz=body("directions", "uz"), body_en=body("directions", "en"),
+        images=json.dumps([]), price_block="none")
+
+    add(key="prepayment", action="reply",
+        label_ru="💳 Предоплата и условия", label_uz="💳 Oldindan to'lov", label_en="💳 Prepayment",
+        ig_label_ru="💳 Предоплата", ig_label_uz="💳 To'lov", ig_label_en="💳 Prepayment",
+        body_ru=body("prepayment", "ru"), body_uz=body("prepayment", "uz"), body_en=body("prepayment", "en"),
+        images=json.dumps([]), price_block="none")
+
+    add(key="checkin", action="reply",
+        label_ru="🕐 Заезд / выезд", label_uz="🕐 Kirish / chiqish", label_en="🕐 Check-in / out",
+        ig_label_ru="🕐 Заезд/выезд", ig_label_uz="🕐 Kirish/chiqish", ig_label_en="🕐 Check-in/out",
+        body_ru=body("checkin", "ru"), body_uz=body("checkin", "uz"), body_en=body("checkin", "en"),
+        images=json.dumps([]), price_block="none")
+
+    add(key="book", action="book",
+        label_ru="📅 Забронировать", label_uz="📅 Bron qilish", label_en="📅 Book now",
+        ig_label_ru="📅 Забронировать", ig_label_uz="📅 Bron qilish", ig_label_en="📅 Book now",
+        images=json.dumps([]), price_block="none")
+
+    add(key="agent", action="agent",
+        label_ru="🙋 Связаться с оператором", label_uz="🙋 Operator bilan", label_en="🙋 Talk to an agent",
+        ig_label_ru="🙋 Оператор", ig_label_uz="🙋 Operator", ig_label_en="🙋 Agent",
+        images=json.dumps([]), price_block="none")
+
+    await session.commit()
+    total = len((await session.execute(select(BotTemplate))).scalars().all())
+    return {"ok": True, "created": total, "types": len(used_types), "texts_imported": len(tpl)}
 
 
 # ── Live price blocks ─────────────────────────────────────────────

@@ -141,6 +141,7 @@ export const api = {
   updateBotTemplate: (id, data) => request(`/bot-templates/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteBotTemplate: (id) => request(`/bot-templates/${id}`, { method: 'DELETE' }),
   uploadBotImage: (formData) => upload('/bot-templates/upload', formData),
+  seedBotTemplates: (force) => request(`/bot-templates/seed?force=${force ? 'true' : 'false'}`, { method: 'POST' }),
 
   // SPA scheduling (appointments)
   getSpaAppointments: (date) => request(`/spa/appointments?date=${encodeURIComponent(date)}`),
