@@ -500,6 +500,9 @@ async def run_migrations():
         """
         CREATE INDEX IF NOT EXISTS ix_bot_templates_parent ON bot_templates (parent_id, sort_order);
         """,
+        """
+        ALTER TABLE bot_templates ADD COLUMN IF NOT EXISTS keywords TEXT NULL;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:

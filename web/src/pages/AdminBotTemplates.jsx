@@ -30,7 +30,7 @@ const EMPTY = {
   label_ru: '', label_uz: '', label_en: '',
   ig_label_ru: '', ig_label_uz: '', ig_label_en: '',
   body_ru: '', body_uz: '', body_en: '',
-  images: [], price_block: 'none', sort_order: 0, is_active: true,
+  images: [], keywords: '', price_block: 'none', sort_order: 0, is_active: true,
 };
 
 export default function AdminBotTemplates() {
@@ -227,6 +227,15 @@ function Row({ item, depth, ctx }) {
                     {ACTIONS.map(a => <option key={a.value} value={a.value}>{a.label}</option>)}
                   </select>
                 </div>
+              </div>
+
+              <div className="mb-3">
+                <label className={lbl}>Ключевые слова — если клиент их напишет, бот пришлёт этот ответ</label>
+                <input value={item.keywords || ''} onChange={e => patch(item.id, 'keywords', e.target.value)}
+                  className={fld} placeholder="шале, chalet, shale, домик с сауной" />
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Через запятую, на любых языках. Большинство клиентов в Instagram пишут словами, а не жмут кнопки.
+                </p>
               </div>
 
               {(item.action === 'reply' || item.action === 'book') && (

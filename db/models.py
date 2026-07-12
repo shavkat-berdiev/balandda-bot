@@ -344,6 +344,10 @@ class BotTemplate(Base):
     # ["https://.../bot/xxx.jpg", ...] — public URLs (Meta must fetch them unauthenticated)
     images: Mapped[str | None] = mapped_column(Text, nullable=True)   # JSON array
 
+    # Comma-separated trigger words across all languages ("шале, chalet, shale").
+    # Most Instagram customers TYPE rather than tap, so this is how free text finds a reply.
+    keywords: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # none | houses | pool | spa — appends a LIVE price table from the catalog at send time
     price_block: Mapped[str] = mapped_column(String(10), default="none")
 
