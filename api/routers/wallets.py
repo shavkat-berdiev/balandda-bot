@@ -58,6 +58,7 @@ async def _calculate_balance(session: AsyncSession, telegram_id: int) -> float:
                 WalletTransactionType.CASH_TO_BANK,
                 WalletTransactionType.PURCHASE,
                 WalletTransactionType.SALARY,
+                WalletTransactionType.EXPENSE,
             ]),
             WalletTransaction.status.in_([
                 WalletTransactionStatus.PENDING,

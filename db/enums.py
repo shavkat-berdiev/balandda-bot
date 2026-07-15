@@ -196,6 +196,7 @@ class WalletTransactionType(str, enum.Enum):
     CASH_TO_BANK = "CASH_TO_BANK"        # Final dest: bank
     PURCHASE = "PURCHASE"                # Deduction for purchase
     SALARY = "SALARY"                    # Auto from salary expense report
+    EXPENSE = "EXPENSE"                  # Auto from any expense report
     ADJUSTMENT = "ADJUSTMENT"            # Owner correction (signed delta)
 
 
@@ -349,5 +350,6 @@ WALLET_TRANSACTION_TYPE_LABELS = {
     WalletTransactionType.CASH_TO_BANK: "Сдано в банк",
     WalletTransactionType.PURCHASE: "Закуп",
     WalletTransactionType.SALARY: "Зарплата",
+    WalletTransactionType.EXPENSE: "Расход",
     WalletTransactionType.ADJUSTMENT: "Корректировка",
 }

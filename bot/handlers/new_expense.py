@@ -339,17 +339,24 @@ async def on_confirm_expense(callback: types.CallbackQuery, state: FSMContext):
             report.total_expense = (report.total_expense or Decimal(0)) + Decimal(data["amount"])
             await session.merge(report)
 
-        # If SALARY expense, deduct from reporter's cash wallet
-        if ExpenseCategory(data["expense_category"]) == ExpenseCategory.SALARY:
-            session.add(WalletTransaction(
-                sender_telegram_id=callback.from_user.id,
-                amount=Decimal(data["amount"]),
-                transaction_type=WalletTransactionType.SALARY,
-                status=WalletTransactionStatus.COMPLETED,
-                note=data.get("description") or "Зарплата",
-                report_id=report_id,
-                business_unit=data.get("business_unit", "RESORT"),
-            ))
+        # Deduct ALL expenses from reporter's cash wallet
+        cat = ExpenseCategory(data["expense_category"])
+        cat_label = EXPENSE_CATEGORY_LABELS.get(cat, cat.value)
+        if cat == ExpenseCategory.SALARY:
+            wt_type = WalletTransactionType.SALARY
+            wt_note = data.get("description") or "Зарплата"
+        else:
+            wt_type = WalletTransactionType.EXPENSE
+            wt_note = data.get("description") or cat_label
+        session.add(WalletTransaction(
+            sender_telegram_id=callback.from_user.id,
+            amount=Decimal(data["amount"]),
+            transaction_type=wt_type,
+            status=WalletTransactionStatus.COMPLETED,
+            note=wt_note,
+            report_id=report_id,
+            business_unit=data.get("business_unit", "RESORT"),
+        ))
 
         await session.commit()
 

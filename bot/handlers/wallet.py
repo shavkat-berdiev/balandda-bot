@@ -94,6 +94,7 @@ async def get_wallet_balance(telegram_id: int) -> Decimal:
                     WalletTransactionType.CASH_TO_BANK,
                     WalletTransactionType.PURCHASE,
                     WalletTransactionType.SALARY,
+                    WalletTransactionType.EXPENSE,
                 ]),
                 WalletTransaction.status.in_([
                     WalletTransactionStatus.PENDING,

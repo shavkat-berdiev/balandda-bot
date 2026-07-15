@@ -619,6 +619,19 @@ async def run_migrations():
             END IF;
         END $$;
         """,
+        # Added: EXPENSE wallet transaction type (all expense report deductions)
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_enum
+                WHERE enumlabel = 'EXPENSE'
+                  AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'wallettransactiontype')
+            ) THEN
+                ALTER TYPE wallettransactiontype ADD VALUE 'EXPENSE';
+            END IF;
+        END $$;
+        """,
         # Two-step booking: EXPIRED reservation status (lapsed unpaid holds)
         """
         DO $$
