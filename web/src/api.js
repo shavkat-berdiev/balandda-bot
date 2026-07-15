@@ -181,6 +181,7 @@ export const api = {
     const sp = new URLSearchParams();
     if (params.business_unit) sp.set('business_unit', params.business_unit);
     if (params.entry_type) sp.set('entry_type', params.entry_type);
+    if (params.payment_method) sp.set('payment_method', params.payment_method);
     if (params.start_date) sp.set('start_date', params.start_date);
     if (params.end_date) sp.set('end_date', params.end_date);
     if (params.limit) sp.set('limit', params.limit);

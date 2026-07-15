@@ -593,6 +593,19 @@ async def run_migrations():
             END IF;
         END $$;
         """,
+        # Added in v0.8: SALARY wallet transaction type
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_enum
+                WHERE enumlabel = 'SALARY'
+                  AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'wallettransactiontype')
+            ) THEN
+                ALTER TYPE wallettransactiontype ADD VALUE 'SALARY';
+            END IF;
+        END $$;
+        """,
         # ADJUSTMENT wallet transaction type (owner balance corrections)
         """
         DO $$

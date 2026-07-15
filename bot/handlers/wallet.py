@@ -12,6 +12,8 @@ Flow:
 import logging
 from decimal import Decimal
 
+from datetime import date, timedelta
+
 from aiogram import Bot, F, Router, types
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -91,6 +93,7 @@ async def get_wallet_balance(telegram_id: int) -> Decimal:
                     WalletTransactionType.TRANSFER_TO_SHAVKAT,
                     WalletTransactionType.CASH_TO_BANK,
                     WalletTransactionType.PURCHASE,
+                    WalletTransactionType.SALARY,
                 ]),
                 WalletTransaction.status.in_([
                     WalletTransactionStatus.PENDING,
@@ -155,6 +158,7 @@ async def on_wallet(callback: types.CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="💼 Инкассация", callback_data="wlt:to_employee")],
         [InlineKeyboardButton(text="👑 Передать владельцу", callback_data="wlt:to_owner")],
         [InlineKeyboardButton(text="🏦 Сдать в банк", callback_data="wlt:to_bank")],
+        [InlineKeyboardButton(text="📊 Мой отчёт", callback_data="wlt:my_report")],
     ]
     if pending_count:
         buttons.insert(0, [InlineKeyboardButton(
@@ -372,12 +376,11 @@ async def on_decline_transfer(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "wlt:to_employee", WalletStates.viewing)
 async def on_transfer_employee(callback: types.CallbackQuery, state: FSMContext):
-    """Show users to transfer cash to (admins + owner)."""
+    """Show all active employees to transfer cash to."""
     async with async_session() as session:
         result = await session.execute(
             select(User).where(
                 User.is_active == True,
-                User.role == UserRole.ADMIN,
                 User.telegram_id != callback.from_user.id,
             ).order_by(User.full_name)
         )
@@ -700,6 +703,131 @@ async def on_confirm_transfer(callback: types.CallbackQuery, state: FSMContext):
                 f"{get_text('main_menu', lang, section=section_name)}",
                 reply_markup=main_menu_keyboard(lang, current_section=section),
             )
+
+
+# ────────────────────────────────────────────────────────────────────────
+# MY REPORT — employee transaction summary
+# ────────────────────────────────────────────────────────────────────────
+
+
+@router.callback_query(F.data == "wlt:my_report", WalletStates.viewing)
+async def on_my_report(callback: types.CallbackQuery, state: FSMContext):
+    """Show period selection for personal report."""
+    buttons = [
+        [InlineKeyboardButton(text="📅 Сегодня", callback_data="wlt_rpt:today")],
+        [InlineKeyboardButton(text="📅 Эта неделя", callback_data="wlt_rpt:week")],
+        [InlineKeyboardButton(text="📅 Этот месяц", callback_data="wlt_rpt:month")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="action:wallet")],
+    ]
+    await callback.message.edit_text(
+        "📊 <b>Мой отчёт</b>\n\nВыберите период:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("wlt_rpt:"), WalletStates.viewing)
+async def on_my_report_period(callback: types.CallbackQuery, state: FSMContext):
+    """Show personal transaction report for selected period."""
+    period = callback.data.split(":")[1]
+    today = date.today()
+
+    if period == "today":
+        start = today
+        period_label = "Сегодня"
+    elif period == "week":
+        start = today - timedelta(days=today.weekday())  # Monday
+        period_label = "Эта неделя"
+    else:  # month
+        start = today.replace(day=1)
+        period_label = "Этот месяц"
+
+    tid = callback.from_user.id
+    balance = await get_wallet_balance(tid)
+
+    async with async_session() as session:
+        # Get all wallet transactions for this user in the period
+        result = await session.execute(
+            select(WalletTransaction).where(
+                or_(
+                    WalletTransaction.sender_telegram_id == tid,
+                    WalletTransaction.receiver_telegram_id == tid,
+                ),
+                WalletTransaction.created_at >= start,
+                WalletTransaction.status.in_([
+                    WalletTransactionStatus.COMPLETED,
+                    WalletTransactionStatus.PENDING,
+                ]),
+            ).order_by(WalletTransaction.created_at.desc())
+        )
+        txs = result.scalars().all()
+
+        # Get user names
+        user_ids = set()
+        for tx in txs:
+            user_ids.add(tx.sender_telegram_id)
+            if tx.receiver_telegram_id:
+                user_ids.add(tx.receiver_telegram_id)
+        user_map = {}
+        if user_ids:
+            users_result = await session.execute(
+                select(User).where(User.telegram_id.in_(user_ids))
+            )
+            user_map = {u.telegram_id: u.full_name for u in users_result.scalars().all()}
+
+    # Build summary
+    total_in = Decimal(0)
+    total_out = Decimal(0)
+    lines = []
+
+    for tx in txs:
+        tx_label = WALLET_TRANSACTION_TYPE_LABELS.get(tx.transaction_type, tx.transaction_type.value)
+        status_icon = "⏳" if tx.status == WalletTransactionStatus.PENDING else ""
+        tx_date = tx.created_at.strftime("%d.%m") if tx.created_at else ""
+
+        if tx.transaction_type == WalletTransactionType.CASH_IN and tx.sender_telegram_id == tid:
+            total_in += tx.amount
+            lines.append(f"  📈 {tx_date} +{format_amount(tx.amount)} {tx_label}")
+        elif tx.receiver_telegram_id == tid and tx.sender_telegram_id != tid:
+            if tx.status == WalletTransactionStatus.COMPLETED:
+                total_in += tx.amount
+            sender = user_map.get(tx.sender_telegram_id, "?")
+            lines.append(f"  📥 {tx_date} +{format_amount(tx.amount)} от {sender} {status_icon}")
+        elif tx.sender_telegram_id == tid and tx.transaction_type != WalletTransactionType.CASH_IN:
+            total_out += tx.amount
+            receiver = user_map.get(tx.receiver_telegram_id, "") if tx.receiver_telegram_id else ""
+            dest = f"→ {receiver}" if receiver else ""
+            lines.append(f"  📤 {tx_date} -{format_amount(tx.amount)} {tx_label} {dest} {status_icon}")
+
+    text = (
+        f"📊 <b>Мой отчёт — {period_label}</b>\n"
+        f"📅 {start.strftime('%d.%m.%Y')} — {today.strftime('%d.%m.%Y')}\n\n"
+        f"💰 Баланс: <b>{format_amount(balance)} UZS</b>\n"
+        f"📈 Приход: +{format_amount(total_in)} UZS\n"
+        f"📤 Расход: -{format_amount(total_out)} UZS\n"
+    )
+
+    if lines:
+        text += f"\n<b>Операции ({len(lines)}):</b>\n" + "\n".join(lines[:20])
+        if len(lines) > 20:
+            text += f"\n  ... и ещё {len(lines) - 20}"
+    else:
+        text += "\nНет операций за этот период"
+
+    buttons = [
+        [
+            InlineKeyboardButton(text="📅 Сегодня", callback_data="wlt_rpt:today"),
+            InlineKeyboardButton(text="📅 Неделя", callback_data="wlt_rpt:week"),
+            InlineKeyboardButton(text="📅 Месяц", callback_data="wlt_rpt:month"),
+        ],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="action:wallet")],
+    ]
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
 
 
 # ────────────────────────────────────────────────────────────────────────

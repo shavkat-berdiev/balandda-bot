@@ -29,11 +29,12 @@ export default function Transactions() {
   const [error, setError] = useState('');
   const [filterUnit, setFilterUnit] = useState('');
   const [filterType, setFilterType] = useState('');
+  const [filterPayment, setFilterPayment] = useState('');
   const [activePreset, setActivePreset] = useState('30d');
   const [dateFrom, setDateFrom] = useState(daysAgo(30));
   const [dateTo, setDateTo] = useState(today());
 
-  useEffect(() => { loadTransactions(); }, [filterUnit, filterType, dateFrom, dateTo]);
+  useEffect(() => { loadTransactions(); }, [filterUnit, filterType, filterPayment, dateFrom, dateTo]);
 
   async function loadTransactions() {
     setLoading(true);
@@ -42,6 +43,7 @@ export default function Transactions() {
       const data = await api.getStructuredTransactions({
         business_unit: filterUnit || undefined,
         entry_type: filterType || undefined,
+        payment_method: filterPayment || undefined,
         start_date: dateFrom,
         end_date: dateTo,
         limit: '200',
@@ -99,6 +101,19 @@ export default function Transactions() {
               <option value="">Все</option>
               <option value="income">Доход</option>
               <option value="expense">Расход</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Способ оплаты</label>
+            <select value={filterPayment} onChange={e => setFilterPayment(e.target.value)}
+              className="px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm">
+              <option value="">Все</option>
+              <option value="CASH">Наличные</option>
+              <option value="CARD_TRANSFER">Перевод на карту</option>
+              <option value="TERMINAL_VISA">Терминал Visa</option>
+              <option value="TERMINAL_UZCARD">Терминал UzCard</option>
+              <option value="PAYME">PayMe</option>
+              <option value="PREPAYMENT">Предоплата</option>
             </select>
           </div>
           <div className="flex gap-1.5 items-end pb-0.5">

@@ -24,12 +24,15 @@ from db.database import async_session
 from db.enums import (
     ExpenseCategory,
     EXPENSE_CATEGORY_LABELS,
+    WalletTransactionType,
+    WalletTransactionStatus,
 )
 from db.models import (
     ExpenseEntry,
     StaffMember,
     StructuredReport,
     User,
+    WalletTransaction,
 )
 
 router = Router()
@@ -335,6 +338,18 @@ async def on_confirm_expense(callback: types.CallbackQuery, state: FSMContext):
         if report:
             report.total_expense = (report.total_expense or Decimal(0)) + Decimal(data["amount"])
             await session.merge(report)
+
+        # If SALARY expense, deduct from reporter's cash wallet
+        if ExpenseCategory(data["expense_category"]) == ExpenseCategory.SALARY:
+            session.add(WalletTransaction(
+                sender_telegram_id=callback.from_user.id,
+                amount=Decimal(data["amount"]),
+                transaction_type=WalletTransactionType.SALARY,
+                status=WalletTransactionStatus.COMPLETED,
+                note=data.get("description") or "Зарплата",
+                report_id=report_id,
+                business_unit=data.get("business_unit", "RESORT"),
+            ))
 
         await session.commit()
 

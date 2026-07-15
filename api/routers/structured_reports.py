@@ -484,6 +484,7 @@ async def structured_breakdown(
 async def structured_transactions(
     business_unit: Optional[BusinessUnit] = None,
     entry_type: Optional[str] = Query(default=None, description="income or expense"),
+    payment_method: Optional[str] = Query(default=None, description="CASH, CARD_TRANSFER, etc."),
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
     limit: int = Query(default=100, le=500),
@@ -522,6 +523,9 @@ async def structured_transactions(
 
         if entry_type != "expense":
             for entry in report.income_entries:
+                # Filter by payment method if specified
+                if payment_method and entry.payment_method.value != payment_method:
+                    continue
                 name = (
                     entry.property.name_ru if entry.property else
                     entry.service_item.name_ru if entry.service_item else
