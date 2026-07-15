@@ -156,6 +156,7 @@ export default function Dashboard({ user }) {
           {[
             { key: 'RESORT', label: 'Курорт' },
             { key: 'RESTAURANT', label: 'Ресторан' },
+            { key: 'XUSH', label: 'XUSH' },
             { key: 'ALL', label: 'Все' },
           ].map(({ key, label }) => (
             <button key={key}
@@ -371,7 +372,7 @@ export default function Dashboard({ user }) {
 
               {/* Grand total */}
               <div className="bg-white rounded-xl border border-gray-200 p-4 flex items-center justify-between mb-4">
-                <span className="text-sm text-gray-500">Общий оборот ({section === 'RESORT' ? 'Курорт' : 'Ресторан'})</span>
+                <span className="text-sm text-gray-500">Общий оборот ({ {RESORT: 'Курорт', RESTAURANT: 'Ресторан', XUSH: 'XUSH'}[section] || section })</span>
                 <span className="text-lg font-bold text-gray-900">{formatUZS(centralTotal)}</span>
               </div>
 

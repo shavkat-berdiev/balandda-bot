@@ -670,6 +670,15 @@ async def run_migrations():
             END IF;
         END $$;
         """,
+        # Added: XUSH business unit
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_enum WHERE enumlabel = 'XUSH' AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'businessunit')) THEN
+                ALTER TYPE businessunit ADD VALUE 'XUSH';
+            END IF;
+        END $$;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in enum_additions:

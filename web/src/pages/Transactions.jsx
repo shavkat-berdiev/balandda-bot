@@ -92,6 +92,7 @@ export default function Transactions() {
               <option value="">Все</option>
               <option value="RESORT">Курорт</option>
               <option value="RESTAURANT">Ресторан</option>
+              <option value="XUSH">XUSH</option>
             </select>
           </div>
           <div>
@@ -201,9 +202,14 @@ export default function Transactions() {
                     <td className="px-4 py-3">
                       <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
                         tx.business_unit === 'RESORT' || tx.business_unit === 'resort'
-                          ? 'bg-blue-50 text-blue-700' : 'bg-orange-50 text-orange-700'
+                          ? 'bg-blue-50 text-blue-700'
+                          : tx.business_unit === 'XUSH' || tx.business_unit === 'xush'
+                          ? 'bg-purple-50 text-purple-700'
+                          : 'bg-orange-50 text-orange-700'
                       }`}>
-                        {tx.business_unit === 'RESORT' || tx.business_unit === 'resort' ? 'Курорт' : 'Ресторан'}
+                        {tx.business_unit === 'RESORT' || tx.business_unit === 'resort' ? 'Курорт'
+                          : tx.business_unit === 'XUSH' || tx.business_unit === 'xush' ? 'XUSH'
+                          : 'Ресторан'}
                       </span>
                     </td>
                     <td className="px-4 py-3 text-sm text-gray-600">{tx.category}</td>

@@ -2,30 +2,33 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from bot.locales import get_text
 
+# All business sections — add new ones here
+SECTIONS = [
+    ("resort", "section_resort"),
+    ("restaurant", "section_restaurant"),
+    ("xush", "section_xush"),
+]
+
 
 def section_keyboard(lang: str = "ru") -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text=get_text("section_resort", lang),
-                callback_data="section:resort",
-            ),
-            InlineKeyboardButton(
-                text=get_text("section_restaurant", lang),
-                callback_data="section:restaurant",
-            ),
-        ]
-    ])
+    buttons = []
+    for code, label_key in SECTIONS:
+        buttons.append([InlineKeyboardButton(
+            text=get_text(label_key, lang),
+            callback_data=f"section:{code}",
+        )])
+    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def main_menu_keyboard(lang: str = "ru", current_section: str = "resort", role: str = "") -> InlineKeyboardMarkup:
-    # Determine the other section for the switch button
-    if current_section == "resort":
-        switch_label = f"🔄 {get_text('section_restaurant', lang)}"
-        switch_data = "section:restaurant"
-    else:
-        switch_label = f"🔄 {get_text('section_resort', lang)}"
-        switch_data = "section:resort"
+    # Build switch-section buttons — show all OTHER sections
+    switch_buttons = []
+    for code, label_key in SECTIONS:
+        if code != current_section:
+            switch_buttons.append(InlineKeyboardButton(
+                text=f"🔄 {get_text(label_key, lang)}",
+                callback_data=f"section:{code}",
+            ))
 
     # PURCHASER role — restricted menu: only purchase + wallet
     if role == "PURCHASER":
@@ -42,8 +45,8 @@ def main_menu_keyboard(lang: str = "ru", current_section: str = "resort", role: 
                     callback_data="action:wallet",
                 ),
             ],
+            switch_buttons,
             [
-                InlineKeyboardButton(text=switch_label, callback_data=switch_data),
                 InlineKeyboardButton(
                     text=f"⚙️ {get_text('btn_settings', lang)}",
                     callback_data="action:settings",
@@ -83,8 +86,8 @@ def main_menu_keyboard(lang: str = "ru", current_section: str = "resort", role: 
                 callback_data="action:report",
             ),
         ],
+        switch_buttons,
         [
-            InlineKeyboardButton(text=switch_label, callback_data=switch_data),
             InlineKeyboardButton(
                 text=f"⚙️ {get_text('btn_settings', lang)}",
                 callback_data="action:settings",

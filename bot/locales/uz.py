@@ -12,6 +12,7 @@ messages = {
     "select_section": "Bo'limni tanlang:",
     "section_resort": "Kurort",
     "section_restaurant": "Restoran",
+    "section_xush": "XUSH",
     "switched_to": "Siz o'tdingiz: {section}",
 
     # Main menu

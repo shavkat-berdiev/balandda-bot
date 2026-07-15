@@ -9,7 +9,7 @@ const STATUS_COLORS = {
   APPROVED: 'bg-green-50 text-green-700',
 };
 
-const BU_LABELS = { RESORT: 'Курорт', RESTAURANT: 'Ресторан' };
+const BU_LABELS = { RESORT: 'Курорт', RESTAURANT: 'Ресторан', XUSH: 'XUSH' };
 
 const PM_OPTIONS = [
   { value: 'CASH', label: 'Наличные' },
@@ -234,6 +234,7 @@ export default function AdminReports({ user }) {
               { key: 'ALL', label: 'Все' },
               { key: 'RESORT', label: 'Курорт' },
               { key: 'RESTAURANT', label: 'Ресторан' },
+              { key: 'XUSH', label: 'XUSH' },
             ].map(({ key, label }) => (
               <button key={key}
                 onClick={() => { setBusinessUnit(key); }}
@@ -274,7 +275,7 @@ export default function AdminReports({ user }) {
                     <p className="font-semibold text-gray-800">{fmtDate(report.report_date)}</p>
                     <div className="flex gap-3 text-xs text-gray-500 mt-1">
                       {businessUnit === 'ALL' && (
-                        <span className={`px-1.5 py-0.5 rounded font-medium ${report.business_unit === 'RESORT' ? 'bg-blue-100 text-blue-700' : 'bg-orange-100 text-orange-700'}`}>
+                        <span className={`px-1.5 py-0.5 rounded font-medium ${report.business_unit === 'RESORT' ? 'bg-blue-100 text-blue-700' : report.business_unit === 'XUSH' ? 'bg-purple-100 text-purple-700' : 'bg-orange-100 text-orange-700'}`}>
                           {BU_LABELS[report.business_unit] || report.business_unit}
                         </span>
                       )}
@@ -321,6 +322,7 @@ export default function AdminReports({ user }) {
                                   className="px-2 py-1.5 border border-gray-300 rounded text-sm">
                                   <option value="RESORT">Курорт</option>
                                   <option value="RESTAURANT">Ресторан</option>
+                                  <option value="XUSH">XUSH</option>
                                 </select>
                               </div>
                               <div className="flex gap-1">

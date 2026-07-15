@@ -161,6 +161,12 @@ async def on_wallet(callback: types.CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="🏦 Сдать в банк", callback_data="wlt:to_bank")],
         [InlineKeyboardButton(text="📊 Мой отчёт", callback_data="wlt:my_report")],
     ]
+    # XUSH section: add Billz cash sync button
+    if user.active_section.value == "XUSH":
+        buttons.insert(0, [InlineKeyboardButton(
+            text="🛒 Billz: наличные за сегодня",
+            callback_data="wlt:billz_sync",
+        )])
     if pending_count:
         buttons.insert(0, [InlineKeyboardButton(
             text=f"📥 Входящие ({pending_count})",
@@ -829,6 +835,104 @@ async def on_my_report_period(callback: types.CallbackQuery, state: FSMContext):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await callback.answer()
+
+
+# ────────────────────────────────────────────────────────────────────────
+# BILLZ CASH SYNC — pull today's cash payments from Billz POS
+# ────────────────────────────────────────────────────────────────────────
+
+
+@router.callback_query(F.data == "wlt:billz_sync", WalletStates.viewing)
+async def on_billz_sync(callback: types.CallbackQuery, state: FSMContext):
+    """Fetch today's cash total from Billz and show confirmation."""
+    from bot.billz import get_billz_client
+    from bot.config import settings
+
+    if not settings.billz_api_key:
+        await callback.answer("Billz API не настроен", show_alert=True)
+        return
+
+    await callback.answer("⏳ Загружаю данные из Billz...")
+
+    try:
+        client = get_billz_client()
+        result = await client.get_daily_cash_total()
+    except Exception as e:
+        logger.error(f"Billz sync error: {e}")
+        await callback.message.edit_text(
+            f"❌ Ошибка подключения к Billz:\n<code>{e}</code>\n\n"
+            f"Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="◀️ Назад", callback_data="action:wallet")],
+            ]),
+        )
+        return
+
+    cash = result["cash_total"]
+    card = result["card_total"]
+    other = result["other_total"]
+    count = result["order_count"]
+
+    # Build breakdown text
+    details_text = ""
+    for d in result["details"]:
+        details_text += f"  • {d['type']}: {format_amount(d['amount'])} UZS\n"
+
+    text = (
+        f"🛒 <b>Billz — Сегодня</b>\n\n"
+        f"Чеков: <b>{count}</b>\n\n"
+        f"💵 Наличные: <b>{format_amount(cash)} UZS</b>\n"
+        f"💳 Карта/терминал: {format_amount(card)} UZS\n"
+        f"📱 Прочее: {format_amount(other)} UZS\n"
+    )
+    if details_text:
+        text += f"\n<b>Детали:</b>\n{details_text}"
+
+    if cash > 0:
+        text += f"\n💰 Добавить <b>{format_amount(cash)} UZS</b> в кошелёк как приход наличных?"
+        await state.update_data(billz_cash_amount=str(cash))
+        buttons = [
+            [InlineKeyboardButton(text=f"✅ Добавить {format_amount(cash)} UZS", callback_data="wlt:billz_confirm")],
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="action:wallet")],
+        ]
+    else:
+        text += "\nНет наличных платежей за сегодня."
+        buttons = [
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="action:wallet")],
+        ]
+
+    await callback.message.edit_text(
+        text,
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+
+
+@router.callback_query(F.data == "wlt:billz_confirm", WalletStates.viewing)
+async def on_billz_confirm(callback: types.CallbackQuery, state: FSMContext):
+    """Confirm adding Billz cash total as CASH_IN wallet transaction."""
+    data = await state.get_data()
+    cash_str = data.get("billz_cash_amount")
+    if not cash_str:
+        await callback.answer("Сумма не найдена", show_alert=True)
+        return
+
+    amount = Decimal(cash_str)
+
+    async with async_session() as session:
+        session.add(WalletTransaction(
+            sender_telegram_id=callback.from_user.id,
+            amount=amount,
+            transaction_type=WalletTransactionType.CASH_IN,
+            status=WalletTransactionStatus.COMPLETED,
+            note="Billz: наличные за день",
+            business_unit="XUSH",
+        ))
+        await session.commit()
+
+    await callback.answer("✅ Наличные из Billz добавлены в кошелёк!")
+
+    # Refresh wallet view
+    await on_wallet(callback, state)
 
 
 # ────────────────────────────────────────────────────────────────────────

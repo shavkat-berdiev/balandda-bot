@@ -5,6 +5,7 @@ import { api } from '../api';
 const BUSINESS_UNITS = [
   { value: 'resort', label: 'Resort' },
   { value: 'restaurant', label: 'Restaurant' },
+  { value: 'xush', label: 'XUSH' },
 ];
 
 const TX_TYPES = [
@@ -210,9 +211,13 @@ export default function Categories() {
                   <td className="px-6 py-4 text-sm text-gray-600">{cat.name_uz}</td>
                   <td className="px-6 py-4">
                     <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${
-                      cat.business_unit === 'resort' ? 'bg-blue-50 text-blue-700' : 'bg-orange-50 text-orange-700'
+                      cat.business_unit === 'resort' ? 'bg-blue-50 text-blue-700'
+                        : cat.business_unit === 'xush' ? 'bg-purple-50 text-purple-700'
+                        : 'bg-orange-50 text-orange-700'
                     }`}>
-                      {cat.business_unit === 'resort' ? 'Resort' : 'Restaurant'}
+                      {cat.business_unit === 'resort' ? 'Resort'
+                        : cat.business_unit === 'xush' ? 'XUSH'
+                        : 'Restaurant'}
                     </span>
                   </td>
                   <td className="px-6 py-4">

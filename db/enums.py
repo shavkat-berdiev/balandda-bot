@@ -6,6 +6,7 @@ import enum
 class BusinessUnit(str, enum.Enum):
     RESORT = "RESORT"
     RESTAURANT = "RESTAURANT"
+    XUSH = "XUSH"
 
 
 class TransactionType(str, enum.Enum):

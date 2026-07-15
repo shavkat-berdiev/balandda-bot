@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     # Live-editable prepayment text (balandda.uz/admin?view=rates); falls back to the default above
     prepayment_url: str = "https://www.balandda.uz/prepayment.php"
 
+    # Billz POS (XUSH retail — api-admin.billz.ai)
+    billz_api_key: str = ""          # secret_token for REST auth
+    billz_sklad_api_key: str = ""    # warehouse-specific token (if different)
+
     # Beds24 channel manager (OTA sync: Booking.com / Airbnb / Trip.com)
     beds24_enabled: bool = False
     beds24_refresh_token: str = ""            # long-lived token (SETTINGS→API in Beds24)

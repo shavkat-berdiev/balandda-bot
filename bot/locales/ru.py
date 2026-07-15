@@ -12,6 +12,7 @@ messages = {
     "select_section": "Выберите раздел:",
     "section_resort": "Курорт",
     "section_restaurant": "Ресторан",
+    "section_xush": "XUSH",
     "switched_to": "Вы переключились на: {section}",
 
     # Main menu
