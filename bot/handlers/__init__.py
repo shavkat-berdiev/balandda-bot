@@ -13,6 +13,7 @@ from bot.handlers.purchase import router as purchase_router
 from bot.handlers.report import router as report_router
 from bot.handlers.start import router as start_router
 from bot.handlers.wallet import router as wallet_router
+from bot.handlers.xush import router as xush_router
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ main_router.include_router(new_report_router)   # Structured report flow
 main_router.include_router(new_expense_router)   # Expense entry flow
 main_router.include_router(prepayment_router)    # Quick prepayment flow
 main_router.include_router(purchase_router)      # Purchase report flow
+main_router.include_router(xush_router)           # XUSH simplified cash-box flow
 main_router.include_router(wallet_router)        # Wallet / cash transfers
 main_router.include_router(cash_flow_router)
 main_router.include_router(history_router)

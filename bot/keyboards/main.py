@@ -30,51 +30,46 @@ def main_menu_keyboard(lang: str = "ru", current_section: str = "resort", role: 
                 callback_data=f"section:{code}",
             ))
 
-    # PURCHASER role — restricted menu: only purchase + wallet
-    if role == "PURCHASER":
+    # ── XUSH section — simplified cash-box menu ──
+    if current_section == "xush":
         return InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🛒 Закуп",
-                    callback_data="action:purchase",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💼 Инкассация",
-                    callback_data="action:wallet",
-                ),
-            ],
+            [InlineKeyboardButton(text="💰 Касса", callback_data="action:wallet")],
+            [InlineKeyboardButton(text="📤 Расходы", callback_data="xush:expenses")],
+            [InlineKeyboardButton(text="💼 Инкассация", callback_data="xush:transfer")],
             switch_buttons,
-            [
-                InlineKeyboardButton(
-                    text=f"⚙️ {get_text('btn_settings', lang)}",
-                    callback_data="action:settings",
-                ),
-            ],
+            [InlineKeyboardButton(
+                text=f"⚙️ {get_text('btn_settings', lang)}",
+                callback_data="action:settings",
+            )],
         ])
 
-    # Full menu for all other roles
+    # ── PURCHASER role — restricted menu: only purchase + wallet ──
+    if role == "PURCHASER":
+        return InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🛒 Закуп", callback_data="action:purchase")],
+            [InlineKeyboardButton(text="💼 Инкассация", callback_data="action:wallet")],
+            switch_buttons,
+            [InlineKeyboardButton(
+                text=f"⚙️ {get_text('btn_settings', lang)}",
+                callback_data="action:settings",
+            )],
+        ])
+
+    # ── Full menu for Resort / Restaurant ──
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(
                 text=f"📝 {get_text('btn_new_report', lang)}",
                 callback_data="action:new_report",
             ),
-            InlineKeyboardButton(
-                text="🛒 Закуп",
-                callback_data="action:purchase",
-            ),
+            InlineKeyboardButton(text="🛒 Закуп", callback_data="action:purchase"),
         ],
         [
             InlineKeyboardButton(
                 text=f"💵 {get_text('btn_prepayment', lang)}",
                 callback_data="action:prepayment",
             ),
-            InlineKeyboardButton(
-                text="💼 Инкассация",
-                callback_data="action:wallet",
-            ),
+            InlineKeyboardButton(text="💼 Инкассация", callback_data="action:wallet"),
         ],
         [
             InlineKeyboardButton(
@@ -87,12 +82,10 @@ def main_menu_keyboard(lang: str = "ru", current_section: str = "resort", role: 
             ),
         ],
         switch_buttons,
-        [
-            InlineKeyboardButton(
-                text=f"⚙️ {get_text('btn_settings', lang)}",
-                callback_data="action:settings",
-            ),
-        ],
+        [InlineKeyboardButton(
+            text=f"⚙️ {get_text('btn_settings', lang)}",
+            callback_data="action:settings",
+        )],
     ])
 
 
