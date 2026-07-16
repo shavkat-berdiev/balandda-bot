@@ -43,6 +43,7 @@ class WalletStates(StatesGroup):
     entering_amount = State()
     entering_note = State()
     confirming = State()
+    entering_cash_in_amount = State()
 
 
 def format_amount(amount: float | Decimal) -> str:
@@ -161,11 +162,11 @@ async def on_wallet(callback: types.CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="🏦 Сдать в банк", callback_data="wlt:to_bank")],
         [InlineKeyboardButton(text="📊 Мой отчёт", callback_data="wlt:my_report")],
     ]
-    # XUSH section: add Billz cash sync button
+    # XUSH section: manual cash-in button
     if user.active_section.value == "XUSH":
         buttons.insert(0, [InlineKeyboardButton(
-            text="🛒 Billz: наличные за сегодня",
-            callback_data="wlt:billz_sync",
+            text="💵 Приход наличных",
+            callback_data="wlt:xush_cash_in",
         )])
     if pending_count:
         buttons.insert(0, [InlineKeyboardButton(
@@ -838,101 +839,68 @@ async def on_my_report_period(callback: types.CallbackQuery, state: FSMContext):
 
 
 # ────────────────────────────────────────────────────────────────────────
-# BILLZ CASH SYNC — pull today's cash payments from Billz POS
+# XUSH MANUAL CASH-IN — user enters cash amount manually
 # ────────────────────────────────────────────────────────────────────────
 
 
-@router.callback_query(F.data == "wlt:billz_sync", WalletStates.viewing)
-async def on_billz_sync(callback: types.CallbackQuery, state: FSMContext):
-    """Fetch today's cash total from Billz and show confirmation."""
-    from bot.billz import get_billz_client
-    from bot.config import settings
+@router.callback_query(F.data == "wlt:xush_cash_in", WalletStates.viewing)
+async def on_xush_cash_in(callback: types.CallbackQuery, state: FSMContext):
+    """Prompt user to enter cash amount for manual cash-in."""
+    balance = await get_wallet_balance(callback.from_user.id)
 
-    if not settings.billz_api_key:
-        await callback.answer("Billz API не настроен", show_alert=True)
-        return
-
-    await callback.answer("⏳ Загружаю данные из Billz...")
-
-    try:
-        client = get_billz_client()
-        result = await client.get_daily_cash_total()
-    except Exception as e:
-        logger.error(f"Billz sync error: {e}")
-        await callback.message.edit_text(
-            f"❌ Ошибка подключения к Billz:\n<code>{e}</code>\n\n"
-            f"Попробуйте позже.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data="action:wallet")],
-            ]),
-        )
-        return
-
-    cash = result["cash_total"]
-    card = result["card_total"]
-    other = result["other_total"]
-    count = result["order_count"]
-
-    # Build breakdown text
-    details_text = ""
-    for d in result["details"]:
-        details_text += f"  • {d['type']}: {format_amount(d['amount'])} UZS\n"
-
-    text = (
-        f"🛒 <b>Billz — Сегодня</b>\n\n"
-        f"Чеков: <b>{count}</b>\n\n"
-        f"💵 Наличные: <b>{format_amount(cash)} UZS</b>\n"
-        f"💳 Карта/терминал: {format_amount(card)} UZS\n"
-        f"📱 Прочее: {format_amount(other)} UZS\n"
-    )
-    if details_text:
-        text += f"\n<b>Детали:</b>\n{details_text}"
-
-    if cash > 0:
-        text += f"\n💰 Добавить <b>{format_amount(cash)} UZS</b> в кошелёк как приход наличных?"
-        await state.update_data(billz_cash_amount=str(cash))
-        buttons = [
-            [InlineKeyboardButton(text=f"✅ Добавить {format_amount(cash)} UZS", callback_data="wlt:billz_confirm")],
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="action:wallet")],
-        ]
-    else:
-        text += "\nНет наличных платежей за сегодня."
-        buttons = [
-            [InlineKeyboardButton(text="◀️ Назад", callback_data="action:wallet")],
-        ]
-
+    await state.set_state(WalletStates.entering_cash_in_amount)
     await callback.message.edit_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        f"💵 <b>Приход наличных (XUSH)</b>\n\n"
+        f"💰 Текущий баланс: <b>{format_amount(balance)} UZS</b>\n\n"
+        f"Введите сумму прихода:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="action:wallet")],
+        ]),
     )
+    await callback.answer()
 
 
-@router.callback_query(F.data == "wlt:billz_confirm", WalletStates.viewing)
-async def on_billz_confirm(callback: types.CallbackQuery, state: FSMContext):
-    """Confirm adding Billz cash total as CASH_IN wallet transaction."""
-    data = await state.get_data()
-    cash_str = data.get("billz_cash_amount")
-    if not cash_str:
-        await callback.answer("Сумма не найдена", show_alert=True)
+@router.message(WalletStates.entering_cash_in_amount)
+async def on_xush_cash_in_amount(message: types.Message, state: FSMContext):
+    """Parse cash-in amount, create CASH_IN transaction."""
+    text = message.text.strip().replace(" ", "").replace(".", "").replace(",", "")
+    if not text.isdigit() or int(text) <= 0:
+        await message.answer("Введите корректную сумму (только цифры).")
         return
 
-    amount = Decimal(cash_str)
+    amount = Decimal(text)
 
     async with async_session() as session:
         session.add(WalletTransaction(
-            sender_telegram_id=callback.from_user.id,
+            sender_telegram_id=message.from_user.id,
             amount=amount,
             transaction_type=WalletTransactionType.CASH_IN,
             status=WalletTransactionStatus.COMPLETED,
-            note="Billz: наличные за день",
+            note="Приход наличных",
             business_unit="XUSH",
         ))
         await session.commit()
 
-    await callback.answer("✅ Наличные из Billz добавлены в кошелёк!")
+    balance = await get_wallet_balance(message.from_user.id)
 
-    # Refresh wallet view
-    await on_wallet(callback, state)
+    # Get user for menu
+    async with async_session() as session:
+        result = await session.execute(
+            select(User).where(User.telegram_id == message.from_user.id)
+        )
+        user = result.scalar_one_or_none()
+
+    lang = user.language.value.lower() if user else "ru"
+    section = user.active_section.value.lower() if user else "xush"
+    section_name = get_text(f"section_{section}", lang)
+
+    await state.clear()
+    await message.answer(
+        f"✅ Приход наличных: +{format_amount(amount)} UZS\n"
+        f"💰 Баланс кассы: <b>{format_amount(balance)} UZS</b>\n\n"
+        f"{get_text('main_menu', lang, section=section_name)}",
+        reply_markup=main_menu_keyboard(lang, current_section=section, role=user.role.value if user else ""),
+    )
 
 
 # ────────────────────────────────────────────────────────────────────────
