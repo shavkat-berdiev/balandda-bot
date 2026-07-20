@@ -77,7 +77,7 @@ export default function Layout({ user, onLogout, children, frontOffice }) {
 
       {/* Desktop sidebar */}
       <div className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col">
-        <div className="flex flex-col flex-grow bg-white border-r border-gray-200">
+        <div className="flex flex-col h-full overflow-hidden bg-white border-r border-gray-200">
           <SidebarContent user={user} roleLabels={roleLabels} location={location} onLogout={onLogout} frontOffice={frontOffice} />
         </div>
       </div>
