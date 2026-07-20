@@ -286,9 +286,11 @@ function Row({ item, depth, ctx }) {
                 </p>
               </div>
 
-              {(item.action === 'reply' || item.action === 'book') && (
+              {(item.action === 'reply' || item.action === 'book' || item.action === 'submenu') && (
                 <>
-                  <label className={lbl}>Текст ответа ({lang.toUpperCase()})</label>
+                  <label className={lbl}>
+                    {item.action === 'submenu' ? `Текст над кнопками (${lang.toUpperCase()})` : `Текст ответа (${lang.toUpperCase()})`}
+                  </label>
                   <textarea rows={5} value={item[`body_${lang}`] || ''} onChange={e => patch(item.id, `body_${lang}`, e.target.value)}
                     className={`${fld} mb-3`} placeholder="Что бот отправит клиенту…" />
 

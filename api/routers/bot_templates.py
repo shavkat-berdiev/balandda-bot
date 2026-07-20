@@ -547,6 +547,7 @@ async def bot_flow(
     return {"nodes": nodes}
 
 
+@router.get("/public/bot-image/{name}")
 @router.get("/bot-image/{name}")
 async def bot_image(name: str):
     """Public image serving — Instagram (Meta) fetches these URLs without any auth header."""
