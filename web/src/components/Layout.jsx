@@ -115,7 +115,7 @@ function SidebarContent({ user, roleLabels, location, onLogout, onClose, frontOf
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 py-4 space-y-1">
+      <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-1">
         {items.map(({ path, label, icon: Icon }) => {
           const active = location.pathname === path;
           return (
