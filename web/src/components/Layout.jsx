@@ -8,6 +8,7 @@ const navItems = [
   { path: '/pool', label: 'Бассейн', icon: Waves },
   { path: '/spa-schedule', label: 'Расписание SPA', icon: CalendarClock },
   { path: '/changelog', label: 'Журнал броней', icon: History },
+  { path: '/stats', label: 'Статистика', icon: BarChart3 },
   { path: '/transactions', label: 'Transactions', icon: ArrowLeftRight },
   { path: '/prepayments', label: 'Предоплаты', icon: CreditCard },
   { path: '/wallets', label: 'Кошельки', icon: Wallet },
