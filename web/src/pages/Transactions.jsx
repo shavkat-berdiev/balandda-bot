@@ -111,6 +111,7 @@ export default function Transactions() {
               <option value="">Все</option>
               <option value="CASH">Наличные</option>
               <option value="CARD_TRANSFER">Перевод на карту</option>
+              <option value="WIRE_TRANSFER">Перечисление</option>
               <option value="TERMINAL_VISA">Терминал Visa</option>
               <option value="TERMINAL_UZCARD">Терминал UzCard</option>
               <option value="PAYME">PayMe</option>

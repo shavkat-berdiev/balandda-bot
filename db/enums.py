@@ -31,6 +31,7 @@ class Language(str, enum.Enum):
 class PaymentMethod(str, enum.Enum):
     CASH = "CASH"
     CARD_TRANSFER = "CARD_TRANSFER"
+    WIRE_TRANSFER = "WIRE_TRANSFER"   # Перечисление (bank wire / invoice payment)
     TERMINAL_VISA = "TERMINAL_VISA"
     TERMINAL_UZCARD = "TERMINAL_UZCARD"
     PAYME = "PAYME"
@@ -212,6 +213,7 @@ class WalletTransactionStatus(str, enum.Enum):
 PAYMENT_METHOD_LABELS = {
     PaymentMethod.CASH: "Наличные",
     PaymentMethod.CARD_TRANSFER: "Перевод на карту",
+    PaymentMethod.WIRE_TRANSFER: "Перечисление",
     PaymentMethod.TERMINAL_VISA: "Терминал Visa",
     PaymentMethod.TERMINAL_UZCARD: "Терминал UzCard",
     PaymentMethod.PAYME: "PayMe",

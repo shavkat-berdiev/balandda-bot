@@ -17,6 +17,7 @@ const SOURCE_OPTIONS = ['MANUAL', 'PHONE', 'DIRECT', 'TELEGRAM', 'INSTAGRAM', 'B
 const PAYMENT_METHODS = [
   { v: 'CASH', l: 'Наличные' },
   { v: 'CARD_TRANSFER', l: 'Перевод на карту' },
+  { v: 'WIRE_TRANSFER', l: 'Перечисление' },
   { v: 'TERMINAL_VISA', l: 'Терминал Visa' },
   { v: 'TERMINAL_UZCARD', l: 'Терминал UzCard' },
   { v: 'PAYME', l: 'PayMe' },

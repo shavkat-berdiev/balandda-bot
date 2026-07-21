@@ -526,6 +526,19 @@ async def run_migrations():
     # ── Phase 2: enum values that need a separate transaction ──
     # PostgreSQL requires COMMIT between ALTER TYPE ADD VALUE and using the new value.
     enum_additions = [
+        # WIRE_TRANSFER (Перечисление) payment method
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_enum
+                WHERE enumlabel = 'WIRE_TRANSFER'
+                  AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'paymentmethod')
+            ) THEN
+                ALTER TYPE paymentmethod ADD VALUE 'WIRE_TRANSFER' AFTER 'CARD_TRANSFER';
+            END IF;
+        END $$;
+        """,
         # Added in v0.6: OWNER role
         """
         DO $$

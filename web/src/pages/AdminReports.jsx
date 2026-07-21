@@ -14,6 +14,7 @@ const BU_LABELS = { RESORT: 'Курорт', RESTAURANT: 'Ресторан', XUSH
 const PM_OPTIONS = [
   { value: 'CASH', label: 'Наличные' },
   { value: 'CARD_TRANSFER', label: 'Перевод на карту' },
+  { value: 'WIRE_TRANSFER', label: 'Перечисление' },
   { value: 'TERMINAL_VISA', label: 'Терминал Visa' },
   { value: 'TERMINAL_UZCARD', label: 'Терминал UzCard' },
   { value: 'PAYME', label: 'Payme' },
