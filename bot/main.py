@@ -472,6 +472,34 @@ async def run_migrations():
         """
         CREATE INDEX IF NOT EXISTS ix_spa_appt_start ON spa_appointments (start_at);
         """,
+        # ── Guest base + booking discounts (calendar) ──
+        """
+        CREATE TABLE IF NOT EXISTS customers (
+            id SERIAL PRIMARY KEY,
+            phone VARCHAR(50) NOT NULL UNIQUE,
+            phone_raw VARCHAR(50) NULL,
+            name VARCHAR(255) NULL,
+            language VARCHAR(5) NULL,
+            telegram_username VARCHAR(100) NULL,
+            telegram_user_id BIGINT NULL,
+            is_vip BOOLEAN NOT NULL DEFAULT FALSE,
+            tags TEXT NULL,
+            notes TEXT NULL,
+            bookings_count INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        );
+        """,
+        """
+        ALTER TABLE reservations ADD COLUMN IF NOT EXISTS discount_percent NUMERIC(5,2) NOT NULL DEFAULT 0;
+        """,
+        """
+        ALTER TABLE reservations ADD COLUMN IF NOT EXISTS discount_reason VARCHAR(30) NULL;
+        """,
+        """
+        ALTER TABLE reservations ADD COLUMN IF NOT EXISTS customer_id INTEGER NULL
+            REFERENCES customers(id) ON DELETE SET NULL;
+        """,
         # ── Unified bot content: one source for Telegram + Instagram ──
         """
         CREATE TABLE IF NOT EXISTS bot_templates (

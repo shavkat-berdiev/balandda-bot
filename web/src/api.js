@@ -135,6 +135,12 @@ export const api = {
   createSpaMaster: (data) => request('/admin/spa-masters', { method: 'POST', body: JSON.stringify(data) }),
   updateSpaMaster: (id, data) => request(`/admin/spa-masters/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 
+  // Guest base (customers)
+  searchCustomers: (phone) => request(`/customers/search?phone=${encodeURIComponent(phone || '')}`),
+  getCustomers: (q) => request(`/customers?q=${encodeURIComponent(q || '')}`),
+  updateCustomer: (id, data) => request(`/customers/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getCustomerBookings: (id) => request(`/customers/${id}/bookings`),
+
   // Stats hub (proxied from the CRM)
   getStatsOverview: (from, to) => request(`/stats/overview?from=${from}&to=${to}`),
   getStatsBot: (from, to) => request(`/stats/bot?from=${from}&to=${to}`),

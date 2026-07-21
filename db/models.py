@@ -584,6 +584,26 @@ class RegistrationRequest(Base):
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class Customer(Base):
+    """Guest base — one record per person, keyed by normalized phone. Auto-upserted from
+    every booking so repeat guests are recognised (name history, VIP/other flags)."""
+    __tablename__ = "customers"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    phone: Mapped[str] = mapped_column(String(50), unique=True, index=True)   # digits only, normalized
+    phone_raw: Mapped[str | None] = mapped_column(String(50), nullable=True)  # as first entered
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    language: Mapped[str | None] = mapped_column(String(5), nullable=True)
+    telegram_username: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    telegram_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    is_vip: Mapped[bool] = mapped_column(default=False)
+    tags: Mapped[str | None] = mapped_column(Text, nullable=True)   # JSON array of free-text flags
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bookings_count: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
 class Reservation(Base):
     """A booking (or manual block) on a specific unit (Property). Powers the
     availability calendar. Overlap on the same unit is prevented by a Postgres
@@ -619,6 +639,11 @@ class Reservation(Base):
     booking_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     confirmed_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Discount on the accommodation price (lowers total_amount + deposit).
+    discount_percent: Mapped[float] = mapped_column(Numeric(5, 2), default=0)
+    discount_reason: Mapped[str | None] = mapped_column(String(30), nullable=True)  # DiscountReason value
+    # Guest base link (auto-upserted by phone).
+    customer_id: Mapped[int | None] = mapped_column(ForeignKey("customers.id", ondelete="SET NULL"), nullable=True)
     # Channel-manager (Beds24) booking id — dedupes OTA imports (Booking.com/Airbnb/Trip.com)
     channel_booking_id: Mapped[str | None] = mapped_column(String(64), unique=True, index=True, nullable=True)
     created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)

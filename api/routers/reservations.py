@@ -61,6 +61,8 @@ class ReservationCreate(BaseModel):
     source: str = "MANUAL"
     total_amount: float | None = None
     deposit_amount: float | None = None
+    discount_percent: float | None = None
+    discount_reason: str | None = None
     note: str | None = None
 
 
@@ -81,7 +83,43 @@ class ReservationUpdate(BaseModel):
     status: str | None = None
     total_amount: float | None = None
     deposit_amount: float | None = None
+    discount_percent: float | None = None
+    discount_reason: str | None = None
     note: str | None = None
+
+
+def _norm_phone(raw: str | None) -> str | None:
+    """Digits only, so +998 90 123-45-67 and 998901234567 match the same guest."""
+    if not raw:
+        return None
+    d = "".join(ch for ch in raw if ch.isdigit())
+    return d[-12:] if len(d) >= 9 else (d or None)
+
+
+async def _upsert_customer(session: AsyncSession, *, phone: str | None, name: str | None,
+                           language: str | None = None, tg_username: str | None = None,
+                           tg_user_id: int | None = None) -> int | None:
+    """Auto-save the guest by phone: create on first sight, refresh name/contact on repeat."""
+    norm = _norm_phone(phone)
+    if not norm:
+        return None
+    from db.models import Customer
+    cust = (await session.execute(select(Customer).where(Customer.phone == norm))).scalar_one_or_none()
+    if cust is None:
+        cust = Customer(phone=norm, phone_raw=phone, name=name, language=language,
+                        telegram_username=_clean_username(tg_username), telegram_user_id=tg_user_id,
+                        bookings_count=1)
+        session.add(cust)
+        await session.flush()
+    else:
+        if name and not cust.name:
+            cust.name = name
+        if tg_username and not cust.telegram_username:
+            cust.telegram_username = _clean_username(tg_username)
+        if tg_user_id and not cust.telegram_user_id:
+            cust.telegram_user_id = tg_user_id
+        cust.bookings_count = (cust.bookings_count or 0) + 1
+    return cust.id
 
 
 def _stay_price(prop, ci, co):
@@ -124,6 +162,9 @@ def _out(r: Reservation, property_name: str | None = None, income_paid: float = 
         "deposit_amount": float(r.deposit_amount) if r.deposit_amount is not None else None,
         "paid_amount": paid,
         "balance": (total - paid) if total is not None else None,
+        "discount_percent": float(r.discount_percent or 0),
+        "discount_reason": r.discount_reason,
+        "customer_id": r.customer_id,
         "note": r.note,
         "telegram_username": r.telegram_username,
         "telegram_user_id": r.telegram_user_id,
@@ -323,6 +364,22 @@ async def create_reservation(
         and prop is not None
         and prop.business_unit == BusinessUnit.RESORT
     )
+
+    # Price: explicit total wins; otherwise derive from the unit's rates and apply any discount.
+    pct = float(data.discount_percent or 0)
+    if data.total_amount is not None:
+        total = float(data.total_amount)
+    else:
+        base = _stay_price(prop, data.check_in, data.check_out)
+        total = round(base * (1 - pct / 100)) if base is not None else None
+    deposit = data.deposit_amount if data.deposit_amount is not None else (round(total * 0.30) if total else None)
+
+    # Auto-save the guest by phone and link the record.
+    customer_id = await _upsert_customer(
+        session, phone=data.guest_phone, name=data.guest_name,
+        tg_username=data.telegram_username, tg_user_id=data.telegram_user_id,
+    )
+
     res = Reservation(
         property_id=data.property_id,
         check_in=data.check_in,
@@ -334,8 +391,11 @@ async def create_reservation(
         telegram_user_id=data.telegram_user_id,
         status=status,
         source=source,
-        total_amount=data.total_amount,
-        deposit_amount=data.deposit_amount,
+        total_amount=total,
+        deposit_amount=deposit,
+        discount_percent=pct,
+        discount_reason=(data.discount_reason or None),
+        customer_id=customer_id,
         note=data.note,
         created_by=user.get("telegram_id"),
         hold_warn_at=add_working_minutes(now, 30) if arm else None,
@@ -379,8 +439,33 @@ async def update_reservation(
         res.telegram_username = _clean_username(data.telegram_username)
     if data.telegram_user_id is not None:
         res.telegram_user_id = data.telegram_user_id
+    if data.discount_percent is not None:
+        res.discount_percent = data.discount_percent
+    if data.discount_reason is not None:
+        res.discount_reason = data.discount_reason or None
     if res.check_out <= res.check_in:
         raise HTTPException(status_code=400, detail="check_out must be after check_in")
+
+    # Re-price when the booking moves (new unit/dates) OR the discount changes — from the
+    # unit's rates with the discount applied — unless the caller set an explicit price.
+    moved = (res.property_id != old_property_id) or (res.check_in != old_ci) or (res.check_out != old_co)
+    if (moved or data.discount_percent is not None) and data.total_amount is None:
+        prop_new = await session.get(Property, res.property_id)
+        base = _stay_price(prop_new, res.check_in, res.check_out)
+        if base is not None:
+            pct = float(res.discount_percent or 0)
+            new_total = round(base * (1 - pct / 100))
+            res.total_amount = new_total
+            if data.deposit_amount is None:
+                res.deposit_amount = round(new_total * 0.30)
+
+    # Keep the guest base fresh if phone/name changed here.
+    if data.guest_phone is not None or data.guest_name is not None:
+        cid = await _upsert_customer(session, phone=res.guest_phone, name=res.guest_name,
+                                     tg_username=res.telegram_username, tg_user_id=res.telegram_user_id)
+        if cid:
+            res.customer_id = cid
+
     new = {f: getattr(res, f) for f in _FIELDS}
     try:
         await session.commit()

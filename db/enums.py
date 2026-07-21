@@ -72,6 +72,7 @@ class DiscountReason(str, enum.Enum):
     BIRTHDAY = "BIRTHDAY"
     VIP_GUEST = "VIP_GUEST"
     PROMOTION = "PROMOTION"
+    FAVORITE_GUEST = "FAVORITE_GUEST"
     STAFF_REFERRAL = "STAFF_REFERRAL"
     OTHER = "OTHER"
 
@@ -254,6 +255,7 @@ DISCOUNT_REASON_LABELS = {
     DiscountReason.BIRTHDAY: "День рождения",
     DiscountReason.VIP_GUEST: "VIP гость",
     DiscountReason.PROMOTION: "Акция",
+    DiscountReason.FAVORITE_GUEST: "Любимый гость",
     DiscountReason.STAFF_REFERRAL: "Рекомендация персонала",
     DiscountReason.OTHER: "Другое",
 }
