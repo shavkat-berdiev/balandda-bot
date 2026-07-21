@@ -154,11 +154,27 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
       telegram_username: detail.telegram_username || '',
       guest_count: detail.guest_count ?? '', total_amount: detail.total_amount ?? '',
       deposit_amount: detail.deposit_amount ?? '', note: detail.note || '',
+      discount: Number(detail.discount_percent) || 0, discount_reason: detail.discount_reason || '',
     });
     api.getReservationEvents(detail.id).then(setEvents).catch(() => setEvents([]));
     api.getReservationPayments(detail.id).then(setPayments).catch(() => setPayments([]));
     api.prepaymentsByReservation(detail.id).then(setPrepays).catch(() => setPrepays([]));
   }, [detail]);
+
+  // Detail edit: recompute the price when the booking is moved or the discount changes.
+  function updateDetailForm(patch) {
+    setDetailForm((f) => {
+      const next = { ...f, ...patch };
+      if ('check_in' in patch && next.check_in && next.check_out <= next.check_in) {
+        next.check_out = ymd(addDays(new Date(next.check_in + 'T00:00:00'), 1));
+      }
+      if ('property_id' in patch || 'check_in' in patch || 'check_out' in patch || 'discount' in patch) {
+        const a = calcAmounts(next.property_id, next.check_in, next.check_out, Number(next.discount) || 0);
+        if (a.total_amount) next.total_amount = a.total_amount;
+      }
+      return next;
+    });
+  }
 
   async function reloadPayments(id) {
     try { setPayments(await api.getReservationPayments(id)); } catch { /* ignore */ }
@@ -204,14 +220,15 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
     return m;
   }, [reservations]);
 
-  // Suggested amounts from the unit's catalog rate (editable). Deposit defaults to 30%.
-  function calcAmounts(propertyId, ci, co) {
+  // Suggested amounts from the unit's catalog rate (editable), less any discount.
+  function calcAmounts(propertyId, ci, co, discount = 0) {
     if (!autoPrice) return { total_amount: '', deposit_amount: '' }; // pool: amounts empty/manual
     const u = units.find((x) => x.id === Number(propertyId));
-    const total = stayTotal(u, ci, co);
+    let total = stayTotal(u, ci, co);
+    if (total && discount) total = Math.round(total * (1 - discount / 100));
     return {
       total_amount: total ? String(total) : '',
-      deposit_amount: total ? String(Math.round(total * 0.2)) : '',
+      deposit_amount: total ? String(Math.round(total * 0.3)) : '',
     };
   }
 
@@ -224,10 +241,12 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
       property_id, check_in, check_out,
       guest_name: '', guest_phone: '', guest_count: '', telegram_username: '',
       status: expires ? 'HOLD' : 'CONFIRMED', source: 'MANUAL',
+      discount: 0, discount_reason: '',
       ...calcAmounts(property_id, check_in, check_out),
       note: '',
       payMethod: 'CASH', payAmount: '',
     });
+    setCustSuggest(null);
   }
 
   // Merge a change; recompute suggested amounts when the unit or dates change.
@@ -238,11 +257,27 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
       if ('check_in' in patch && next.check_in && next.check_out <= next.check_in) {
         next.check_out = ymd(addDays(new Date(next.check_in + 'T00:00:00'), 1));
       }
-      if ('property_id' in patch || 'check_in' in patch || 'check_out' in patch) {
-        Object.assign(next, calcAmounts(next.property_id, next.check_in, next.check_out));
+      if ('property_id' in patch || 'check_in' in patch || 'check_out' in patch || 'discount' in patch) {
+        Object.assign(next, calcAmounts(next.property_id, next.check_in, next.check_out, Number(next.discount) || 0));
       }
       return next;
     });
+  }
+
+  // Guest base: as the phone is typed, suggest an existing record to reuse.
+  const [custSuggest, setCustSuggest] = useState(null);
+  async function lookupPhone(phone) {
+    const digits = (phone || '').replace(/\D/g, '');
+    if (digits.length < 6) { setCustSuggest(null); return; }
+    try {
+      const hits = await api.searchCustomers(digits);
+      setCustSuggest(hits && hits.length ? hits[0] : null);
+    } catch { setCustSuggest(null); }
+  }
+  function useCustomer(c) {
+    setForm((f) => ({ ...f, guest_name: c.name || f.guest_name,
+      telegram_username: c.telegram_username || f.telegram_username }));
+    setCustSuggest(null);
   }
 
   async function importPreps() {
@@ -280,6 +315,8 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
         // The 20% figure is only a suggestion used to prefill the prepayment step —
         // it is NOT a paid deposit, so we don't persist it (avoids double-counting "paid").
         deposit_amount: null,
+        discount_percent: Number(form.discount) || 0,
+        discount_reason: form.discount ? (form.discount_reason || null) : null,
         note: form.note || null,
       };
       const res = await api.createReservation(body);
@@ -400,6 +437,8 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
         guest_count: detailForm.guest_count ? Number(detailForm.guest_count) : null,
         telegram_username: detailForm.telegram_username || null,
         total_amount: detailForm.total_amount ? Number(detailForm.total_amount) : null,
+        discount_percent: Number(detailForm.discount) || 0,
+        discount_reason: detailForm.discount ? (detailForm.discount_reason || null) : null,
         note: detailForm.note || null,
         property_id: detailForm.property_id ? Number(detailForm.property_id) : undefined,
       });
@@ -566,12 +605,41 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
               </div>
               <Field label="Имя гостя"><input value={form.guest_name} onChange={(e) => setForm({ ...form, guest_name: e.target.value })} className="input" /></Field>
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Телефон"><input value={form.guest_phone} onChange={(e) => setForm({ ...form, guest_phone: e.target.value })} className="input" placeholder="+998…" /></Field>
+                <Field label="Телефон">
+                  <input value={form.guest_phone}
+                    onChange={(e) => { setForm({ ...form, guest_phone: e.target.value }); lookupPhone(e.target.value); }}
+                    className="input" placeholder="+998…" />
+                </Field>
                 <Field label="Telegram (ник)"><input value={form.telegram_username} onChange={(e) => setForm({ ...form, telegram_username: e.target.value })} className="input" placeholder="@username" /></Field>
               </div>
+              {custSuggest && (
+                <button type="button" onClick={() => useCustomer(custSuggest)}
+                  className="w-full text-left px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-900 hover:bg-amber-100">
+                  👤 Найден гость: <b>{custSuggest.name || 'без имени'}</b>{custSuggest.is_vip ? ' ⭐VIP' : ''} · {custSuggest.bookings_count} брон. — нажмите, чтобы подставить
+                </button>
+              )}
+              {autoPrice && (
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Скидка">
+                    <select value={form.discount} onChange={(e) => updateForm({ discount: Number(e.target.value) })} className="input">
+                      {[0, 10, 15, 20, 25, 30, 50].map((d) => <option key={d} value={d}>{d ? `${d}%` : 'Без скидки'}</option>)}
+                    </select>
+                  </Field>
+                  <Field label="Причина скидки">
+                    <select value={form.discount_reason} onChange={(e) => setForm({ ...form, discount_reason: e.target.value })} className="input" disabled={!form.discount}>
+                      <option value="">—</option>
+                      <option value="VIP_GUEST">VIP гость</option>
+                      <option value="BIRTHDAY">День рождения</option>
+                      <option value="PROMOTION">Акция</option>
+                      <option value="FAVORITE_GUEST">Любимый гость</option>
+                      <option value="OTHER">Другое</option>
+                    </select>
+                  </Field>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Гостей"><input type="number" min="1" value={form.guest_count} onChange={(e) => setForm({ ...form, guest_count: e.target.value })} className="input" /></Field>
-                <Field label="Сумма (сум)"><input type="number" value={form.total_amount} onChange={(e) => setForm({ ...form, total_amount: e.target.value })} className="input" /></Field>
+                <Field label={form.discount ? `Сумма со скидкой ${form.discount}%` : 'Сумма (сум)'}><input type="number" value={form.total_amount} onChange={(e) => setForm({ ...form, total_amount: e.target.value })} className="input" /></Field>
               </div>
               <Field label="Заметка"><input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} className="input" /></Field>
               <div className="flex justify-end gap-2 pt-2">
@@ -728,15 +796,34 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
             <p className="text-xs text-gray-400 mt-1">Скриншот-подтверждение оплаты. Сохраняется в общую базу предоплат (как из бота @berdiev_shavkat_bot).</p>
           </div>
           <div className="space-y-3">
-            <Field label="Объект">
-              <select value={detailForm.property_id} onChange={(e) => setDetailForm({ ...detailForm, property_id: e.target.value })} className="input">
+            <Field label="Объект (можно перенести)">
+              <select value={detailForm.property_id} onChange={(e) => updateDetailForm({ property_id: e.target.value })} className="input">
                 {units.map((u) => <option key={u.id} value={u.id}>{u.name_ru}</option>)}
               </select>
             </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Заезд"><input type="date" value={detailForm.check_in} onChange={(e) => setDetailForm({ ...detailForm, check_in: e.target.value })} className="input" /></Field>
-              <Field label="Выезд"><input type="date" value={detailForm.check_out} onChange={(e) => setDetailForm({ ...detailForm, check_out: e.target.value })} className="input" /></Field>
+              <Field label="Заезд"><input type="date" value={detailForm.check_in} onChange={(e) => updateDetailForm({ check_in: e.target.value })} className="input" /></Field>
+              <Field label="Выезд"><input type="date" value={detailForm.check_out} onChange={(e) => updateDetailForm({ check_out: e.target.value })} className="input" /></Field>
             </div>
+            {autoPrice && (
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Скидка">
+                  <select value={detailForm.discount} onChange={(e) => updateDetailForm({ discount: Number(e.target.value) })} className="input">
+                    {[0, 10, 15, 20, 25, 30, 50].map((d) => <option key={d} value={d}>{d ? `${d}%` : 'Без скидки'}</option>)}
+                  </select>
+                </Field>
+                <Field label="Причина скидки">
+                  <select value={detailForm.discount_reason} onChange={(e) => setDetailForm({ ...detailForm, discount_reason: e.target.value })} className="input" disabled={!detailForm.discount}>
+                    <option value="">—</option>
+                    <option value="VIP_GUEST">VIP гость</option>
+                    <option value="BIRTHDAY">День рождения</option>
+                    <option value="PROMOTION">Акция</option>
+                    <option value="FAVORITE_GUEST">Любимый гость</option>
+                    <option value="OTHER">Другое</option>
+                  </select>
+                </Field>
+              </div>
+            )}
             <Field label="Статус">
               <select value={detailForm.status} onChange={(e) => setDetailForm({ ...detailForm, status: e.target.value })} className="input">
                 {Object.keys(STATUS_STYLE).filter((s) => s !== 'CANCELLED' && s !== 'EXPIRED').map((s) => <option key={s} value={s}>{STATUS_STYLE[s].label}</option>)}
