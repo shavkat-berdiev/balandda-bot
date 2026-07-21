@@ -372,7 +372,9 @@ async def create_reservation(
     else:
         base = _stay_price(prop, data.check_in, data.check_out)
         total = round(base * (1 - pct / 100)) if base is not None else None
-    deposit = data.deposit_amount if data.deposit_amount is not None else (round(total * 0.30) if total else None)
+    # NEVER auto-fill deposit_amount: it is read as "already prepaid" by the paid/balance
+    # calc, so filling it here would show an uncollected 30% prepayment on every booking.
+    deposit = data.deposit_amount
 
     # Auto-save the guest by phone and link the record.
     customer_id = await _upsert_customer(
@@ -454,10 +456,8 @@ async def update_reservation(
         base = _stay_price(prop_new, res.check_in, res.check_out)
         if base is not None:
             pct = float(res.discount_percent or 0)
-            new_total = round(base * (1 - pct / 100))
-            res.total_amount = new_total
-            if data.deposit_amount is None:
-                res.deposit_amount = round(new_total * 0.30)
+            res.total_amount = round(base * (1 - pct / 100))
+            # Do NOT touch deposit_amount — it is read as "already prepaid".
 
     # Keep the guest base fresh if phone/name changed here.
     if data.guest_phone is not None or data.guest_name is not None:
