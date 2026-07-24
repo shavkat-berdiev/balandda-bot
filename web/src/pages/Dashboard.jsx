@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, DollarSign, ArrowUpDown, Calendar, FileText, Wallet, CreditCard } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, LineChart, Line, Legend, Area, AreaChart,
+  PieChart, Pie, Cell, LineChart, Line, Legend, Area, AreaChart, LabelList,
 } from 'recharts';
 import { api } from '../api';
 
@@ -491,7 +491,13 @@ function DailyRevenueChart({ data, methods, periodLabel, title = 'Выручка
             {methods.map((m, i) => (
               <Bar key={m} dataKey={m} name={m} stackId="rev"
                 fill={PAYMENT_COLORS[m] || COLORS[i % COLORS.length]}
-                radius={i === methods.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]} />
+                radius={i === methods.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}>
+                {i === methods.length - 1 && (
+                  <LabelList dataKey="total" position="top"
+                    formatter={v => (v > 0 ? formatShort(v) : '')}
+                    style={{ fontSize: 10, fill: '#374151', fontWeight: 600 }} />
+                )}
+              </Bar>
             ))}
           </BarChart>
         </ResponsiveContainer>

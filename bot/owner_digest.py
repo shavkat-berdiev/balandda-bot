@@ -440,12 +440,27 @@ async def build_evening_digest(today: date) -> str:
 # ── Senders (scheduler entry points) ────────────────────────────────
 
 
+def _extra_ids() -> set[int]:
+    """Extra digest recipients from config (comma-separated Telegram IDs)."""
+    ids = set()
+    for part in (settings.owner_digest_extra_ids or "").split(","):
+        part = part.strip()
+        if part.isdigit():
+            ids.add(int(part))
+    return ids
+
+
+async def _recipient_ids() -> list[int]:
+    owner_ids = set(await _get_owner_ids())
+    return sorted(owner_ids | _extra_ids())
+
+
 async def _send_to_owners(bot: Bot, text: str) -> None:
-    owner_ids = await _get_owner_ids()
-    if not owner_ids:
-        logger.warning("Owner digest: no active OWNER users found")
+    recipients = await _recipient_ids()
+    if not recipients:
+        logger.warning("Owner digest: no recipients found")
         return
-    for tid in owner_ids:
+    for tid in recipients:
         try:
             await bot.send_message(tid, text, parse_mode="HTML")
         except Exception as e:
@@ -477,6 +492,9 @@ router = Router()
 
 async def _is_owner(telegram_id: int) -> bool:
     from db.enums import UserRole
+
+    if telegram_id in _extra_ids():
+        return True
 
     async with async_session() as session:
         role = (

@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # The evening digest goes out together with the daily report (daily_report_hour).
     owner_digest_morning_hour: int = 9
     owner_digest_morning_minute: int = 0
+    # Extra Telegram IDs (comma-separated) that receive the owner digest and may
+    # use /svodka without the OWNER role. 548813671 = Azizov.
+    owner_digest_extra_ids: str = "548813671"
 
     # Admin
     admin_user_id: int | None = None
