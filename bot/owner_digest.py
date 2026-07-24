@@ -134,10 +134,21 @@ async def get_checkins(target: date) -> dict:
     }
 
 
-async def get_money_in(target: date) -> dict:
+async def get_money_in(target: date, business_unit=None) -> dict:
     """Money-in for a date, by payment method — everything confirmed by users:
     entries from submitted reports PLUS calendar payments (linked to a reservation),
-    which sit in DRAFT reports until the operator submits the day."""
+    which sit in DRAFT reports until the operator submits the day.
+    Optionally filtered to one business unit."""
+    conditions = [
+        StructuredReport.report_date == target,
+        or_(
+            StructuredReport.status != ReportStatus.DRAFT,
+            IncomeEntry.reservation_id.is_not(None),
+        ),
+    ]
+    if business_unit is not None:
+        conditions.append(StructuredReport.business_unit == business_unit)
+
     async with async_session() as session:
         rows = (
             await session.execute(
@@ -146,13 +157,7 @@ async def get_money_in(target: date) -> dict:
                     func.coalesce(func.sum(IncomeEntry.amount), 0),
                 )
                 .join(StructuredReport, IncomeEntry.report_id == StructuredReport.id)
-                .where(
-                    StructuredReport.report_date == target,
-                    or_(
-                        StructuredReport.status != ReportStatus.DRAFT,
-                        IncomeEntry.reservation_id.is_not(None),
-                    ),
-                )
+                .where(*conditions)
                 .group_by(IncomeEntry.payment_method)
             )
         ).all()
@@ -274,6 +279,48 @@ def _iiko_block(entries: list[tuple[str, dict | None]]) -> list[str]:
     return lines if shown else []
 
 
+async def get_day_revenue_parts(target: date, billz: dict | None, iiko_s: dict | None) -> dict:
+    """Overall revenue for a day: Resort (reports) + Restaurant (iiko, fallback
+    reports) + XUSH (Billz, fallback reports). Reuses already-fetched Billz/iiko
+    summaries to avoid duplicate API calls."""
+    from db.enums import BusinessUnit
+
+    resort = (await get_money_in(target, BusinessUnit.RESORT))["total"]
+
+    if iiko_s and "error" not in iiko_s:
+        restaurant, rest_src = float(iiko_s["total"]), "iiko"
+    else:
+        restaurant = (await get_money_in(target, BusinessUnit.RESTAURANT))["total"]
+        rest_src = "отчёты"
+
+    if billz and "error" not in billz:
+        xush = float(billz["cash_total"] + billz["card_total"] + billz["other_total"])
+        xush_src = "Billz"
+    else:
+        xush = (await get_money_in(target, BusinessUnit.XUSH))["total"]
+        xush_src = "отчёты"
+
+    return {
+        "resort": resort,
+        "restaurant": restaurant, "rest_src": rest_src,
+        "xush": xush, "xush_src": xush_src,
+        "total": resort + restaurant + xush,
+    }
+
+
+def _total_revenue_block(entries: list[tuple[str, dict]]) -> list[str]:
+    """💰 Общая выручка section: [(day label, revenue parts), ...]."""
+    lines = ["💰 <b>Общая выручка (курорт + ресторан + XUSH)</b>"]
+    for label, p in entries:
+        lines.append(f"  • {label}: <b>{fmt(p['total'])} UZS</b>")
+        lines.append(
+            f"      курорт {fmt(p['resort'])} · "
+            f"ресторан {fmt(p['restaurant'])} ({p['rest_src']}) · "
+            f"XUSH {fmt(p['xush'])} ({p['xush_src']})"
+        )
+    return lines
+
+
 def _wallets_block(balances: list[tuple[str, float]]) -> list[str]:
     lines = ["👛 <b>Кошельки (наличные на руках)</b>"]
     if not balances:
@@ -335,6 +382,14 @@ async def build_morning_digest(today: date) -> str:
         parts += iiko_lines
         parts.append("")
     parts += _wallets_block(balances)
+    parts.append("")
+
+    rev_yesterday = await get_day_revenue_parts(yesterday, billz_yesterday, iiko_yesterday)
+    rev_today = await get_day_revenue_parts(today, billz_today, iiko_today)
+    parts += _total_revenue_block([
+        (f"вчера ({yesterday.strftime('%d.%m')})", rev_yesterday),
+        (f"сегодня ({today.strftime('%d.%m')})", rev_today),
+    ])
 
     return "\n".join(parts)
 
@@ -370,6 +425,14 @@ async def build_evening_digest(today: date) -> str:
     parts += _checkins_block("Заезды сегодня", checkins_today)
     parts.append("")
     parts += _wallets_block(balances)
+    parts.append("")
+
+    rev_today = await get_day_revenue_parts(today, billz_today, iiko_today)
+    rev_yesterday = await get_day_revenue_parts(yesterday, billz_yesterday, iiko_yesterday)
+    parts += _total_revenue_block([
+        (f"сегодня ({today.strftime('%d.%m')})", rev_today),
+        (f"вчера ({yesterday.strftime('%d.%m')})", rev_yesterday),
+    ])
 
     return "\n".join(parts)
 
