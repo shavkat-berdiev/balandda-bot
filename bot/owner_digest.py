@@ -224,7 +224,7 @@ def _checkins_block(title: str, c: dict, show_pending_list: bool = True) -> list
     return lines
 
 
-def _money_block(title: str, money: dict, billz: dict | None) -> list[str]:
+def _money_block(title: str, money: dict) -> list[str]:
     lines = [f"💵 <b>{title}</b>"]
     if money["by_method"]:
         for label, amt in money["by_method"]:
@@ -232,20 +232,29 @@ def _money_block(title: str, money: dict, billz: dict | None) -> list[str]:
         lines.append(f"Итого по отчётам: <b>{fmt(money['total'])} UZS</b>")
     else:
         lines.append("По отчётам поступлений нет.")
-
-    if billz is not None:
-        if "error" in billz:
-            lines.append("🛍 XUSH (Billz): нет данных ⚠️")
-        else:
-            billz_total = float(billz["cash_total"] + billz["card_total"] + billz["other_total"])
-            lines.append(
-                f"🛍 XUSH (Billz): <b>{fmt(billz_total)} UZS</b> — "
-                f"наличные {fmt(billz['cash_total'])}, "
-                f"карты {fmt(billz['card_total'])}, "
-                f"прочее {fmt(billz['other_total'])} "
-                f"({billz['order_count']} чек.)"
-            )
     return lines
+
+
+def _billz_block(entries: list[tuple[str, dict | None]]) -> list[str]:
+    """XUSH (Billz) section showing several days: [(label, summary), ...]."""
+    lines = ["🛍 <b>XUSH (Billz)</b>"]
+    shown = False
+    for label, billz in entries:
+        if billz is None:
+            continue
+        shown = True
+        if "error" in billz:
+            lines.append(f"  • {label}: нет данных ⚠️")
+            continue
+        billz_total = float(billz["cash_total"] + billz["card_total"] + billz["other_total"])
+        lines.append(
+            f"  • {label}: <b>{fmt(billz_total)} UZS</b> — "
+            f"наличные {fmt(billz['cash_total'])}, "
+            f"карты {fmt(billz['card_total'])}, "
+            f"прочее {fmt(billz['other_total'])} "
+            f"({billz['order_count']} чек.)"
+        )
+    return lines if shown else []
 
 
 def _wallets_block(balances: list[tuple[str, float]]) -> list[str]:
@@ -269,6 +278,7 @@ async def build_morning_digest(today: date) -> str:
     checkins_yesterday = await get_checkins(yesterday)
     money_yesterday = await get_money_in(yesterday)
     billz_yesterday = await get_billz_summary(yesterday)
+    billz_today = await get_billz_summary(today)
     balances = await get_wallet_balances()
 
     parts = [f"🌅 <b>Утренняя сводка — {today.strftime('%d.%m.%Y')}</b>", ""]
@@ -289,22 +299,39 @@ async def build_morning_digest(today: date) -> str:
         parts.append("✅ Все вчерашние заезды полностью оплачены.")
     parts.append("")
 
-    parts += _money_block(f"Деньги за вчера ({yesterday.strftime('%d.%m')})", money_yesterday, billz_yesterday)
+    parts += _money_block(f"Деньги за вчера ({yesterday.strftime('%d.%m')})", money_yesterday)
     parts.append("")
+    billz_lines = _billz_block([
+        (f"вчера ({yesterday.strftime('%d.%m')})", billz_yesterday),
+        (f"сегодня ({today.strftime('%d.%m')})", billz_today),
+    ])
+    if billz_lines:
+        parts += billz_lines
+        parts.append("")
     parts += _wallets_block(balances)
 
     return "\n".join(parts)
 
 
 async def build_evening_digest(today: date) -> str:
+    yesterday = today - timedelta(days=1)
+
     checkins_today = await get_checkins(today)
     money_today = await get_money_in(today)
     billz_today = await get_billz_summary(today)
+    billz_yesterday = await get_billz_summary(yesterday)
     balances = await get_wallet_balances()
 
     parts = [f"🌙 <b>Вечерняя сводка — {today.strftime('%d.%m.%Y')}</b>", ""]
-    parts += _money_block("Деньги за сегодня", money_today, billz_today)
+    parts += _money_block("Деньги за сегодня", money_today)
     parts.append("")
+    billz_lines = _billz_block([
+        (f"сегодня ({today.strftime('%d.%m')})", billz_today),
+        (f"вчера ({yesterday.strftime('%d.%m')})", billz_yesterday),
+    ])
+    if billz_lines:
+        parts += billz_lines
+        parts.append("")
     parts += _checkins_block("Заезды сегодня", checkins_today)
     parts.append("")
     parts += _wallets_block(balances)
