@@ -7,6 +7,7 @@ Payment types: GET /v1/company-payment-type.
 """
 
 import logging
+import time
 from datetime import date
 from decimal import Decimal
 from typing import Any
@@ -16,6 +17,9 @@ import httpx
 from bot.config import settings
 
 logger = logging.getLogger(__name__)
+
+_CACHE_TTL = 300  # seconds — dashboard range cache
+_range_cache: dict[tuple[str, str], tuple[float, list]] = {}
 
 BASE_URL = "https://api-admin.billz.ai"
 AUTH_ENDPOINT = "/v1/auth/login"
@@ -123,7 +127,10 @@ class BillzClient:
 
             page_orders = []
             for day in (data.get("orders_sorted_by_date_list") or []):
-                page_orders.extend(day.get("orders") or [])
+                day_key = str(day.get("date") or "")[:10]
+                for o in (day.get("orders") or []):
+                    o["_date"] = day_key
+                    page_orders.append(o)
             orders.extend(page_orders)
 
             total_count = data.get("count")
@@ -219,6 +226,66 @@ class BillzClient:
                 {"type": k, "amount": float(v)} for k, v in payment_breakdown.items()
             ],
         }
+
+
+def is_configured() -> bool:
+    return bool(settings.billz_api_key)
+
+
+async def get_range_daily(date_from: date, date_to: date) -> list[dict]:
+    """Per-day per-payment-type revenue rows for the dashboard, 5-min cached.
+
+    Returns [{"date": "YYYY-MM-DD", "pay_type": str, "amount": float}, ...].
+    Empty list when not configured; raises on API errors (caller decides).
+    """
+    if not is_configured():
+        return []
+    key = (date_from.isoformat(), date_to.isoformat())
+    now = time.monotonic()
+    hit = _range_cache.get(key)
+    if hit and now - hit[0] < _CACHE_TTL:
+        return hit[1]
+
+    client = get_billz_client()
+    rows: list[dict] = []
+
+    try:
+        ptypes = await client.get_payment_types()
+    except Exception as e:
+        logger.warning(f"Billz payment types unavailable: {e}")
+        ptypes = []
+
+    got_split = False
+    for pt in ptypes:
+        pt_id = pt.get("id")
+        pt_name = pt.get("name") or pt.get("payment_type_name") or "?"
+        if not pt_id:
+            continue
+        orders = await client.search_orders(date_from, date_to, payment_type_id=pt_id)
+        daily: dict[str, Decimal] = {}
+        for o in orders:
+            if not client._is_sale(o) or not o.get("_date"):
+                continue
+            daily[o["_date"]] = daily.get(o["_date"], Decimal(0)) + client._order_amount(o)
+        for dk, amt in daily.items():
+            if amt != 0:
+                got_split = True
+                rows.append({"date": dk, "pay_type": pt_name, "amount": float(amt)})
+
+    if not got_split:
+        # Fallback: no payment-type split available — one series with all sales
+        orders = await client.search_orders(date_from, date_to)
+        daily = {}
+        for o in orders:
+            if not client._is_sale(o) or not o.get("_date"):
+                continue
+            daily[o["_date"]] = daily.get(o["_date"], Decimal(0)) + client._order_amount(o)
+        rows = [{"date": dk, "pay_type": "Все продажи", "amount": float(v)} for dk, v in daily.items()]
+
+    _range_cache[key] = (now, rows)
+    for k in [k for k, (ts, _) in _range_cache.items() if now - ts > _CACHE_TTL * 4]:
+        _range_cache.pop(k, None)
+    return rows
 
 
 # Module-level singleton

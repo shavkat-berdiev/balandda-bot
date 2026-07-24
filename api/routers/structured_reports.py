@@ -786,6 +786,57 @@ async def iiko_daily(
     return {"configured": True, "payment_methods": payment_methods, "daily_by_payment": daily}
 
 
+# ── XUSH revenue from Billz POS ───────────────────────────────────
+
+
+@router.get("/billz-daily")
+async def billz_daily(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    _user: dict = Depends(get_current_user),
+):
+    """Per-day XUSH revenue by payment type from Billz POS.
+
+    Same shape as /iiko-daily. 5-minute cache inside bot.billz."""
+    from bot import billz
+
+    if not billz.is_configured():
+        return {"configured": False, "payment_methods": [], "daily_by_payment": []}
+
+    if end_date is None:
+        end_date = date.today()
+    if start_date is None:
+        start_date = end_date
+
+    try:
+        rows = await billz.get_range_daily(start_date, end_date)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Billz error: {e}")
+
+    totals_by_pt: dict[str, float] = {}
+    per_day: dict[str, dict[str, float]] = {}
+    for r in rows:
+        totals_by_pt[r["pay_type"]] = totals_by_pt.get(r["pay_type"], 0) + r["amount"]
+        per_day.setdefault(r["date"], {})
+        per_day[r["date"]][r["pay_type"]] = per_day[r["date"]].get(r["pay_type"], 0) + r["amount"]
+
+    payment_methods = [k for k, _ in sorted(totals_by_pt.items(), key=lambda x: x[1], reverse=True)]
+
+    daily = []
+    cursor = start_date
+    while cursor <= end_date:
+        dk = cursor.isoformat()
+        row: dict = {"date": dk, "total": 0.0}
+        for m in payment_methods:
+            v = float(per_day.get(dk, {}).get(m, 0))
+            row[m] = v
+            row["total"] += v
+        daily.append(row)
+        cursor += timedelta(days=1)
+
+    return {"configured": True, "payment_methods": payment_methods, "daily_by_payment": daily}
+
+
 # ── Report editing endpoints (owner only) ─────────────────────────
 
 

@@ -78,6 +78,8 @@ export default function Dashboard({ user }) {
 
   // Restaurant revenue from iiko (RESTAURANT/ALL sections)
   const [iikoData, setIikoData] = useState(null);
+  // XUSH revenue from Billz (XUSH/ALL sections)
+  const [billzData, setBillzData] = useState(null);
 
   // Wallet data (owner only)
   const [centralWallets, setCentralWallets] = useState([]);
@@ -99,6 +101,19 @@ export default function Dashboard({ user }) {
     api.getIikoDaily(dateFrom, dateTo)
       .then(res => { if (!cancelled) setIikoData(res?.configured ? res : null); })
       .catch(err => { console.error('Failed to load iiko data:', err); if (!cancelled) setIikoData(null); });
+    return () => { cancelled = true; };
+  }, [section, dateFrom, dateTo]);
+
+  // Billz XUSH revenue (only relevant for XUSH / ALL)
+  useEffect(() => {
+    if (section !== 'XUSH' && section !== 'ALL') {
+      setBillzData(null);
+      return;
+    }
+    let cancelled = false;
+    api.getBillzDaily(dateFrom, dateTo)
+      .then(res => { if (!cancelled) setBillzData(res?.configured ? res : null); })
+      .catch(err => { console.error('Failed to load Billz data:', err); if (!cancelled) setBillzData(null); });
     return () => { cancelled = true; };
   }, [section, dateFrom, dateTo]);
 
@@ -244,6 +259,16 @@ export default function Dashboard({ user }) {
             methods={data.payment_methods || []}
             periodLabel={periodLabel}
           />
+
+          {/* XUSH revenue straight from Billz (XUSH / ALL) */}
+          {billzData && (
+            <DailyRevenueChart
+              title="XUSH (Billz) по дням"
+              data={billzData.daily_by_payment || []}
+              methods={billzData.payment_methods || []}
+              periodLabel={periodLabel}
+            />
+          )}
 
           {/* Restaurant revenue straight from iiko (RESTAURANT / ALL) */}
           {iikoData && (

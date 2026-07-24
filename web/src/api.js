@@ -204,6 +204,14 @@ export const api = {
   deleteIncomeEntry: (id) => request(`/structured/income-entry/${id}`, { method: 'DELETE' }),
   deleteExpenseEntry: (id) => request(`/structured/expense-entry/${id}`, { method: 'DELETE' }),
 
+  // XUSH revenue from Billz POS
+  getBillzDaily: (from, to) => {
+    const sp = new URLSearchParams();
+    if (from) sp.set('start_date', from);
+    if (to) sp.set('end_date', to);
+    return request(`/structured/billz-daily?${sp}`);
+  },
+
   // Restaurant revenue from iiko (RMS)
   getIikoDaily: (from, to) => {
     const sp = new URLSearchParams();
