@@ -628,6 +628,8 @@ async def structured_dashboard(
     by_property: dict[str, float] = {}
     by_service: dict[str, float] = {}
     daily_data: dict[str, dict] = {}
+    # Per-day revenue split by payment method (for the stacked front-page chart)
+    daily_payment: dict[str, dict[str, float]] = {}
 
     for report in reports:
         day_inc = float(report.total_income or 0)
@@ -664,6 +666,10 @@ async def structured_dashboard(
             pm_label = PAYMENT_METHOD_LABELS.get(entry.payment_method, entry.payment_method.value)
             by_payment[pm_label] = by_payment.get(pm_label, 0) + amt
 
+            # Per-day × payment method (stacked daily revenue chart)
+            day_pm = daily_payment.setdefault(day_key, {})
+            day_pm[pm_label] = day_pm.get(pm_label, 0) + amt
+
         for entry in report.expense_entries:
             ec_label = EXPENSE_CATEGORY_LABELS.get(entry.expense_category, entry.expense_category.value)
             by_expense_cat[ec_label] = by_expense_cat.get(ec_label, 0) + float(entry.amount)
@@ -688,6 +694,21 @@ async def structured_dashboard(
     prep_pending = float(sum(p.amount for p in prepayments if p.status == PrepaymentStatus.PENDING))
     prep_count = len(prepayments)
 
+    # ── Daily revenue by payment method (continuous date axis, zero-filled) ──
+    payment_methods = [item["name"] for item in dict_to_chart(by_payment)]
+    daily_by_payment = []
+    cursor = start_date
+    while cursor <= end_date:
+        dk = cursor.isoformat()
+        row: dict = {"date": dk, "total": 0.0}
+        day_pm = daily_payment.get(dk, {})
+        for m in payment_methods:
+            v = float(day_pm.get(m, 0))
+            row[m] = v
+            row["total"] += v
+        daily_by_payment.append(row)
+        cursor += timedelta(days=1)
+
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
@@ -701,6 +722,8 @@ async def structured_dashboard(
         "by_property": dict_to_chart(by_property),
         "by_service": dict_to_chart(by_service),
         "daily_totals": sorted(daily_data.values(), key=lambda x: x["date"]),
+        "payment_methods": payment_methods,
+        "daily_by_payment": daily_by_payment,
         "prepayments": {
             "total": prep_total,
             "confirmed": prep_confirmed,

@@ -11,6 +11,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from bot import owner_digest
 from bot.config import settings
 from db.database import async_session
 from services import beds24
@@ -287,6 +288,32 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         args=[bot],
         id="balance_reminders",
         name="Balance Reminders",
+        replace_existing=True,
+    )
+
+    # Owner digests: bookings + money-in + wallets (OWNER users only)
+    scheduler.add_job(
+        owner_digest.send_morning_digest,
+        CronTrigger(
+            hour=settings.owner_digest_morning_hour,
+            minute=settings.owner_digest_morning_minute,
+            timezone=settings.timezone,
+        ),
+        args=[bot],
+        id="owner_morning_digest",
+        name="Owner Morning Digest",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        owner_digest.send_evening_digest,
+        CronTrigger(
+            hour=settings.daily_report_hour,
+            minute=settings.daily_report_minute,
+            timezone=settings.timezone,
+        ),
+        args=[bot],
+        id="owner_evening_digest",
+        name="Owner Evening Digest",
         replace_existing=True,
     )
 

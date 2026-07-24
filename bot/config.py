@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     daily_report_minute: int = 0
     timezone: str = "Asia/Tashkent"
 
+    # Owner digests (bookings + money-in + wallets; OWNER users only).
+    # The evening digest goes out together with the daily report (daily_report_hour).
+    owner_digest_morning_hour: int = 9
+    owner_digest_morning_minute: int = 0
+
     # Admin
     admin_user_id: int | None = None
 

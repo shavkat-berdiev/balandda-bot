@@ -14,6 +14,7 @@ from bot.handlers.report import router as report_router
 from bot.handlers.start import router as start_router
 from bot.handlers.wallet import router as wallet_router
 from bot.handlers.xush import router as xush_router
+from bot.owner_digest import router as owner_digest_router
 
 logger = logging.getLogger(__name__)
 
@@ -44,4 +45,5 @@ main_router.include_router(history_router)
 main_router.include_router(report_router)
 main_router.include_router(import_router)
 main_router.include_router(language_router)
+main_router.include_router(owner_digest_router)  # /svodka — owner on-demand digest
 main_router.include_router(debug_router)  # Must be last

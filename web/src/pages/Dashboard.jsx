@@ -35,6 +35,17 @@ const PRESETS = [
   { key: '90d', label: '90 дней', from: () => daysAgo(90), to: () => today() },
 ];
 
+// Stable colors per payment method label (fallback: COLORS by index)
+const PAYMENT_COLORS = {
+  'Наличные': '#10b981',
+  'Терминал Visa': '#6366f1',
+  'Терминал UzCard': '#8b5cf6',
+  'Перевод на карту': '#3b82f6',
+  'Перечисление': '#0ea5e9',
+  'PayMe': '#06b6d4',
+  'Предоплата': '#f59e0b',
+};
+
 const WALLET_ICONS = {
   CASH: '💵',
   CARD_TRANSFER: '💳',
@@ -211,6 +222,13 @@ export default function Dashboard({ user }) {
         </div>
       ) : (
         <>
+          {/* Daily revenue chart — total income per day, stacked by payment method */}
+          <DailyRevenueChart
+            data={data.daily_by_payment || []}
+            methods={data.payment_methods || []}
+            periodLabel={periodLabel}
+          />
+
           {/* Summary cards */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
             <SummaryCard title="Доход" value={formatUZS(data.total_income)} icon={TrendingUp} color="green" />
@@ -410,6 +428,50 @@ export default function Dashboard({ user }) {
         <TrendChart title="Тренд за 7 дней" data={trend7} />
         <TrendChart title="Тренд за 30 дней" data={trend30} />
       </div>
+    </div>
+  );
+}
+
+function DailyRevenueChart({ data, methods, periodLabel }) {
+  const hasValues = data && data.length > 0 && data.some(d => d.total > 0);
+  const totalRevenue = (data || []).reduce((s, d) => s + (d.total || 0), 0);
+
+  const fmtDay = d => {
+    const dt = new Date(d + 'T00:00:00');
+    return dt.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 mb-4">
+        <h2 className="text-lg font-semibold text-gray-800">Выручка по дням</h2>
+        <div className="text-sm text-gray-500">
+          {periodLabel} · <span className="font-semibold text-gray-800">{formatUZS(totalRevenue)}</span>
+        </div>
+      </div>
+      {hasValues ? (
+        <ResponsiveContainer width="100%" height={320}>
+          <BarChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+            <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={fmtDay}
+              interval="preserveStartEnd" minTickGap={16} />
+            <YAxis tick={{ fontSize: 11 }} tickFormatter={formatShort} />
+            <Tooltip
+              formatter={(v, name) => [formatUZS(v), name]}
+              labelFormatter={d => new Date(d + 'T00:00:00').toLocaleDateString('ru-RU')}
+              itemSorter={item => -item.value}
+            />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            {methods.map((m, i) => (
+              <Bar key={m} dataKey={m} name={m} stackId="rev"
+                fill={PAYMENT_COLORS[m] || COLORS[i % COLORS.length]}
+                radius={i === methods.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]} />
+            ))}
+          </BarChart>
+        </ResponsiveContainer>
+      ) : (
+        <p className="text-gray-400 text-center py-16">Нет данных о выручке за этот период</p>
+      )}
     </div>
   );
 }
