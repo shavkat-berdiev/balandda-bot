@@ -556,3 +556,68 @@ async def bot_image(name: str):
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Not found")
     return FileResponse(path, headers={"Cache-Control": "public, max-age=86400"})
+
+
+# ── CRM V2 migration & price feed (2026-07: flow editor moves to crm.balandda.uz) ──
+#
+# Two endpoints added for the Balandda CRM V2 cutover:
+#  1. /bot-templates-export — RAW rows (incl. inactive!) so the CRM can import the
+#     complete tree losslessly; guarded by the existing bridge secret.
+#  2. /price-blocks — ONLY the rendered price tables. After cutover analytics stays
+#     the single source of truth for prices while the flow lives in the CRM: the CRM
+#     stores raw texts + price_block per node and concatenates these tables exactly
+#     as /bot-flow does today.
+
+from fastapi import Header  # noqa: E402  (local import keeps the diff small)
+
+
+def _check_bridge(secret: str | None) -> None:
+    if not settings.bridge_secret or secret != settings.bridge_secret:
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+
+@router.get("/bot-templates-export")
+async def bot_templates_export(
+    session: AsyncSession = Depends(get_session),
+    x_bridge_secret: str | None = Header(default=None),
+):
+    """RAW export for the CRM importer: every row (active AND inactive), texts without
+    price injection, uploaded images only (no website-gallery inheritance) — the CRM
+    replicates rendering itself and must receive the unrendered source."""
+    _check_bridge(x_bridge_secret)
+    rows = (
+        await session.execute(
+            select(BotTemplate).order_by(BotTemplate.parent_id.nulls_first(), BotTemplate.sort_order)
+        )
+    ).scalars().all()
+    return {
+        "templates": [
+            {
+                "id": t.id, "parent_id": t.parent_id, "key": t.key, "action": t.action,
+                "label_ru": t.label_ru, "label_uz": t.label_uz, "label_en": t.label_en,
+                "ig_label_ru": t.ig_label_ru, "ig_label_uz": t.ig_label_uz, "ig_label_en": t.ig_label_en,
+                "body_ru": t.body_ru, "body_uz": t.body_uz, "body_en": t.body_en,
+                "images": _imgs(t),
+                "keywords_ru": t.keywords_ru, "keywords_uz": t.keywords_uz, "keywords_en": t.keywords_en,
+                "price_block": t.price_block or "none",
+                "sort_order": t.sort_order,
+                "is_active": t.is_active,
+            }
+            for t in rows
+        ]
+    }
+
+
+@router.get("/price-blocks")
+async def price_blocks(
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+):
+    """Public (like /bot-flow, which already exposes the same rendered numbers):
+    the three live price tables per language. The CRM caches this with a last-good
+    fallback, so a blip here never blanks the bot's prices."""
+    out: dict[str, dict[str, str]] = {}
+    for block in ("houses", "pool", "spa"):
+        out[block] = {lang: await _price_text(session, block, lang) for lang in LANGS}
+    response.headers["Cache-Control"] = "public, max-age=60"
+    return {"blocks": out}
