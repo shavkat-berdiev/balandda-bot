@@ -76,6 +76,9 @@ export default function Dashboard({ user }) {
   const [trend7, setTrend7] = useState([]);
   const [trend30, setTrend30] = useState([]);
 
+  // Restaurant revenue from iiko (RESTAURANT/ALL sections)
+  const [iikoData, setIikoData] = useState(null);
+
   // Wallet data (owner only)
   const [centralWallets, setCentralWallets] = useState([]);
   const [centralTotal, setCentralTotal] = useState(0);
@@ -84,6 +87,19 @@ export default function Dashboard({ user }) {
 
   useEffect(() => {
     loadData();
+  }, [section, dateFrom, dateTo]);
+
+  // iiko restaurant revenue (only relevant for RESTAURANT / ALL)
+  useEffect(() => {
+    if (section !== 'RESTAURANT' && section !== 'ALL') {
+      setIikoData(null);
+      return;
+    }
+    let cancelled = false;
+    api.getIikoDaily(dateFrom, dateTo)
+      .then(res => { if (!cancelled) setIikoData(res?.configured ? res : null); })
+      .catch(err => { console.error('Failed to load iiko data:', err); if (!cancelled) setIikoData(null); });
+    return () => { cancelled = true; };
   }, [section, dateFrom, dateTo]);
 
   // Load 7-day and 30-day trends on section change
@@ -228,6 +244,16 @@ export default function Dashboard({ user }) {
             methods={data.payment_methods || []}
             periodLabel={periodLabel}
           />
+
+          {/* Restaurant revenue straight from iiko (RESTAURANT / ALL) */}
+          {iikoData && (
+            <DailyRevenueChart
+              title="Ресторан (iiko) по дням"
+              data={iikoData.daily_by_payment || []}
+              methods={iikoData.payment_methods || []}
+              periodLabel={periodLabel}
+            />
+          )}
 
           {/* Summary cards */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
@@ -432,7 +458,7 @@ export default function Dashboard({ user }) {
   );
 }
 
-function DailyRevenueChart({ data, methods, periodLabel }) {
+function DailyRevenueChart({ data, methods, periodLabel, title = 'Выручка по дням' }) {
   const hasValues = data && data.length > 0 && data.some(d => d.total > 0);
   const totalRevenue = (data || []).reduce((s, d) => s + (d.total || 0), 0);
 
@@ -444,7 +470,7 @@ function DailyRevenueChart({ data, methods, periodLabel }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 mb-4">
-        <h2 className="text-lg font-semibold text-gray-800">Выручка по дням</h2>
+        <h2 className="text-lg font-semibold text-gray-800">{title}</h2>
         <div className="text-sm text-gray-500">
           {periodLabel} · <span className="font-semibold text-gray-800">{formatUZS(totalRevenue)}</span>
         </div>

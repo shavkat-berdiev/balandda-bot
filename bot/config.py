@@ -49,6 +49,11 @@ class Settings(BaseSettings):
     billz_api_key: str = ""          # secret_token for REST auth
     billz_sklad_api_key: str = ""    # warehouse-specific token (if different)
 
+    # iikoServer (RMS) — restaurant revenue reports (NOT iikoCloud)
+    iiko_server_url: str = ""        # e.g. https://balandda.iiko.it
+    iiko_server_login: str = ""
+    iiko_server_password: str = ""   # plain; sha1-hashed before sending
+
     # Beds24 channel manager (OTA sync: Booking.com / Airbnb / Trip.com)
     beds24_enabled: bool = False
     beds24_refresh_token: str = ""            # long-lived token (SETTINGS→API in Beds24)

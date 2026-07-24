@@ -204,6 +204,14 @@ export const api = {
   deleteIncomeEntry: (id) => request(`/structured/income-entry/${id}`, { method: 'DELETE' }),
   deleteExpenseEntry: (id) => request(`/structured/expense-entry/${id}`, { method: 'DELETE' }),
 
+  // Restaurant revenue from iiko (RMS)
+  getIikoDaily: (from, to) => {
+    const sp = new URLSearchParams();
+    if (from) sp.set('start_date', from);
+    if (to) sp.set('end_date', to);
+    return request(`/structured/iiko-daily?${sp}`);
+  },
+
   getStructuredBreakdown: (unit, from, to) => {
     const params = new URLSearchParams({ business_unit: unit });
     if (from) params.set('start_date', from);

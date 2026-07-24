@@ -24,6 +24,7 @@ from sqlalchemy import func, or_, select
 from bot.billz import get_billz_client
 from bot.config import settings
 from bot.notifications import _get_owner_ids
+from services import iiko
 from db.database import async_session
 from db.enums import (
     PAYMENT_METHOD_LABELS,
@@ -257,6 +258,22 @@ def _billz_block(entries: list[tuple[str, dict | None]]) -> list[str]:
     return lines if shown else []
 
 
+def _iiko_block(entries: list[tuple[str, dict | None]]) -> list[str]:
+    """Restaurant (iiko) section showing several days: [(label, summary), ...]."""
+    lines = ["🍽 <b>Ресторан (iiko)</b>"]
+    shown = False
+    for label, s in entries:
+        if s is None:
+            continue
+        shown = True
+        if "error" in s:
+            lines.append(f"  • {label}: нет данных ⚠️")
+            continue
+        split = ", ".join(f"{name} {fmt(amount)}" for name, amount in s["by_paytype"][:6])
+        lines.append(f"  • {label}: <b>{fmt(s['total'])} UZS</b>" + (f" — {split}" if split else ""))
+    return lines if shown else []
+
+
 def _wallets_block(balances: list[tuple[str, float]]) -> list[str]:
     lines = ["👛 <b>Кошельки (наличные на руках)</b>"]
     if not balances:
@@ -279,6 +296,8 @@ async def build_morning_digest(today: date) -> str:
     money_yesterday = await get_money_in(yesterday)
     billz_yesterday = await get_billz_summary(yesterday)
     billz_today = await get_billz_summary(today)
+    iiko_yesterday = await iiko.get_daily_summary(yesterday)
+    iiko_today = await iiko.get_daily_summary(today)
     balances = await get_wallet_balances()
 
     parts = [f"🌅 <b>Утренняя сводка — {today.strftime('%d.%m.%Y')}</b>", ""]
@@ -308,6 +327,13 @@ async def build_morning_digest(today: date) -> str:
     if billz_lines:
         parts += billz_lines
         parts.append("")
+    iiko_lines = _iiko_block([
+        (f"вчера ({yesterday.strftime('%d.%m')})", iiko_yesterday),
+        (f"сегодня ({today.strftime('%d.%m')})", iiko_today),
+    ])
+    if iiko_lines:
+        parts += iiko_lines
+        parts.append("")
     parts += _wallets_block(balances)
 
     return "\n".join(parts)
@@ -320,6 +346,8 @@ async def build_evening_digest(today: date) -> str:
     money_today = await get_money_in(today)
     billz_today = await get_billz_summary(today)
     billz_yesterday = await get_billz_summary(yesterday)
+    iiko_today = await iiko.get_daily_summary(today)
+    iiko_yesterday = await iiko.get_daily_summary(yesterday)
     balances = await get_wallet_balances()
 
     parts = [f"🌙 <b>Вечерняя сводка — {today.strftime('%d.%m.%Y')}</b>", ""]
@@ -331,6 +359,13 @@ async def build_evening_digest(today: date) -> str:
     ])
     if billz_lines:
         parts += billz_lines
+        parts.append("")
+    iiko_lines = _iiko_block([
+        (f"сегодня ({today.strftime('%d.%m')})", iiko_today),
+        (f"вчера ({yesterday.strftime('%d.%m')})", iiko_yesterday),
+    ])
+    if iiko_lines:
+        parts += iiko_lines
         parts.append("")
     parts += _checkins_block("Заезды сегодня", checkins_today)
     parts.append("")
