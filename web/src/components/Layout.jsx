@@ -8,7 +8,6 @@ const navItems = [
   { path: '/pool', label: 'Бассейн', icon: Waves },
   { path: '/spa-schedule', label: 'Расписание SPA', icon: CalendarClock },
   { path: '/changelog', label: 'Журнал броней', icon: History },
-  { path: '/stats', label: 'Статистика', icon: BarChart3 },
   { path: '/transactions', label: 'Transactions', icon: ArrowLeftRight },
   { path: '/prepayments', label: 'Предоплаты', icon: CreditCard },
   { path: '/wallets', label: 'Кошельки', icon: Wallet },
@@ -18,7 +17,6 @@ const navItems = [
 ];
 
 const adminItems = [
-  { path: '/admin/bot-templates', label: 'Ответы бота', icon: MessageSquare },
   { path: '/admin/reports', label: 'Отчёты', icon: FileText },
   { path: '/admin/properties', label: 'Объекты', icon: Home },
   { path: '/admin/type-labels', label: 'Названия типов', icon: Tag },
@@ -137,6 +135,16 @@ function SidebarContent({ user, roleLabels, location, onLogout, onClose, frontOf
 
         {!frontOffice && (
           <>
+            {/* Bot replies, comment automation, leads & bot stats live in the CRM now */}
+            <a
+              href="https://crm.balandda.uz/panel"
+              target="_blank"
+              rel="noreferrer"
+              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors"
+            >
+              <MessageSquare size={20} />
+              CRM · боты и заявки ↗
+            </a>
             <div className="pt-4 pb-1">
               <p className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Управление</p>
             </div>

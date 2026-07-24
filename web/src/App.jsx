@@ -14,8 +14,8 @@ import AdminServiceCategories from './pages/AdminServiceCategories';
 import AdminSpaLocations from './pages/AdminSpaLocations';
 import AdminSpaMasters from './pages/AdminSpaMasters';
 import SpaSchedule from './pages/SpaSchedule';
-import AdminBotTemplates from './pages/AdminBotTemplates';
-import Stats from './pages/Stats';
+// "Ответы бота" and CRM "Статистика" moved to crm.balandda.uz/panel (V2, 2026-07).
+// AdminBotTemplates.jsx / Stats.jsx are kept on disk unrouted for easy rollback.
 import AdminMinibar from './pages/AdminMinibar';
 import AdminStaff from './pages/AdminStaff';
 import AdminReports from './pages/AdminReports';
@@ -88,8 +88,6 @@ export default function App() {
         <Route path="/admin/properties" element={<AdminProperties />} />
         <Route path="/admin/type-labels" element={<AdminTypeLabels />} />
         <Route path="/admin/services" element={<AdminServices />} />
-        <Route path="/stats" element={<Stats />} />
-        <Route path="/admin/bot-templates" element={<AdminBotTemplates />} />
         <Route path="/admin/service-categories" element={<AdminServiceCategories />} />
         <Route path="/admin/spa-locations" element={<AdminSpaLocations />} />
         <Route path="/admin/spa-masters" element={<AdminSpaMasters />} />
