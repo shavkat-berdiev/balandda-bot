@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     iiko_server_url: str = ""        # e.g. https://balandda.iiko.it
     iiko_server_login: str = ""
     iiko_server_password: str = ""   # plain; sha1-hashed before sending
+    # Daily iiko CASH revenue is auto-credited to this wallet (restaurant manager).
+    # 1016986741 = ILYOS KHUDOYBERGENOV. Set to 0 to disable the sync.
+    iiko_cash_wallet_id: int = 1016986741
 
     # Beds24 channel manager (OTA sync: Booking.com / Airbnb / Trip.com)
     beds24_enabled: bool = False

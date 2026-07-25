@@ -11,7 +11,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from bot import owner_digest
+from bot import iiko_wallet_sync, owner_digest
 from bot.config import settings
 from db.database import async_session
 from services import beds24
@@ -314,6 +314,24 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         args=[bot],
         id="owner_evening_digest",
         name="Owner Evening Digest",
+        replace_existing=True,
+    )
+
+    # iiko cash → restaurant manager wallet (23:30 today; 08:50 late-cheque top-up)
+    scheduler.add_job(
+        iiko_wallet_sync.sync_today,
+        CronTrigger(hour=23, minute=30, timezone=settings.timezone),
+        args=[bot],
+        id="iiko_cash_sync_evening",
+        name="iiko cash → wallet (today)",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        iiko_wallet_sync.sync_yesterday,
+        CronTrigger(hour=8, minute=50, timezone=settings.timezone),
+        args=[bot],
+        id="iiko_cash_sync_morning",
+        name="iiko cash → wallet (late cheques)",
         replace_existing=True,
     )
 
