@@ -204,6 +204,22 @@ export const api = {
   deleteIncomeEntry: (id) => request(`/structured/income-entry/${id}`, { method: 'DELETE' }),
   deleteExpenseEntry: (id) => request(`/structured/expense-entry/${id}`, { method: 'DELETE' }),
 
+  // Revenue by business unit (Resort reports + iiko + Billz)
+  getBusinessDaily: (from, to) => {
+    const sp = new URLSearchParams();
+    if (from) sp.set('start_date', from);
+    if (to) sp.set('end_date', to);
+    return request(`/structured/business-daily?${sp}`);
+  },
+
+  // SPA / services analytics
+  getSpaDaily: (from, to) => {
+    const sp = new URLSearchParams();
+    if (from) sp.set('start_date', from);
+    if (to) sp.set('end_date', to);
+    return request(`/structured/spa-daily?${sp}`);
+  },
+
   // XUSH revenue from Billz POS
   getBillzDaily: (from, to) => {
     const sp = new URLSearchParams();

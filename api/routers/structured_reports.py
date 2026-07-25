@@ -630,6 +630,9 @@ async def structured_dashboard(
     daily_data: dict[str, dict] = {}
     # Per-day revenue split by payment method (for the stacked front-page chart)
     daily_payment: dict[str, dict[str, float]] = {}
+    # Per-day accommodation revenue split by property TYPE (line trend chart)
+    daily_prop_type: dict[str, dict[str, float]] = {}
+    prop_type_totals: dict[str, float] = {}
 
     for report in reports:
         day_inc = float(report.total_income or 0)
@@ -652,6 +655,12 @@ async def structured_dashboard(
                 cat = "Проживание"
                 prop_name = entry.property.name_ru
                 by_property[prop_name] = by_property.get(prop_name, 0) + amt
+                pt_label = PROPERTY_TYPE_LABELS.get(
+                    entry.property.property_type, entry.property.property_type.value
+                )
+                prop_type_totals[pt_label] = prop_type_totals.get(pt_label, 0) + amt
+                day_pt = daily_prop_type.setdefault(day_key, {})
+                day_pt[pt_label] = day_pt.get(pt_label, 0) + amt
             elif entry.service_item:
                 cat = "Услуги"
                 svc_name = entry.service_item.name_ru
@@ -709,6 +718,18 @@ async def structured_dashboard(
         daily_by_payment.append(row)
         cursor += timedelta(days=1)
 
+    # ── Daily accommodation revenue by property type (line trends) ──
+    property_types = [k for k, _ in sorted(prop_type_totals.items(), key=lambda x: x[1], reverse=True)]
+    daily_by_property_type = []
+    cursor = start_date
+    while cursor <= end_date:
+        dk = cursor.isoformat()
+        row = {"date": dk}
+        for pt in property_types:
+            row[pt] = float(daily_prop_type.get(dk, {}).get(pt, 0))
+        daily_by_property_type.append(row)
+        cursor += timedelta(days=1)
+
     return {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
@@ -724,6 +745,8 @@ async def structured_dashboard(
         "daily_totals": sorted(daily_data.values(), key=lambda x: x["date"]),
         "payment_methods": payment_methods,
         "daily_by_payment": daily_by_payment,
+        "property_types": property_types,
+        "daily_by_property_type": daily_by_property_type,
         "prepayments": {
             "total": prep_total,
             "confirmed": prep_confirmed,
@@ -784,6 +807,169 @@ async def iiko_daily(
         cursor += timedelta(days=1)
 
     return {"configured": True, "payment_methods": payment_methods, "daily_by_payment": daily}
+
+
+# ── Revenue by business unit (Resort reports + iiko + Billz) ──────
+
+
+@router.get("/business-daily")
+async def business_daily(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    session: AsyncSession = Depends(get_session),
+    _user: dict = Depends(get_current_user),
+):
+    """Per-day revenue by business: Курорт (reports), Ресторан (iiko, fallback
+    reports), XUSH (Billz, fallback reports). Same shape as the payment chart."""
+    from bot import billz
+    from services import iiko
+
+    if end_date is None:
+        end_date = date.today()
+    if start_date is None:
+        start_date = end_date - timedelta(days=7)
+
+    # Per-day report income per business unit
+    rows = (
+        await session.execute(
+            select(
+                StructuredReport.report_date,
+                StructuredReport.business_unit,
+                func.coalesce(func.sum(IncomeEntry.amount), 0),
+            )
+            .join(IncomeEntry, IncomeEntry.report_id == StructuredReport.id)
+            .where(
+                StructuredReport.report_date >= start_date,
+                StructuredReport.report_date <= end_date,
+            )
+            .group_by(StructuredReport.report_date, StructuredReport.business_unit)
+        )
+    ).all()
+
+    reports_daily: dict[str, dict[str, float]] = {}
+    for rd, bu, amt in rows:
+        reports_daily.setdefault(rd.isoformat(), {})[bu.value] = float(amt)
+
+    # Restaurant from iiko (system of record), fallback to reports
+    rest_daily: dict[str, float] = {}
+    rest_from_iiko = False
+    if iiko.is_configured():
+        try:
+            for r in await iiko.get_range_daily(start_date, end_date):
+                rest_daily[r["date"]] = rest_daily.get(r["date"], 0) + r["amount"]
+            rest_from_iiko = True
+        except Exception:
+            rest_daily = {}
+    if not rest_from_iiko:
+        rest_daily = {dk: v.get("RESTAURANT", 0) for dk, v in reports_daily.items()}
+
+    # XUSH from Billz (system of record), fallback to reports
+    xush_daily: dict[str, float] = {}
+    xush_from_billz = False
+    if billz.is_configured():
+        try:
+            for r in await billz.get_range_daily(start_date, end_date):
+                xush_daily[r["date"]] = xush_daily.get(r["date"], 0) + r["amount"]
+            xush_from_billz = True
+        except Exception:
+            xush_daily = {}
+    if not xush_from_billz:
+        xush_daily = {dk: v.get("XUSH", 0) for dk, v in reports_daily.items()}
+
+    methods = ["Курорт", "Ресторан", "XUSH"]
+    daily = []
+    cursor = start_date
+    while cursor <= end_date:
+        dk = cursor.isoformat()
+        resort = reports_daily.get(dk, {}).get("RESORT", 0)
+        rest = rest_daily.get(dk, 0)
+        xush = xush_daily.get(dk, 0)
+        daily.append({
+            "date": dk,
+            "Курорт": resort,
+            "Ресторан": rest,
+            "XUSH": xush,
+            "total": resort + rest + xush,
+        })
+        cursor += timedelta(days=1)
+
+    return {
+        "payment_methods": methods,
+        "daily_by_payment": daily,
+        "sources": {
+            "Курорт": "отчёты",
+            "Ресторан": "iiko" if rest_from_iiko else "отчёты",
+            "XUSH": "Billz" if xush_from_billz else "отчёты",
+        },
+    }
+
+
+# ── SPA / services revenue (dedicated analytics page) ─────────────
+
+
+@router.get("/spa-daily")
+async def spa_daily(
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    session: AsyncSession = Depends(get_session),
+    _user: dict = Depends(get_current_user),
+):
+    """Per-day services (SPA/massage) revenue by service type + totals by service."""
+    if end_date is None:
+        end_date = date.today()
+    if start_date is None:
+        start_date = end_date - timedelta(days=30)
+
+    result = await session.execute(
+        select(StructuredReport)
+        .where(
+            StructuredReport.report_date >= start_date,
+            StructuredReport.report_date <= end_date,
+        )
+        .options(selectinload(StructuredReport.income_entries).selectinload(IncomeEntry.service_item))
+    )
+    reports = result.scalars().all()
+
+    type_totals: dict[str, float] = {}
+    name_totals: dict[str, float] = {}
+    daily_type: dict[str, dict[str, float]] = {}
+
+    for report in reports:
+        dk = report.report_date.isoformat()
+        for entry in report.income_entries:
+            if not entry.service_item:
+                continue
+            amt = float(entry.amount)
+            svc = entry.service_item
+            t_label = SERVICE_TYPE_LABELS.get(svc.service_type, svc.service_type.value)
+            type_totals[t_label] = type_totals.get(t_label, 0) + amt
+            name_totals[svc.name_ru] = name_totals.get(svc.name_ru, 0) + amt
+            day = daily_type.setdefault(dk, {})
+            day[t_label] = day.get(t_label, 0) + amt
+
+    service_types = [k for k, _ in sorted(type_totals.items(), key=lambda x: x[1], reverse=True)]
+
+    daily = []
+    cursor = start_date
+    while cursor <= end_date:
+        dk = cursor.isoformat()
+        row: dict = {"date": dk, "total": 0.0}
+        for t in service_types:
+            v = float(daily_type.get(dk, {}).get(t, 0))
+            row[t] = v
+            row["total"] += v
+        daily.append(row)
+        cursor += timedelta(days=1)
+
+    return {
+        "service_types": service_types,
+        "daily_by_service_type": daily,
+        "by_service": sorted(
+            [{"name": k, "value": v} for k, v in name_totals.items()],
+            key=lambda x: x["value"], reverse=True,
+        ),
+        "total": float(sum(type_totals.values())),
+    }
 
 
 # ── XUSH revenue from Billz POS ───────────────────────────────────

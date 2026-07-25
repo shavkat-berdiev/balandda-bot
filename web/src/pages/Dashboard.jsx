@@ -2,31 +2,14 @@ import { useState, useEffect } from 'react';
 import { TrendingUp, TrendingDown, DollarSign, ArrowUpDown, Calendar, FileText, Wallet, CreditCard } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, LineChart, Line, Legend, Area, AreaChart, LabelList,
+  PieChart, Pie, Cell, LineChart, Line, Legend, Area, AreaChart,
 } from 'recharts';
 import { api } from '../api';
+import {
+  DailyRevenueChart, MultiLineChart, formatUZS, formatShort, daysAgo, today,
+} from '../components/RevenueCharts';
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4', '#f97316'];
-
-function formatUZS(amount) {
-  return new Intl.NumberFormat('ru-RU').format(Math.round(amount)) + ' UZS';
-}
-
-function formatShort(amount) {
-  if (amount >= 1_000_000) return (amount / 1_000_000).toFixed(1) + 'M';
-  if (amount >= 1_000) return (amount / 1_000).toFixed(0) + 'k';
-  return String(amount);
-}
-
-function daysAgo(n) {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().split('T')[0];
-}
-
-function today() {
-  return new Date().toISOString().split('T')[0];
-}
 
 const PRESETS = [
   { key: 'today', label: 'Сегодня', from: () => today(), to: () => today() },
@@ -34,17 +17,6 @@ const PRESETS = [
   { key: '30d', label: '30 дней', from: () => daysAgo(30), to: () => today() },
   { key: '90d', label: '90 дней', from: () => daysAgo(90), to: () => today() },
 ];
-
-// Stable colors per payment method label (fallback: COLORS by index)
-const PAYMENT_COLORS = {
-  'Наличные': '#10b981',
-  'Терминал Visa': '#6366f1',
-  'Терминал UzCard': '#8b5cf6',
-  'Перевод на карту': '#3b82f6',
-  'Перечисление': '#0ea5e9',
-  'PayMe': '#06b6d4',
-  'Предоплата': '#f59e0b',
-};
 
 const WALLET_ICONS = {
   CASH: '💵',
@@ -80,6 +52,8 @@ export default function Dashboard({ user }) {
   const [iikoData, setIikoData] = useState(null);
   // XUSH revenue from Billz (XUSH/ALL sections)
   const [billzData, setBillzData] = useState(null);
+  // Revenue by business unit (always on top)
+  const [businessData, setBusinessData] = useState(null);
 
   // Wallet data (owner only)
   const [centralWallets, setCentralWallets] = useState([]);
@@ -103,6 +77,15 @@ export default function Dashboard({ user }) {
       .catch(err => { console.error('Failed to load iiko data:', err); if (!cancelled) setIikoData(null); });
     return () => { cancelled = true; };
   }, [section, dateFrom, dateTo]);
+
+  // Revenue by business unit — independent of the section filter
+  useEffect(() => {
+    let cancelled = false;
+    api.getBusinessDaily(dateFrom, dateTo)
+      .then(res => { if (!cancelled) setBusinessData(res); })
+      .catch(err => { console.error('Failed to load business revenue:', err); if (!cancelled) setBusinessData(null); });
+    return () => { cancelled = true; };
+  }, [dateFrom, dateTo]);
 
   // Billz XUSH revenue (only relevant for XUSH / ALL)
   useEffect(() => {
@@ -253,6 +236,16 @@ export default function Dashboard({ user }) {
         </div>
       ) : (
         <>
+          {/* Revenue by business (Курорт + Ресторан + XUSH) — always first */}
+          {businessData && (
+            <DailyRevenueChart
+              title="Выручка по бизнесам"
+              data={businessData.daily_by_payment || []}
+              methods={businessData.payment_methods || []}
+              periodLabel={periodLabel}
+            />
+          )}
+
           {/* Daily revenue chart — total income per day, stacked by payment method */}
           <DailyRevenueChart
             data={data.daily_by_payment || []}
@@ -383,7 +376,7 @@ export default function Dashboard({ user }) {
             </div>
 
             <div className="bg-white rounded-xl border border-gray-200 p-6">
-              <h2 className="text-lg font-semibold text-gray-800 mb-4">Доход по объектам</h2>
+              <h2 className="text-lg font-semibold text-gray-800 mb-4">Доход по объектам (всего за период)</h2>
               {data.by_property?.length > 0 ? (
                 <ResponsiveContainer width="100%" height={260}>
                   <BarChart data={data.by_property}>
@@ -400,20 +393,14 @@ export default function Dashboard({ user }) {
             </div>
           </div>
 
-          {/* Services breakdown */}
-          {data.by_service?.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-              <h2 className="text-lg font-semibold text-gray-800 mb-4">Доход по услугам</h2>
-              <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={data.by_service} layout="vertical">
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                  <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={formatShort} />
-                  <YAxis type="category" dataKey="name" tick={{ fontSize: 11 }} width={120} />
-                  <Tooltip formatter={(v) => formatUZS(v)} />
-                  <Bar dataKey="value" fill="#8b5cf6" radius={[0, 4, 4, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+          {/* Accommodation trend by property type (line per type) */}
+          {data.property_types?.length > 0 && (
+            <MultiLineChart
+              title="Доход по типам размещения (тренд)"
+              data={data.daily_by_property_type || []}
+              series={data.property_types || []}
+              periodLabel={periodLabel}
+            />
           )}
 
           {/* Wallet stats (owner only) */}
@@ -479,56 +466,6 @@ export default function Dashboard({ user }) {
         <TrendChart title="Тренд за 7 дней" data={trend7} />
         <TrendChart title="Тренд за 30 дней" data={trend30} />
       </div>
-    </div>
-  );
-}
-
-function DailyRevenueChart({ data, methods, periodLabel, title = 'Выручка по дням' }) {
-  const hasValues = data && data.length > 0 && data.some(d => d.total > 0);
-  const totalRevenue = (data || []).reduce((s, d) => s + (d.total || 0), 0);
-
-  const fmtDay = d => {
-    const dt = new Date(d + 'T00:00:00');
-    return dt.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' });
-  };
-
-  return (
-    <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-1 mb-4">
-        <h2 className="text-lg font-semibold text-gray-800">{title}</h2>
-        <div className="text-sm text-gray-500">
-          {periodLabel} · <span className="font-semibold text-gray-800">{formatUZS(totalRevenue)}</span>
-        </div>
-      </div>
-      {hasValues ? (
-        <ResponsiveContainer width="100%" height={320}>
-          <BarChart data={data}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-            <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={fmtDay}
-              interval="preserveStartEnd" minTickGap={16} />
-            <YAxis tick={{ fontSize: 11 }} tickFormatter={formatShort} />
-            <Tooltip
-              formatter={(v, name) => [formatUZS(v), name]}
-              labelFormatter={d => new Date(d + 'T00:00:00').toLocaleDateString('ru-RU')}
-              itemSorter={item => -item.value}
-            />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
-            {methods.map((m, i) => (
-              <Bar key={m} dataKey={m} name={m} stackId="rev"
-                fill={PAYMENT_COLORS[m] || COLORS[i % COLORS.length]}
-                radius={i === methods.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}>
-                {i === methods.length - 1 && (
-                  <LabelList dataKey="total" position="top"
-                    formatter={v => (v > 0 ? formatShort(v) : '')}
-                    style={{ fontSize: 10, fill: '#374151', fontWeight: 600 }} />
-                )}
-              </Bar>
-            ))}
-          </BarChart>
-        </ResponsiveContainer>
-      ) : (
-        <p className="text-gray-400 text-center py-16">Нет данных о выручке за этот период</p>
-      )}
     </div>
   );
 }
