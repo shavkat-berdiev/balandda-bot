@@ -7,6 +7,7 @@ to reply with.
 
 import secrets
 from datetime import date, datetime, timezone
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
@@ -17,9 +18,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.routers.public import _stay_total
 from bot.config import settings
 from db.database import get_session
-from db.enums import ReservationSource, ReservationStatus
+from db.enums import (
+    BusinessUnit,
+    ReservationSource,
+    ReservationStatus,
+    WalletTransactionStatus,
+    WalletTransactionType,
+)
 from db.hold_timing import add_working_minutes
-from db.models import Property, Reservation, ReservationEvent
+from db.models import Property, Reservation, ReservationEvent, User, WalletTransaction
 from services.beds24 import kick as beds24_kick  # OTA availability push
 from services.customer_notify import (
     booking_received_text,
@@ -237,4 +244,70 @@ async def web_book(
         "connect_url": connect_url,
         "guest_name": data.guest_name,
         "message": booking_received_text(res, prop.name_ru, prepay_text),
+    }
+
+
+# ── Sklad purchases (balandda-tk mini-app) — cash purchase wallet deduction ──
+
+
+class PurchaseExpenseData(BaseModel):
+    telegram_id: int          # buyer (Азизов 548813671 / Пулатов 1271114713)
+    amount: float             # approved purchase total, UZS
+    pending_id: str           # balandda-tk pending record id — idempotency key
+    doc_num: str | None = None        # iiko invoice number (e.g. "0402")
+    description: str | None = None    # short item summary
+    purchase_date: str | None = None  # informational
+
+
+@router.post("/purchase-expense")
+async def purchase_expense(
+    data: PurchaseExpenseData,
+    session: AsyncSession = Depends(get_session),
+    x_bridge_secret: str | None = Header(default=None),
+):
+    """Called by balandda-tk when an approved закуп was paid in CASH:
+    deducts the amount from the buyer's cash wallet (type=PURCHASE).
+
+    Idempotent: the pending_id marker in the note guards against retries.
+    Returns the buyer's remaining wallet balance so the mini-app / DM can show it.
+    """
+    _check_secret(x_bridge_secret)
+
+    if data.amount <= 0:
+        raise HTTPException(status_code=400, detail="amount must be positive")
+
+    marker = f"[sklad:{data.pending_id}]"
+    existing = (
+        await session.execute(
+            select(WalletTransaction.id).where(WalletTransaction.note.like(f"%{marker}%"))
+        )
+    ).first()
+
+    if not existing:
+        doc_part = f" №{data.doc_num}" if data.doc_num else ""
+        desc_part = f" — {data.description}" if data.description else ""
+        session.add(WalletTransaction(
+            sender_telegram_id=data.telegram_id,
+            amount=Decimal(round(data.amount)),
+            transaction_type=WalletTransactionType.PURCHASE,
+            status=WalletTransactionStatus.COMPLETED,
+            note=f"Закуп iiko{doc_part}{desc_part} {marker}",
+            business_unit=BusinessUnit.RESTAURANT,
+        ))
+        await session.commit()
+
+    # Remaining balance (same logic as the wallets router)
+    from api.routers.wallets import _calculate_balance
+    balance = await _calculate_balance(session, data.telegram_id)
+
+    buyer_name = (
+        await session.execute(select(User.full_name).where(User.telegram_id == data.telegram_id))
+    ).scalar_one_or_none()
+
+    return {
+        "ok": True,
+        "duplicate": bool(existing),
+        "telegram_id": data.telegram_id,
+        "buyer_name": buyer_name,
+        "balance": balance,
     }
