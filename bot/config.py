@@ -60,6 +60,28 @@ class Settings(BaseSettings):
     # 1016986741 = ILYOS KHUDOYBERGENOV. Set to 0 to disable the sync.
     iiko_cash_wallet_id: int = 1016986741
 
+    # Card monitoring — reads CardXabar (UZCARD) messages via a read-only
+    # Telethon userbot session of the owner's personal account.
+    # Feature is fully disabled while telethon_session is empty.
+    telethon_api_id: int = 0            # from my.telegram.org
+    telethon_api_hash: str = ""
+    telethon_session: str = ""          # StringSession (create with scripts/telethon_login.py)
+    cardxabar_chat: str = "CardXabar"   # dialog title, @username, or numeric chat id
+    # last4:BUSINESS pairs; business is BALANDDA or XUSH
+    card_map: str = "4042:BALANDDA,8044:XUSH"
+    card_recon_hour: int = 21           # daily card reconciliation post time
+    card_recon_minute: int = 15
+
+    @property
+    def card_business_map(self) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for pair in self.card_map.split(","):
+            pair = pair.strip()
+            if ":" in pair:
+                last4, biz = pair.split(":", 1)
+                out[last4.strip()] = biz.strip().upper()
+        return out
+
     # Beds24 channel manager (OTA sync: Booking.com / Airbnb / Trip.com)
     beds24_enabled: bool = False
     beds24_refresh_token: str = ""            # long-lived token (SETTINGS→API in Beds24)

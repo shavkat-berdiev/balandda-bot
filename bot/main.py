@@ -34,6 +34,22 @@ async def run_migrations():
     columns to existing tables. We must ALTER TABLE manually.
     """
     migrations = [
+        # Added 2026-07: entry timestamp for card-transfer reconciliation
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'income_entries'
+                  AND column_name = 'created_at'
+            ) THEN
+                -- two steps so PRE-EXISTING rows stay NULL (matcher falls back
+                -- to report_date for them) while new rows get NOW()
+                ALTER TABLE income_entries ADD COLUMN created_at TIMESTAMPTZ;
+                ALTER TABLE income_entries ALTER COLUMN created_at SET DEFAULT NOW();
+            END IF;
+        END $$;
+        """,
         # Added in v0.2: restaurant income category on income_entries
         """
         DO $$
@@ -922,12 +938,22 @@ async def main():
     scheduler.start()
     logger.info("Scheduler started")
 
+    # Card reader (Telethon userbot; no-op unless TELETHON_* env vars are set)
+    from bot.card_reader import start_card_reader
+
+    card_client = await start_card_reader()
+
     # Start polling
     logger.info("Bot is running. Press Ctrl+C to stop.")  # (beds24 sync active via scheduler)
     try:
         await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
     finally:
         scheduler.shutdown()
+        if card_client is not None:
+            try:
+                await card_client.disconnect()
+            except Exception:
+                pass
         await bot.session.close()
         await engine.dispose()
 

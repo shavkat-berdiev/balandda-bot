@@ -456,6 +456,11 @@ class IncomeEntry(Base):
     discount_reason: Mapped[DiscountReason | None] = mapped_column(Enum(DiscountReason), nullable=True)
     discount_note: Mapped[str | None] = mapped_column(String(255), nullable=True)
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # When the entry was recorded (added 2026-07 for card-transfer reconciliation;
+    # NULL for rows created before the migration)
+    created_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=True
+    )
 
     report: Mapped["StructuredReport"] = relationship(back_populates="income_entries")
     property: Mapped["Property | None"] = relationship(back_populates="income_entries")
@@ -688,3 +693,31 @@ class NotificationRoute(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class CardTransaction(Base):
+    """Incoming/outgoing card transaction parsed from CardXabar (UZCARD) messages.
+
+    Fed by the read-only Telethon reader (bot/card_reader.py). IN transfers on
+    business cards are reconciled against team-reported entries (bot/card_matcher.py)
+    and summarized daily into the Reporting group topics (bot/card_recon.py).
+    """
+    __tablename__ = "card_transactions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tg_message_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    card_last4: Mapped[str] = mapped_column(String(4), index=True)
+    business: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)  # BALANDDA / XUSH / NULL=unknown card
+    direction: Mapped[str] = mapped_column(String(3))       # IN / OUT
+    tx_type: Mapped[str | None] = mapped_column(String(80), nullable=True)   # "Perevod na kartu", "E-Com oplata", ...
+    amount: Mapped[float] = mapped_column(Numeric(15, 2))
+    merchant: Mapped[str | None] = mapped_column(String(255), nullable=True)  # 📍 line
+    tx_time: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    balance_after: Mapped[float | None] = mapped_column(Numeric(15, 2), nullable=True)
+    raw_text: Mapped[str] = mapped_column(Text)
+    # Reconciliation state: NEW → MATCHED / UNMATCHED (no candidate yet) / IGNORED (manually dismissed)
+    match_status: Mapped[str] = mapped_column(String(16), default="NEW", index=True)
+    matched_type: Mapped[str | None] = mapped_column(String(20), nullable=True)  # income_entry / prepayment / manual
+    matched_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    match_note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

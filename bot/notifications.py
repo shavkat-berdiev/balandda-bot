@@ -30,6 +30,8 @@ CAT_OPERATIONS = "OPERATIONS"       # income / expense entries, purchases (за�
 CAT_REPORTS = "REPORTS"             # submitted reports + daily 21:00 summary
 CAT_BOOKINGS = "BOOKINGS"           # prepayments / booking money-in
 CAT_SYSTEM = "SYSTEM"               # system events, errors, misc
+CAT_CARD_BALANDDA = "CARD_BALANDDA" # card-transfer reconciliation, Balandda card
+CAT_CARD_XUSH = "CARD_XUSH"         # card-transfer reconciliation, XUSH card
 
 CATEGORY_LABELS: dict[str, str] = {
     CAT_INKASSATSIYA: "💰 Инкассация",
@@ -37,6 +39,8 @@ CATEGORY_LABELS: dict[str, str] = {
     CAT_REPORTS: "📊 Отчёты и сводки",
     CAT_BOOKINGS: "🏨 Брони и предоплаты",
     CAT_SYSTEM: "⚙️ Система",
+    CAT_CARD_BALANDDA: "💳 Карта Balandda (сверка)",
+    CAT_CARD_XUSH: "💳 Карта XUSH (сверка)",
 }
 
 

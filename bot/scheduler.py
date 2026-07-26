@@ -342,6 +342,29 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # Card monitoring: periodic matching + evening reconciliation posts
+    from bot import card_matcher, card_recon
+
+    scheduler.add_job(
+        card_matcher.run_matching,
+        IntervalTrigger(minutes=30),
+        id="card_matching",
+        name="Card transfer matching",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        card_recon.send_daily_reconciliation,
+        CronTrigger(
+            hour=settings.card_recon_hour,
+            minute=settings.card_recon_minute,
+            timezone=settings.timezone,
+        ),
+        args=[bot],
+        id="card_reconciliation",
+        name="Daily card reconciliation",
+        replace_existing=True,
+    )
+
     # Beds24 channel-manager sync (no-ops unless BEDS24_ENABLED)
     scheduler.add_job(
         beds24.pull_bookings,
