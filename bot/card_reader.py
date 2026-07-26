@@ -73,12 +73,24 @@ async def _last_stored_message_id() -> int:
 
 
 async def _resolve_chat(client):
-    """Find the CardXabar dialog by @username, numeric id, or exact title."""
+    """Find the CardXabar dialog by @username, numeric id, or exact title.
+
+    A fresh StringSession has an empty entity cache, so get_entity(<id>) fails
+    until the dialog has been seen once — scanning dialogs both finds the chat
+    and populates the cache.
+    """
     ref = settings.cardxabar_chat.strip()
     if ref.startswith("@"):
         return await client.get_entity(ref)
     if ref.lstrip("-").isdigit():
-        return await client.get_entity(int(ref))
+        target_id = int(ref)
+        try:
+            return await client.get_entity(target_id)
+        except ValueError:
+            async for dialog in client.iter_dialogs():
+                if dialog.id == target_id or getattr(dialog.entity, "id", None) == abs(target_id):
+                    return dialog.entity
+            return None
     async for dialog in client.iter_dialogs():
         if (dialog.name or "").strip().lower() == ref.lower():
             return dialog.entity
