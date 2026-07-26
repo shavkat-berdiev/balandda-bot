@@ -16,14 +16,22 @@ treat it like a password. It goes ONLY into the VPS .env file.
 """
 
 import asyncio
+import sys
 
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 
+# App "Berdiev Analytics" registered on my.telegram.org (2026-07-26).
+# Override via argv if ever needed: python scripts/telethon_login.py <api_id> <api_hash>
+DEFAULT_API_ID = 37388491
+DEFAULT_API_HASH = "bb44e603e27d5de46b6d1cd01cc8c319"
+
 
 async def main():
-    api_id = int(input("api_id (from my.telegram.org): ").strip())
-    api_hash = input("api_hash: ").strip()
+    if len(sys.argv) >= 3:
+        api_id, api_hash = int(sys.argv[1]), sys.argv[2]
+    else:
+        api_id, api_hash = DEFAULT_API_ID, DEFAULT_API_HASH
 
     client = TelegramClient(StringSession(), api_id, api_hash)
     await client.start()  # asks phone → code → 2FA password interactively
