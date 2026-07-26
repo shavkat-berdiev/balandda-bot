@@ -19,7 +19,7 @@ from sqlalchemy import select
 
 from bot.keyboards.main import main_menu_keyboard
 from bot.locales import get_text
-from bot.notifications import notify_owners
+from bot.notifications import CAT_OPERATIONS, notify_owners
 from db.database import async_session
 from db.enums import (
     BusinessUnit,
@@ -493,6 +493,7 @@ async def on_finalize(callback: types.CallbackQuery, state: FSMContext):
             f"📅 {report_data['date']}\n\n"
             f"{entries_text}\n"
             f"💰 <b>Итого: {format_amount(report_data['total'])} UZS</b>",
+            category=CAT_OPERATIONS,
         )
 
 

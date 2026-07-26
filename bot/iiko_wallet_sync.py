@@ -120,12 +120,15 @@ async def sync_iiko_cash(bot: Bot | None, target: date) -> dict:
             await bot.send_message(wallet_id, text, parse_mode="HTML")
         except Exception as e:
             logger.error(f"iiko cash sync: notify manager {wallet_id} failed: {e}")
-        # Owners (FYI)
-        for tid in await _get_owner_ids():
-            try:
-                await bot.send_message(tid, text, parse_mode="HTML")
-            except Exception as e:
-                logger.error(f"iiko cash sync: notify owner {tid} failed: {e}")
+        # Owners (FYI) — via the Reporting group topic if bound, else DMs
+        from bot.notifications import CAT_INKASSATSIYA, send_via_route
+
+        if not await send_via_route(bot, CAT_INKASSATSIYA, text):
+            for tid in await _get_owner_ids():
+                try:
+                    await bot.send_message(tid, text, parse_mode="HTML")
+                except Exception as e:
+                    logger.error(f"iiko cash sync: notify owner {tid} failed: {e}")
 
     return {"date": target.isoformat(), "cash_total": cash_total, "already": already, "credited": delta}
 

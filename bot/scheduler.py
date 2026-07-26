@@ -123,14 +123,21 @@ async def build_daily_summary(target_date: date) -> str:
 
 
 async def send_daily_report(bot: Bot):
-    """Send daily report to all admins."""
+    """Send the daily summary — to the Reporting group topic if bound, else to admins."""
+    from bot.notifications import CAT_REPORTS, send_via_route
+
     today = date.today()
     logger.info(f"Sending daily report for {today}")
 
     try:
         summary = await build_daily_summary(today)
 
-        # Find admins to notify
+        # If the REPORTS category is bound to a group topic, one post there is enough
+        if await send_via_route(bot, CAT_REPORTS, summary):
+            logger.info("Daily report sent to the Reporting group topic")
+            return
+
+        # Fallback — find admins to notify in DMs
         async with async_session() as session:
             result = await session.execute(
                 select(User).where(

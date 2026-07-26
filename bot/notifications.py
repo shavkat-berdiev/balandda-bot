@@ -1,4 +1,7 @@
-"""Shared notification module — sends activity logs to OWNER users via Telegram.
+"""Shared notification module — routes activity notifications either into the
+Reporting group's forum topics (per-category, see NotificationRoute) or, when a
+category is not bound to a topic, to OWNER users' private chats (legacy
+behavior, also the fallback if a group send fails).
 
 All public notify_* functions are fire-and-forget: they schedule the actual
 send as a background task so the calling handler never blocks on network I/O.
@@ -6,16 +9,80 @@ send as a background task so the calling handler never blocks on network I/O.
 
 import asyncio
 import logging
+import time
 
 from aiogram import Bot
 from sqlalchemy import select
 
 from db.database import async_session
 from db.enums import UserRole
-from db.models import User
+from db.models import NotificationRoute, User
 
 logger = logging.getLogger(__name__)
 
+
+# ────────────────────────────────────────────────────────────────────────
+# Notification categories (values stored in notification_routes.category)
+# ────────────────────────────────────────────────────────────────────────
+
+CAT_INKASSATSIYA = "INKASSATSIYA"   # wallet transfers: created / accepted / declined
+CAT_OPERATIONS = "OPERATIONS"       # income / expense entries, purchases (закуп)
+CAT_REPORTS = "REPORTS"             # submitted reports + daily 21:00 summary
+CAT_BOOKINGS = "BOOKINGS"           # prepayments / booking money-in
+CAT_SYSTEM = "SYSTEM"               # system events, errors, misc
+
+CATEGORY_LABELS: dict[str, str] = {
+    CAT_INKASSATSIYA: "💰 Инкассация",
+    CAT_OPERATIONS: "📈 Операции (доходы/расходы)",
+    CAT_REPORTS: "📊 Отчёты и сводки",
+    CAT_BOOKINGS: "🏨 Брони и предоплаты",
+    CAT_SYSTEM: "⚙️ Система",
+}
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Route lookup (60s cache so every notification doesn't hit the DB)
+# ────────────────────────────────────────────────────────────────────────
+
+_ROUTE_CACHE_TTL = 60.0
+_route_cache: dict[str, tuple[int, int | None]] = {}
+_route_cache_at: float = 0.0
+
+
+async def _load_routes() -> dict[str, tuple[int, int | None]]:
+    async with async_session() as session:
+        result = await session.execute(select(NotificationRoute))
+        return {
+            r.category: (r.chat_id, r.thread_id)
+            for r in result.scalars().all()
+        }
+
+
+async def _get_route(category: str | None) -> tuple[int, int | None] | None:
+    """Return (chat_id, thread_id) for a category, or None if unbound."""
+    global _route_cache, _route_cache_at
+    if category is None:
+        return None
+    now = time.monotonic()
+    if now - _route_cache_at > _ROUTE_CACHE_TTL:
+        try:
+            _route_cache = await _load_routes()
+            _route_cache_at = now
+        except Exception as e:
+            logger.error(f"Failed to load notification routes: {e}")
+            return None
+    return _route_cache.get(category)
+
+
+def invalidate_route_cache() -> None:
+    """Force the next notification to re-read routes from the DB."""
+    global _route_cache_at
+    _route_cache_at = 0.0
+
+
+# ────────────────────────────────────────────────────────────────────────
+# Send primitives
+# ────────────────────────────────────────────────────────────────────────
 
 async def _get_owner_ids() -> list[int]:
     """Fetch telegram_ids of all active OWNER users."""
@@ -30,7 +97,7 @@ async def _get_owner_ids() -> list[int]:
 
 
 async def _send_to_owners(bot: Bot, text: str, exclude_tid: int | None = None):
-    """Actually send a notification message to all OWNER users."""
+    """Send a notification message to all OWNER users' private chats."""
     owner_ids = await _get_owner_ids()
     for tid in owner_ids:
         if tid == exclude_tid:
@@ -41,15 +108,47 @@ async def _send_to_owners(bot: Bot, text: str, exclude_tid: int | None = None):
             logger.error(f"Failed to notify owner {tid}: {e}")
 
 
-def notify_owners(bot: Bot, text: str, exclude_tid: int | None = None):
+async def send_via_route(bot: Bot, category: str | None, text: str) -> bool:
+    """Try to post into the bound group topic. Returns True on success."""
+    route = await _get_route(category)
+    if not route:
+        return False
+    chat_id, thread_id = route
+    try:
+        await bot.send_message(
+            chat_id, text, message_thread_id=thread_id, parse_mode="HTML"
+        )
+        return True
+    except Exception as e:
+        logger.error(
+            f"Failed to send {category} notification to group {chat_id} "
+            f"(topic {thread_id}): {e} — falling back to owner DMs"
+        )
+        return False
+
+
+async def _dispatch(bot: Bot, text: str, category: str | None,
+                    exclude_tid: int | None = None):
+    """Route to the group topic if bound; otherwise (or on failure) owner DMs."""
+    if await send_via_route(bot, category, text):
+        return
+    await _send_to_owners(bot, text, exclude_tid=exclude_tid)
+
+
+def notify_owners(bot: Bot, text: str, exclude_tid: int | None = None,
+                  category: str | None = None):
     """Fire-and-forget: schedule notification as a background task."""
-    asyncio.create_task(_send_to_owners(bot, text, exclude_tid=exclude_tid))
+    asyncio.create_task(_dispatch(bot, text, category, exclude_tid=exclude_tid))
 
 
 def format_amount(amount) -> str:
     """Format number as readable currency string."""
     return f"{int(float(amount)):,}".replace(",", " ")
 
+
+# ────────────────────────────────────────────────────────────────────────
+# Typed notifications
+# ────────────────────────────────────────────────────────────────────────
 
 async def notify_report_submitted(bot: Bot, user_name: str, report_date, business_unit: str,
                                    total_income: float, total_expense: float,
@@ -66,7 +165,7 @@ async def notify_report_submitted(bot: Bot, user_name: str, report_date, busines
         f"📉 Расход: {format_amount(total_expense)} UZS ({expense_count} шт.)\n"
         f"💰 Итого: {'+' if net >= 0 else ''}{format_amount(net)} UZS"
     )
-    notify_owners(bot, text)
+    notify_owners(bot, text, category=CAT_REPORTS)
 
 
 async def notify_prepayment_created(bot: Bot, operator_name: str, guest_name: str,
@@ -82,7 +181,7 @@ async def notify_prepayment_created(bot: Bot, operator_name: str, guest_name: st
         f"💰 {format_amount(amount)} UZS\n"
         f"💳 {payment_method}"
     )
-    notify_owners(bot, text)
+    notify_owners(bot, text, category=CAT_BOOKINGS)
 
 
 async def notify_wallet_transfer(bot: Bot, sender_name: str, tx_label: str,
@@ -93,6 +192,7 @@ async def notify_wallet_transfer(bot: Bot, sender_name: str, tx_label: str,
 
     exclude_tid: skip this telegram_id from owner notification
     (used when the receiver is an OWNER — they already got the accept/decline message).
+    Only applies to the DM fallback; the group topic always gets the message.
     """
     note_text = f"\n📝 {note}" if note else ""
     text = (
@@ -102,7 +202,7 @@ async def notify_wallet_transfer(bot: Bot, sender_name: str, tx_label: str,
         f"➡️ {receiver_name}\n"
         f"💰 {format_amount(amount)} UZS{note_text}"
     )
-    notify_owners(bot, text, exclude_tid=exclude_tid)
+    notify_owners(bot, text, exclude_tid=exclude_tid, category=CAT_INKASSATSIYA)
 
 
 async def notify_income_entry(bot: Bot, user_name: str, entry_name: str,
@@ -117,7 +217,7 @@ async def notify_income_entry(bot: Bot, user_name: str, entry_name: str,
         f"💰 {format_amount(amount)} UZS\n"
         f"💳 {payment_label}"
     )
-    notify_owners(bot, text)
+    notify_owners(bot, text, category=CAT_OPERATIONS)
 
 
 async def notify_expense_entry(bot: Bot, user_name: str, category_label: str,
@@ -131,4 +231,4 @@ async def notify_expense_entry(bot: Bot, user_name: str, category_label: str,
         f"📝 {category_label}: {description}\n"
         f"💰 {format_amount(amount)} UZS"
     )
-    notify_owners(bot, text)
+    notify_owners(bot, text, category=CAT_OPERATIONS)

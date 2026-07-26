@@ -668,3 +668,23 @@ class ReservationEvent(Base):
     action: Mapped[str] = mapped_column(String(40))  # created / updated / cancelled / auto
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class NotificationRoute(Base):
+    """Routing of bot notifications into the Reporting group's forum topics.
+
+    One row per notification category. When a row exists, notifications of that
+    category are posted into the bound group topic (chat_id + thread_id) instead
+    of being sent to each OWNER's private chat. thread_id is NULL for the
+    "General" topic. Managed via /bind, /routes, /unbind inside the group.
+    """
+    __tablename__ = "notification_routes"
+
+    category: Mapped[str] = mapped_column(String(32), primary_key=True)
+    chat_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    thread_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    chat_title: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    topic_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )

@@ -11,6 +11,7 @@ from bot.handlers.new_report import router as new_report_router
 from bot.handlers.prepayment import router as prepayment_router
 from bot.handlers.purchase import router as purchase_router
 from bot.handlers.report import router as report_router
+from bot.handlers.reporting_group import router as reporting_group_router
 from bot.handlers.start import router as start_router
 from bot.handlers.wallet import router as wallet_router
 from bot.handlers.xush import router as xush_router
@@ -34,6 +35,7 @@ async def debug_catch_all(message: types.Message):
 
 # Import order matters — more specific routers first
 main_router = Router()
+main_router.include_router(reporting_group_router)  # Reporting group topics (/bind /routes /unbind) + swallows all other group traffic — MUST be first
 main_router.include_router(start_router)
 main_router.include_router(new_report_router)   # Structured report flow
 main_router.include_router(new_expense_router)   # Expense entry flow
