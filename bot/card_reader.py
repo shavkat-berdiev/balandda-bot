@@ -23,6 +23,45 @@ logger = logging.getLogger(__name__)
 
 CATCHUP_LIMIT = 300  # max history messages to scan on startup
 
+_BUSINESS_LABELS = {"BALANDDA": "Balandda", "XUSH": "XUSH"}
+
+
+def _fmt_amount(amount: float) -> str:
+    return f"{amount:,.0f}".replace(",", " ")
+
+
+async def _notify_incoming(bot, tx: CardTransaction) -> None:
+    """Real-time post of an incoming transfer into the business's bound topic.
+
+    Deliberately NO owner-DM fallback: an unbound category means real-time
+    posts are off for that card (the 21:15 daily reconciliation still runs).
+    """
+    from zoneinfo import ZoneInfo
+
+    from bot.notifications import CAT_CARD_BALANDDA, CAT_CARD_XUSH, send_via_route
+
+    category = {
+        "BALANDDA": CAT_CARD_BALANDDA,
+        "XUSH": CAT_CARD_XUSH,
+    }.get(tx.business or "")
+    if category is None:
+        return
+
+    label = _BUSINESS_LABELS.get(tx.business, tx.business)
+    t = tx.tx_time.astimezone(ZoneInfo(settings.timezone)).strftime("%H:%M")
+    src = (tx.merchant or "?").split(",")[0]
+    text = (
+        f"💳 <b>Поступление на карту {label} (*{tx.card_last4})</b>\n\n"
+        f"➕ <b>{_fmt_amount(float(tx.amount))} UZS</b>\n"
+        f"📍 {src}\n"
+        f"🕓 {t}\n\n"
+        f"Проверьте: есть ли этот перевод в отчёте / предоплате."
+    )
+    if not await send_via_route(bot, category, text):
+        logger.info(
+            f"Real-time card post skipped ({tx.business}): category {category} not bound to a topic"
+        )
+
 
 def is_configured() -> bool:
     return bool(
@@ -97,8 +136,12 @@ async def _resolve_chat(client):
     return None
 
 
-async def start_card_reader():
-    """Connect and start listening. Returns the client, or None if disabled/failed."""
+async def start_card_reader(bot=None):
+    """Connect and start listening. Returns the client, or None if disabled/failed.
+
+    bot: aiogram Bot for real-time incoming-transfer posts to group topics
+    (catch-up messages never trigger posts — only live events do).
+    """
     if not is_configured():
         logger.info("Card reader disabled (TELETHON_* env vars not set)")
         return None
@@ -143,11 +186,20 @@ async def start_card_reader():
         if caught_up:
             logger.info(f"Card reader: caught up {caught_up} missed transaction(s)")
 
+        async def _handle_live(event):
+            tx = await _store_message(event.message.id, event.message.text)
+            # Real-time group post for NEW incoming transfers on business cards
+            if tx is not None and bot is not None and tx.direction == "IN" and tx.business:
+                try:
+                    await _notify_incoming(bot, tx)
+                except Exception as e:
+                    logger.error(f"Card reader: real-time post failed: {e}", exc_info=True)
+
         @client.on(events.NewMessage(chats=chat))
         async def _on_new_message(event):
             try:
                 if event.message.text:
-                    await _store_message(event.message.id, event.message.text)
+                    await _handle_live(event)
             except Exception as e:
                 logger.error(f"Card reader: failed to process message: {e}", exc_info=True)
 
@@ -156,7 +208,7 @@ async def start_card_reader():
             # CardXabar occasionally edits messages; try to store if we missed it
             try:
                 if event.message.text:
-                    await _store_message(event.message.id, event.message.text)
+                    await _handle_live(event)
             except Exception as e:
                 logger.error(f"Card reader: failed to process edit: {e}", exc_info=True)
 

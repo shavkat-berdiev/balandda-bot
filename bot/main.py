@@ -941,7 +941,7 @@ async def main():
     # Card reader (Telethon userbot; no-op unless TELETHON_* env vars are set)
     from bot.card_reader import start_card_reader
 
-    card_client = await start_card_reader()
+    card_client = await start_card_reader(bot)
 
     # Start polling
     logger.info("Bot is running. Press Ctrl+C to stop.")  # (beds24 sync active via scheduler)
