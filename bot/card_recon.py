@@ -5,8 +5,9 @@ BALANDDA (*4042): incoming transfers vs reported card-transfer entries
 XUSH (*8044): incoming transfers total vs Billz per-payment-type sales
   (daily totals — Billz is the source of truth for XUSH sales)
 
-Posts route via notification categories CARD_BALANDDA / CARD_XUSH
-(bind them to topics with /bind); fallback = owner DMs.
+Reconciliation summaries go to OWNER users' PRIVATE chats only (owner-facing
+control data). The CARD_BALANDDA / CARD_XUSH topic bindings are used solely by
+the real-time per-transfer posts in bot/card_reader.py.
 """
 
 import logging
@@ -18,12 +19,7 @@ from sqlalchemy import select
 
 from bot import billz, card_matcher
 from bot.config import settings
-from bot.notifications import (
-    CAT_CARD_BALANDDA,
-    CAT_CARD_XUSH,
-    _send_to_owners,
-    send_via_route,
-)
+from bot.notifications import _send_to_owners
 from db.database import async_session
 from db.models import CardTransaction
 
@@ -135,13 +131,8 @@ def _xush_last4() -> str:
     return "????"
 
 
-async def _post(bot: Bot, category: str, text: str):
-    if not await send_via_route(bot, category, text):
-        await _send_to_owners(bot, text)
-
-
 async def send_daily_reconciliation(bot: Bot):
-    """Evening job: refresh matching, then post one summary per business."""
+    """Evening job: refresh matching, then DM one summary per business to owners."""
     day = datetime.now(_TZ).date()
     try:
         await card_matcher.run_matching()
@@ -149,11 +140,11 @@ async def send_daily_reconciliation(bot: Bot):
         logger.error(f"Card matching failed before reconciliation: {e}", exc_info=True)
 
     try:
-        await _post(bot, CAT_CARD_BALANDDA, await build_balandda_recon(day))
+        await _send_to_owners(bot, await build_balandda_recon(day))
     except Exception as e:
         logger.error(f"Balandda card reconciliation failed: {e}", exc_info=True)
 
     try:
-        await _post(bot, CAT_CARD_XUSH, await build_xush_recon(day))
+        await _send_to_owners(bot, await build_xush_recon(day))
     except Exception as e:
         logger.error(f"XUSH card reconciliation failed: {e}", exc_info=True)
