@@ -573,15 +573,15 @@ async def run_migrations():
         """,
         # Seed from the old fixed enum (idempotent — never overwrites edits)
         """
-        INSERT INTO service_types (code, label_ru, label_uz, sort_order) VALUES
-            ('CLASSIC_AROMA_45', 'Классический аромамассаж 45мин', 'Klassik aroma massaj 45 daq', 1),
-            ('CLASSIC_AROMA_60', 'Классический аромамассаж 60мин', 'Klassik aroma massaj 60 daq', 2),
-            ('DETOX_60',         'Детокс терапия 60мин',           'Detoks terapiya 60 daq',      3),
-            ('DETOX_95',         'Детокс терапия 95мин',           'Detoks terapiya 95 daq',      4),
-            ('FOOT_MASSAGE_30',  'Массаж для ног 30мин',           'Oyoq massaji 30 daq',         5),
-            ('BACK_MASSAGE_30',  'Массаж спины 30мин',             'Orqa massaji 30 daq',         6),
-            ('HAMMAM',           'Хаммам',                         'Hammom',                      7),
-            ('OTHER_SERVICE',    'Другое',                         'Boshqa',                      8)
+        INSERT INTO service_types (code, label_ru, label_uz, is_active, sort_order) VALUES
+            ('CLASSIC_AROMA_45', 'Классический аромамассаж 45мин', 'Klassik aroma massaj 45 daq', TRUE, 1),
+            ('CLASSIC_AROMA_60', 'Классический аромамассаж 60мин', 'Klassik aroma massaj 60 daq', TRUE, 2),
+            ('DETOX_60',         'Детокс терапия 60мин',           'Detoks terapiya 60 daq',      TRUE, 3),
+            ('DETOX_95',         'Детокс терапия 95мин',           'Detoks terapiya 95 daq',      TRUE, 4),
+            ('FOOT_MASSAGE_30',  'Массаж для ног 30мин',           'Oyoq massaji 30 daq',         TRUE, 5),
+            ('BACK_MASSAGE_30',  'Массаж спины 30мин',             'Orqa massaji 30 daq',         TRUE, 6),
+            ('HAMMAM',           'Хаммам',                         'Hammom',                      TRUE, 7),
+            ('OTHER_SERVICE',    'Другое',                         'Boshqa',                      TRUE, 8)
         ON CONFLICT (code) DO NOTHING;
         """,
         # Convert service_items.service_type from the native Postgres enum to
@@ -602,8 +602,8 @@ async def run_migrations():
         """,
         # Safety net: any code present on services but missing in service_types
         """
-        INSERT INTO service_types (code, label_ru, label_uz, sort_order)
-        SELECT DISTINCT service_type, service_type, service_type, 99
+        INSERT INTO service_types (code, label_ru, label_uz, is_active, sort_order)
+        SELECT DISTINCT service_type, service_type, service_type, TRUE, 99
         FROM service_items
         ON CONFLICT (code) DO NOTHING;
         """,
