@@ -2,7 +2,9 @@ import { useState, useEffect } from 'react';
 import { Plus, Pencil, Check, X, ToggleLeft, ToggleRight } from 'lucide-react';
 import { api } from '../api';
 
-const EMPTY = { name: '', phone: '', sort_order: 0 };
+const EMPTY = { name: '', phone: '', telegram_id: '', master_type: 'internal', sort_order: 0 };
+
+const TYPE_LABELS = { internal: 'Внутренний (штат)', external: 'Внешний' };
 
 export default function AdminSpaMasters() {
   const [items, setItems] = useState([]);
@@ -22,14 +24,22 @@ export default function AdminSpaMasters() {
 
   function startEdit(it) {
     setEditId(it.id);
-    setForm({ name: it.name, phone: it.phone || '', sort_order: it.sort_order });
+    setForm({
+      name: it.name, phone: it.phone || '',
+      telegram_id: it.telegram_id || '', master_type: it.master_type || 'internal',
+      sort_order: it.sort_order,
+    });
     setShowForm(true); setError('');
   }
 
   async function handleSave() {
     try {
       setError('');
-      const payload = { ...form, sort_order: parseInt(form.sort_order) || 0 };
+      const payload = {
+        ...form,
+        sort_order: parseInt(form.sort_order) || 0,
+        telegram_id: form.telegram_id === '' ? 0 : parseInt(form.telegram_id) || 0,
+      };
       if (editId) await api.updateSpaMaster(editId, payload);
       else await api.createSpaMaster(payload);
       setShowForm(false); load();
@@ -70,6 +80,21 @@ export default function AdminSpaMasters() {
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
             </div>
             <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Тип мастера</label>
+              <select value={form.master_type} onChange={(e) => setForm({ ...form, master_type: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                <option value="internal">Внутренний (штат)</option>
+                <option value="external">Внешний</option>
+              </select>
+              <p className="text-xs text-gray-400 mt-1">Определяет, какая фиксированная комиссия услуги применяется</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Telegram ID</label>
+              <input type="number" value={form.telegram_id} onChange={(e) => setForm({ ...form, telegram_id: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Мастер получит его в @balandda_spa_bot" />
+              <p className="text-xs text-gray-400 mt-1">Мастер нажимает Start в боте — бот показывает его ID</p>
+            </div>
+            <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Порядок</label>
               <input type="number" value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
@@ -94,7 +119,9 @@ export default function AdminSpaMasters() {
             <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wider">
               <tr>
                 <th className="px-4 py-3 text-left">Мастер</th>
+                <th className="px-4 py-3 text-left">Тип</th>
                 <th className="px-4 py-3 text-left">Телефон</th>
+                <th className="px-4 py-3 text-center">Telegram</th>
                 <th className="px-4 py-3 text-center">Статус</th>
                 <th className="px-4 py-3 text-center">Действия</th>
               </tr>
@@ -103,7 +130,17 @@ export default function AdminSpaMasters() {
               {items.map(it => (
                 <tr key={it.id} className={!it.is_active ? 'opacity-50 bg-gray-50' : 'hover:bg-gray-50'}>
                   <td className="px-4 py-3 font-medium text-gray-800">{it.name}</td>
+                  <td className="px-4 py-3">
+                    <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${it.master_type === 'external' ? 'bg-purple-50 text-purple-700' : 'bg-blue-50 text-blue-700'}`}>
+                      {TYPE_LABELS[it.master_type] || it.master_type}
+                    </span>
+                  </td>
                   <td className="px-4 py-3 text-gray-600">{it.phone || '—'}</td>
+                  <td className="px-4 py-3 text-center">
+                    {it.telegram_id
+                      ? <span className="text-green-600 text-xs font-medium">✓ {it.telegram_id}</span>
+                      : <span className="text-gray-300 text-xs">не подключён</span>}
+                  </td>
                   <td className="px-4 py-3 text-center">
                     <span className={`inline-flex px-2 py-1 rounded-full text-xs font-medium ${it.is_active ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
                       {it.is_active ? 'Активен' : 'Выкл'}

@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     # Admin
     admin_user_id: int | None = None
 
+    # SPA bot (@balandda_spa_bot) — notifications to masters / SPA admin / owner.
+    # Feature is fully disabled while spa_bot_token is empty.
+    spa_bot_token: str = ""
+    spa_admin_telegram_id: int = 0     # single SPA administrator (DM recipient)
+    spa_digest_hour: int = 9           # daily schedule digest (Asia/Tashkent)
+    spa_digest_minute: int = 0
+
     # Customer messaging bridge (@balandda_bot lives in the CRM project)
     customer_bot_username: str = "balandda_bot"           # for connect deep-links
     crm_api_url: str = "https://crm.balandda.uz"          # CRM sends customer messages via @balandda_bot

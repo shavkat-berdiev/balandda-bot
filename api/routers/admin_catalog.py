@@ -109,6 +109,8 @@ class ServiceCreate(BaseModel):
     category_id: int | None = None
     location_mode: str = "room_or_cottage"
     master_percent: float = 0
+    commission_internal: float = 0
+    commission_external: float = 0
     master_ids: list[int] = []
     location_ids: list[int] = []
 
@@ -124,6 +126,8 @@ class ServiceUpdate(BaseModel):
     category_id: int | None = None
     location_mode: str | None = None
     master_percent: float | None = None
+    commission_internal: float | None = None
+    commission_external: float | None = None
     master_ids: list[int] | None = None
     location_ids: list[int] | None = None
 
@@ -142,6 +146,8 @@ class ServiceOut(BaseModel):
     category_name: str | None
     location_mode: str
     master_percent: float
+    commission_internal: float
+    commission_external: float
     master_ids: list[int]
     location_ids: list[int]
 
@@ -191,15 +197,22 @@ class SpaLocationOut(BaseModel):
     sort_order: int
 
 
+MASTER_TYPES = {"internal", "external"}
+
+
 class SpaMasterCreate(BaseModel):
     name: str
     phone: str | None = None
+    telegram_id: int | None = None
+    master_type: str = "internal"
     sort_order: int = 0
 
 
 class SpaMasterUpdate(BaseModel):
     name: str | None = None
     phone: str | None = None
+    telegram_id: int | None = None   # send 0 to clear
+    master_type: str | None = None
     sort_order: int | None = None
     is_active: bool | None = None
 
@@ -208,6 +221,8 @@ class SpaMasterOut(BaseModel):
     id: int
     name: str
     phone: str | None
+    telegram_id: int | None
+    master_type: str
     is_active: bool
     sort_order: int
 
@@ -475,6 +490,8 @@ def _service_out(s: ServiceItem, labels: dict[str, str]) -> ServiceOut:
         category_name=s.category.name_ru if s.category else None,
         location_mode=s.location_mode or "room_or_cottage",
         master_percent=float(s.master_percent or 0),
+        commission_internal=float(s.commission_internal or 0),
+        commission_external=float(s.commission_external or 0),
         master_ids=sorted(m.id for m in s.masters),
         location_ids=sorted(loc.id for loc in s.allowed_locations),
     )
@@ -549,6 +566,8 @@ async def create_service(
         category_id=data.category_id,
         location_mode=data.location_mode,
         master_percent=Decimal(str(data.master_percent)),
+        commission_internal=Decimal(str(data.commission_internal)),
+        commission_external=Decimal(str(data.commission_external)),
         masters=masters,
         allowed_locations=locations,
     )
@@ -579,6 +598,9 @@ async def update_service(
         updates["price"] = Decimal(str(updates["price"]))
     if "master_percent" in updates:
         updates["master_percent"] = Decimal(str(updates["master_percent"]))
+    for _cf in ("commission_internal", "commission_external"):
+        if _cf in updates:
+            updates[_cf] = Decimal(str(updates[_cf]))
     if "location_mode" in updates and updates["location_mode"] not in LOCATION_MODES:
         raise HTTPException(status_code=422, detail="Invalid location_mode")
 
@@ -838,7 +860,11 @@ async def update_spa_location(
 
 
 def _master_out(m: SpaMaster) -> SpaMasterOut:
-    return SpaMasterOut(id=m.id, name=m.name, phone=m.phone, is_active=m.is_active, sort_order=m.sort_order)
+    return SpaMasterOut(
+        id=m.id, name=m.name, phone=m.phone,
+        telegram_id=m.telegram_id, master_type=m.master_type or "internal",
+        is_active=m.is_active, sort_order=m.sort_order,
+    )
 
 
 @router.get("/spa-masters", response_model=list[SpaMasterOut])
@@ -857,7 +883,13 @@ async def create_spa_master(
     user: dict = Depends(get_current_user),
 ):
     _require_admin(user)
-    m = SpaMaster(name=data.name, phone=data.phone, sort_order=data.sort_order)
+    if data.master_type not in MASTER_TYPES:
+        raise HTTPException(status_code=422, detail="Invalid master_type")
+    m = SpaMaster(
+        name=data.name, phone=data.phone,
+        telegram_id=data.telegram_id or None, master_type=data.master_type,
+        sort_order=data.sort_order,
+    )
     session.add(m)
     await session.commit()
     await session.refresh(m)
@@ -875,7 +907,12 @@ async def update_spa_master(
     m = (await session.execute(select(SpaMaster).where(SpaMaster.id == item_id))).scalar_one_or_none()
     if not m:
         raise HTTPException(status_code=404, detail="Master not found")
-    for field, value in data.model_dump(exclude_none=True).items():
+    updates = data.model_dump(exclude_none=True)
+    if "master_type" in updates and updates["master_type"] not in MASTER_TYPES:
+        raise HTTPException(status_code=422, detail="Invalid master_type")
+    if updates.get("telegram_id") == 0:
+        updates["telegram_id"] = None
+    for field, value in updates.items():
         setattr(m, field, value)
     await session.commit()
     await session.refresh(m)

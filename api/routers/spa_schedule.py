@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.auth import get_current_user
 from db.database import get_session
 from db.models import Property, Reservation, ServiceItem, SpaAppointment
+from services.spa_notify import notify_appointment_event
 
 router = APIRouter()
 
@@ -190,7 +191,10 @@ async def create_appointment(
     )
     session.add(appt)
     await session.commit()
-    return _out(await _load(session, appt.id))
+    loaded = await _load(session, appt.id)
+    if loaded.status != "cancelled":
+        await notify_appointment_event(session, loaded, "created")
+    return _out(loaded)
 
 
 @router.put("/appointments/{appt_id}", response_model=AppointmentOut)
@@ -206,6 +210,9 @@ async def update_appointment(
     updates = data.model_dump(exclude_unset=True)
     if "status" in updates and updates["status"] not in STATUSES:
         raise HTTPException(status_code=422, detail="Invalid status")
+    old_status = appt.status
+    old_master_id = appt.master_id
+    old_start = appt.start_at
 
     new_service_id = updates.get("service_id", appt.service_id)
     new_start = updates.get("start_at", appt.start_at)
@@ -238,7 +245,20 @@ async def update_appointment(
         appt.price = Decimal(str(updates["price"]))
 
     await session.commit()
-    return _out(await _load(session, appt_id))
+    loaded = await _load(session, appt_id)
+
+    # SPA bot notifications: pick ONE event for this change
+    if loaded.status != old_status and loaded.status in ("cancelled", "done", "no_show"):
+        await notify_appointment_event(session, loaded, loaded.status)
+    elif loaded.status != "cancelled" and (
+        loaded.master_id != old_master_id
+        or loaded.start_at != old_start
+        or "service_id" in updates
+        or "location_id" in updates
+    ):
+        await notify_appointment_event(session, loaded, "updated")
+
+    return _out(loaded)
 
 
 # ── Reservation picker (link an appointment to a resort booking) ──

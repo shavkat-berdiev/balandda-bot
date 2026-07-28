@@ -607,6 +607,16 @@ async def run_migrations():
         FROM service_items
         ON CONFLICT (code) DO NOTHING;
         """,
+        # ── SPA phase 3: master types + fixed UZS commissions + SPA bot ──
+        """
+        ALTER TABLE spa_masters ADD COLUMN IF NOT EXISTS master_type VARCHAR(10) NOT NULL DEFAULT 'internal';
+        """,
+        """
+        ALTER TABLE service_items ADD COLUMN IF NOT EXISTS commission_internal NUMERIC(15,2) NOT NULL DEFAULT 0;
+        """,
+        """
+        ALTER TABLE service_items ADD COLUMN IF NOT EXISTS commission_external NUMERIC(15,2) NOT NULL DEFAULT 0;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:
@@ -989,6 +999,11 @@ async def main():
 
     card_client = await start_card_reader(bot)
 
+    # SPA bot (@balandda_spa_bot; no-op unless SPA_BOT_TOKEN is set)
+    from bot.spa_bot import start_spa_bot
+
+    spa = start_spa_bot()
+
     # Start polling
     logger.info("Bot is running. Press Ctrl+C to stop.")  # (beds24 sync active via scheduler)
     try:
@@ -998,6 +1013,13 @@ async def main():
         if card_client is not None:
             try:
                 await card_client.disconnect()
+            except Exception:
+                pass
+        if spa is not None:
+            spa_bot_instance, spa_task = spa
+            spa_task.cancel()
+            try:
+                await spa_bot_instance.session.close()
             except Exception:
                 pass
         await bot.session.close()

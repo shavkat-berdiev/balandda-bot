@@ -365,6 +365,22 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         replace_existing=True,
     )
 
+    # SPA bot: morning schedule digest to masters + SPA admin + owners
+    # (no-op unless SPA_BOT_TOKEN is set)
+    from services import spa_notify
+
+    scheduler.add_job(
+        spa_notify.send_daily_digest,
+        CronTrigger(
+            hour=settings.spa_digest_hour,
+            minute=settings.spa_digest_minute,
+            timezone=settings.timezone,
+        ),
+        id="spa_daily_digest",
+        name="SPA: daily schedule digest",
+        replace_existing=True,
+    )
+
     # Beds24 channel-manager sync (no-ops unless BEDS24_ENABLED)
     scheduler.add_job(
         beds24.pull_bookings,

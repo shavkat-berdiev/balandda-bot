@@ -4,7 +4,8 @@ import { api } from '../api';
 
 const EMPTY_FORM = {
   service_type: '', name_ru: '', name_uz: '', duration_minutes: 0, price: 0, sort_order: 0,
-  category_id: '', location_mode: 'room_or_cottage', master_percent: 0, master_ids: [], location_ids: [],
+  category_id: '', location_mode: 'room_or_cottage',
+  commission_internal: 0, commission_external: 0, master_ids: [], location_ids: [],
 };
 
 const LOCATION_MODES = [
@@ -59,7 +60,8 @@ export default function AdminServices() {
       sort_order: item.sort_order,
       category_id: item.category_id || '',
       location_mode: item.location_mode || 'room_or_cottage',
-      master_percent: item.master_percent || 0,
+      commission_internal: item.commission_internal || 0,
+      commission_external: item.commission_external || 0,
       master_ids: item.master_ids || [],
       location_ids: item.location_ids || [],
     });
@@ -75,7 +77,8 @@ export default function AdminServices() {
         duration_minutes: parseInt(form.duration_minutes) || 0,
         price: parseFloat(form.price) || 0,
         sort_order: parseInt(form.sort_order) || 0,
-        master_percent: parseFloat(form.master_percent) || 0,
+        commission_internal: parseFloat(form.commission_internal) || 0,
+        commission_external: parseFloat(form.commission_external) || 0,
         category_id: form.category_id === '' ? null : parseInt(form.category_id),
       };
       if (editId) { await api.updateAdminService(editId, payload); } else { await api.createAdminService(payload); }
@@ -194,9 +197,15 @@ export default function AdminServices() {
               </select>
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">% мастеру</label>
-              <input type="number" step="0.5" value={form.master_percent} onChange={(e) => setForm({ ...form, master_percent: e.target.value })}
+              <label className="block text-sm font-medium text-gray-700 mb-1">Комиссия внутр. мастера (UZS)</label>
+              <input type="number" step="1000" value={form.commission_internal} onChange={(e) => setForm({ ...form, commission_internal: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Комиссия внешн. мастера (UZS)</label>
+              <input type="number" step="1000" value={form.commission_external} onChange={(e) => setForm({ ...form, commission_external: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+              <p className="text-xs text-gray-400 mt-1">Тип мастера задаётся в разделе «SPA мастера»</p>
             </div>
           </div>
 

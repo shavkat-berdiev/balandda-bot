@@ -254,8 +254,11 @@ class ServiceItem(Base):
     category_id: Mapped[int | None] = mapped_column(ForeignKey("service_categories.id", ondelete="SET NULL"), nullable=True)
     # where the procedure can be performed: 'room_only' | 'room_or_cottage' | 'cottage_only'
     location_mode: Mapped[str] = mapped_column(String(20), default="room_or_cottage")
-    # master commission % of this service's price (per-service)
+    # LEGACY master commission % (kept in DB; UI now uses fixed sums below)
     master_percent: Mapped[float] = mapped_column(Numeric(5, 2), default=0)
+    # Fixed commission in UZS by master type (see SpaMaster.master_type)
+    commission_internal: Mapped[float] = mapped_column(Numeric(15, 2), default=0)
+    commission_external: Mapped[float] = mapped_column(Numeric(15, 2), default=0)
 
     category: Mapped["ServiceCategory | None"] = relationship(back_populates="services")
     masters: Mapped[list["SpaMaster"]] = relationship(secondary="service_masters", back_populates="services")
@@ -322,6 +325,9 @@ class SpaMaster(Base):
     name: Mapped[str] = mapped_column(String(100))
     phone: Mapped[str | None] = mapped_column(String(30), nullable=True)
     telegram_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # 'internal' (staff) or 'external' (Анжела, Наиля, ...) — picks which fixed
+    # per-service commission applies (ServiceItem.commission_internal/_external).
+    master_type: Mapped[str] = mapped_column(String(10), default="internal")
     is_active: Mapped[bool] = mapped_column(default=True)
     sort_order: Mapped[int] = mapped_column(default=0)
 
