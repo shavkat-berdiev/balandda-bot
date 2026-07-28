@@ -409,6 +409,7 @@ async def commissions_summary(
     rows = await spa_commissions.summary(session, start, end)
     return {
         "masters": rows,
+        "admin_bonus": await spa_commissions.admin_bonus_in_period(session, start, end),
         "totals": {
             "services_done": sum(r["services_done"] for r in rows),
             "revenue": sum(r["revenue"] for r in rows),

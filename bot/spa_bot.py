@@ -77,6 +77,7 @@ def _admin_menu() -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="📋 Записи сегодня", callback_data="recs")],
         [InlineKeyboardButton(text="💰 Комиссии мастеров", callback_data="comm")],
         [InlineKeyboardButton(text="💳 Принять оплату", callback_data="payl")],
+        [InlineKeyboardButton(text="💎 Мой бонус", callback_data="adminbonus")],
     ])
 
 
@@ -307,6 +308,36 @@ async def cb_payout_do(cb: types.CallbackQuery):
         ]),
     )
     await cb.answer("Выплата записана")
+
+
+# ── Admin: personal bonus (% of done-appointment revenue) ─────────
+
+
+@spa_router.callback_query(F.data == "adminbonus")
+async def cb_admin_bonus(cb: types.CallbackQuery):
+    if not await _is_admin(cb.from_user.id):
+        return await cb.answer("Нет доступа")
+    now = datetime.now(TASHKENT)
+    t_start, t_end = sc.day_bounds(now.date())
+    y_start, y_end = sc.day_bounds((now - timedelta(days=1)).date())
+    w_start, _ = sc.day_bounds((now - timedelta(days=6)).date())
+    m_start, _ = sc.day_bounds((now - timedelta(days=29)).date())
+    async with async_session() as session:
+        today = await sc.admin_bonus_in_period(session, t_start, t_end)
+        yday = await sc.admin_bonus_in_period(session, y_start, y_end)
+        week = await sc.admin_bonus_in_period(session, w_start, t_end)
+        month = await sc.admin_bonus_in_period(session, m_start, t_end)
+    pct = month["percent"]
+    text = "\n".join([
+        f"💎 <b>Ваш бонус ({pct:g}% от выполненных SPA-услуг)</b>",
+        "",
+        f"• Сегодня: {_fmt(today['bonus'])} UZS  <i>(выручка {_fmt(today['revenue'])})</i>",
+        f"• Вчера: {_fmt(yday['bonus'])} UZS  <i>(выручка {_fmt(yday['revenue'])})</i>",
+        f"• За 7 дней: {_fmt(week['bonus'])} UZS  <i>(выручка {_fmt(week['revenue'])})</i>",
+        f"• За 30 дней: <b>{_fmt(month['bonus'])} UZS</b>  <i>(выручка {_fmt(month['revenue'])})</i>",
+    ])
+    await cb.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[_back()]))
+    await cb.answer()
 
 
 # ── Admin: accept guest payment ───────────────────────────────────

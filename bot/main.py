@@ -645,6 +645,11 @@ async def run_migrations():
             END IF;
         END $$;
         """,
+        # SPA admin bonus: 3% of done-appointment revenue (only bump the seeded 0,
+        # never overwrite a manually edited value)
+        """
+        UPDATE app_settings SET value = '3' WHERE key = 'spa_admin_percent' AND value = '0';
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:

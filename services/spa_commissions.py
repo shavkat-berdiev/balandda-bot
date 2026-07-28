@@ -124,6 +124,27 @@ async def summary(session, start: datetime, end: datetime) -> list[dict]:
     return out
 
 
+async def spa_admin_percent(session) -> float:
+    """SPA admin bonus % of done-appointment revenue (app_settings, editable in DB)."""
+    from sqlalchemy import text
+
+    val = (
+        await session.execute(text("SELECT value FROM app_settings WHERE key = 'spa_admin_percent'"))
+    ).scalar_one_or_none()
+    try:
+        return float(val) if val is not None else 0.0
+    except ValueError:
+        return 0.0
+
+
+async def admin_bonus_in_period(session, start: datetime, end: datetime) -> dict:
+    """{percent, revenue, bonus} — SPA admin's bonus over done appointments."""
+    percent = await spa_admin_percent(session)
+    appts = await done_appointments(session, start, end)
+    revenue = sum(float(a.price or 0) for a in appts)
+    return {"percent": percent, "revenue": revenue, "bonus": revenue * percent / 100.0}
+
+
 async def create_payout(session, master_id: int, amount: float, paid_by: int, note: str | None = None):
     """Record a payout: ledger row + SALARY wallet deduction from the payer.
     Caller commits. Returns (payout, wallet_tx). Raises ValueError on bad amount."""

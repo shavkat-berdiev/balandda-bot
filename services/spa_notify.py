@@ -237,8 +237,26 @@ async def send_daily_digest() -> None:
     else:
         lines = [f"📋 <b>SPA расписание на {date_str}</b>", "", "Записей нет."]
     text = "\n".join(lines)
+
+    # SPA admin additionally gets her personal bonus block (% of done revenue)
+    admin_extra = ""
+    if settings.spa_admin_telegram_id:
+        async with async_session() as session3:
+            y_b = await sc.admin_bonus_in_period(session3, y_start, y_end)
+            w_b = await sc.admin_bonus_in_period(session3, w_start, day_end)
+            m_b = await sc.admin_bonus_in_period(session3, m_start, day_end)
+        if m_b["percent"]:
+            admin_extra = "\n".join([
+                "",
+                f"💎 <b>Ваш бонус ({m_b['percent']:g}%):</b>",
+                f"• Вчера: {_fmt(y_b['bonus'])} UZS",
+                f"• За 7 дней: {_fmt(w_b['bonus'])} UZS",
+                f"• За 30 дней: {_fmt(m_b['bonus'])} UZS",
+            ])
+
     sent: set[int] = set()
     for tid in [settings.spa_admin_telegram_id, *owner_ids]:
         if tid and tid not in sent:
             sent.add(tid)
-            await send_message(tid, text)
+            extra = admin_extra if tid == settings.spa_admin_telegram_id else ""
+            await send_message(tid, text + extra)

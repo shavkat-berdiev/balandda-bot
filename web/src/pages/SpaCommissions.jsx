@@ -80,10 +80,11 @@ export default function SpaCommissions() {
       {error && <div className="bg-red-50 text-red-600 rounded-lg px-4 py-3 text-sm mb-4">{error}</div>}
 
       {totals && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
           <StatCard label="Услуг выполнено" value={totals.services_done} />
           <StatCard label="Выручка SPA (по записям)" value={`${fmt(totals.revenue)} UZS`} />
           <StatCard label="Начислено комиссий" value={`${fmt(totals.earned)} UZS`} />
+          <StatCard label={`Бонус админа (${data.admin_bonus?.percent ?? 0}%)`} value={`${fmt(data.admin_bonus?.bonus)} UZS`} />
           <StatCard label="К выплате (всего)" value={`${fmt(totals.balance)} UZS`} highlight />
         </div>
       )}
