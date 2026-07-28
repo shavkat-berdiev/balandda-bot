@@ -77,7 +77,7 @@ __all__ = [
     "User", "Category", "Transaction",
     "DailyReport", "ReportLineItem", "ReportExpense",
     "Property", "PropertyTypeLabel", "ServiceItem", "ServiceTypeDef", "MinibarItem", "StaffMember",
-    "get_service_type_labels",
+    "get_service_type_labels", "SpaCommissionPayout",
     "StructuredReport", "IncomeEntry", "ExpenseEntry",
     "Prepayment",
     "WalletTransaction",
@@ -424,6 +424,23 @@ class SpaAppointment(Base):
     location: Mapped["SpaLocation | None"] = relationship(foreign_keys=[location_id])
 
 
+class SpaCommissionPayout(Base):
+    """A commission payout to a master (deducted from the payer's cash wallet)."""
+    __tablename__ = "spa_commission_payouts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    master_id: Mapped[int] = mapped_column(ForeignKey("spa_masters.id"))
+    amount: Mapped[float] = mapped_column(Numeric(15, 2))
+    paid_by: Mapped[int] = mapped_column(BigInteger)          # payer's telegram_id
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    wallet_tx_id: Mapped[int | None] = mapped_column(
+        ForeignKey("wallet_transactions.id"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    master: Mapped["SpaMaster"] = relationship(foreign_keys=[master_id])
+
+
 class MinibarItem(Base):
     """Minibar product catalog."""
     __tablename__ = "minibar_items"
@@ -480,6 +497,10 @@ class IncomeEntry(Base):
     service_item_id: Mapped[int | None] = mapped_column(ForeignKey("service_items.id"), nullable=True)
     minibar_item_id: Mapped[int | None] = mapped_column(ForeignKey("minibar_items.id"), nullable=True)
     reservation_id: Mapped[int | None] = mapped_column(ForeignKey("reservations.id"), nullable=True, index=True)
+    # SPA payment link: which appointment this income pays for (added 2026-07)
+    spa_appointment_id: Mapped[int | None] = mapped_column(
+        ForeignKey("spa_appointments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     restaurant_category: Mapped[RestaurantIncomeCategory | None] = mapped_column(Enum(RestaurantIncomeCategory), nullable=True)
     payment_method: Mapped[PaymentMethod] = mapped_column(Enum(PaymentMethod))
     amount: Mapped[float] = mapped_column(Numeric(15, 2))

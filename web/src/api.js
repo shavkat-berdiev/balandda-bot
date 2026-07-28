@@ -165,6 +165,12 @@ export const api = {
   updateSpaAppointment: (id, data) => request(`/spa/appointments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   searchReservations: (q) => request(`/spa/reservations-search?q=${encodeURIComponent(q || '')}`),
 
+  // SPA payments + commissions
+  acceptSpaPayment: (id, data) => request(`/spa/appointments/${id}/payment`, { method: 'POST', body: JSON.stringify(data) }),
+  getSpaApptPayments: (id) => request(`/spa/appointments/${id}/payments`),
+  getSpaCommissionsSummary: (from, to) => request(`/spa/commissions/summary?start_date=${from}&end_date=${to}`),
+  getSpaCommissionsDetails: (masterId, from, to) => request(`/spa/commissions/details?master_id=${masterId}&start_date=${from}&end_date=${to}`),
+
   // Admin — Minibar
   getAdminMinibar: () => request('/admin/minibar'),
   createAdminMinibar: (data) => request('/admin/minibar', { method: 'POST', body: JSON.stringify(data) }),

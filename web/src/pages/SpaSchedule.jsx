@@ -1,6 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, X, Check, Trash2, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, X, Check, Trash2, Search, CreditCard } from 'lucide-react';
 import { api } from '../api';
+
+const PAY_METHODS = [
+  { value: 'CASH', label: 'Наличные' },
+  { value: 'CARD_TRANSFER', label: 'Перевод на карту' },
+  { value: 'TERMINAL_UZCARD', label: 'Терминал UzCard' },
+  { value: 'TERMINAL_VISA', label: 'Терминал Visa' },
+  { value: 'PAYME', label: 'PayMe' },
+  { value: 'WIRE_TRANSFER', label: 'Перечисление' },
+];
 
 const START_MIN = 9 * 60;      // 09:00
 const END_MIN = 22 * 60;       // 22:00
@@ -128,7 +137,7 @@ export default function SpaSchedule() {
                     <div key={a.id} data-appt onClick={() => openEdit(a)}
                       className={`absolute left-1 right-1 rounded-md border px-2 py-1 overflow-hidden cursor-pointer text-[11px] leading-tight ${STATUS_COLOR[a.status] || STATUS_COLOR.planned}`}
                       style={{ top: top + 1, height: h - 2 }}>
-                      <div className="font-semibold truncate">{a.service_name}</div>
+                      <div className="font-semibold truncate">{a.service_name}{a.paid >= a.price && a.price > 0 ? ' 💳' : ''}</div>
                       <div className="truncate">{a.customer_name || 'Гость'}{a.location_name ? ` · ${a.location_name}` : ''}</div>
                     </div>
                   );
@@ -332,6 +341,10 @@ function ApptModal({ modal, date, masters, services, locations, onClose, onSaved
           <textarea value={note} onChange={e => setNote(e.target.value)} rows={2} className={field} />
         </div>
 
+        {isEdit && a.status !== 'cancelled' && (
+          <PaymentSection appt={a} onPaid={onSaved} />
+        )}
+
         <div className="flex items-center gap-3 mt-5">
           <button onClick={save} disabled={saving} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50">
             <Check size={16} /> {isEdit ? 'Сохранить' : 'Записать'}
@@ -344,6 +357,69 @@ function ApptModal({ modal, date, masters, services, locations, onClose, onSaved
           <button onClick={onClose} className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 ml-auto">Закрыть</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function PaymentSection({ appt, onPaid }) {
+  const remaining = Math.max((appt.price || 0) - (appt.paid || 0), 0);
+  const [open, setOpen] = useState(false);
+  const [amount, setAmount] = useState(remaining);
+  const [method, setMethod] = useState('CASH');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  async function pay() {
+    setErr('');
+    const amt = parseFloat(amount);
+    if (!amt || amt <= 0) { setErr('Укажите сумму'); return; }
+    setBusy(true);
+    try {
+      await api.acceptSpaPayment(appt.id, { amount: amt, payment_method: method });
+      onPaid();
+    } catch (e) { setErr(e.message); setBusy(false); }
+  }
+
+  return (
+    <div className="mt-4 border-t border-gray-100 pt-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm">
+          Оплачено: <span className={`font-semibold ${appt.paid >= appt.price && appt.price > 0 ? 'text-green-600' : 'text-gray-800'}`}>{fmtPrice(appt.paid || 0)}</span>
+          <span className="text-gray-400"> / {fmtPrice(appt.price || 0)}</span>
+        </p>
+        {remaining > 0 && !open && (
+          <button onClick={() => { setOpen(true); setAmount(remaining); }}
+            className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700">
+            <CreditCard size={15} /> Принять оплату
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="mt-3 bg-green-50/60 border border-green-100 rounded-lg p-3">
+          {err && <div className="bg-red-50 text-red-600 rounded-lg px-3 py-2 text-xs mb-2">{err}</div>}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Сумма</label>
+              <input type="number" value={amount} onChange={e => setAmount(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Способ оплаты</label>
+              <select value={method} onChange={e => setMethod(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm">
+                {PAY_METHODS.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="flex gap-2 mt-3">
+            <button onClick={pay} disabled={busy}
+              className="flex items-center gap-2 px-3 py-1.5 bg-green-600 text-white rounded-lg text-sm font-medium hover:bg-green-700 disabled:opacity-50">
+              <Check size={15} /> Записать оплату
+            </button>
+            <button onClick={() => setOpen(false)} className="px-3 py-1.5 bg-white border border-gray-200 text-gray-600 rounded-lg text-sm">Отмена</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

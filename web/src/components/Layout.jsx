@@ -5,6 +5,7 @@ import { BarChart3, FolderOpen, Users, ArrowLeftRight, LogOut, Menu, X, Home, Sp
 const navItems = [
   { path: '/', label: 'Dashboard', icon: BarChart3 },
   { path: '/spa-analytics', label: 'SPA аналитика', icon: Sparkles },
+  { path: '/spa-commissions', label: 'Комиссии SPA', icon: Wallet },
   { path: '/calendar', label: 'Календарь', icon: CalendarDays },
   { path: '/pool', label: 'Бассейн', icon: Waves },
   { path: '/spa-schedule', label: 'Расписание SPA', icon: CalendarClock },

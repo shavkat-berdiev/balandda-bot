@@ -617,6 +617,34 @@ async def run_migrations():
         """
         ALTER TABLE service_items ADD COLUMN IF NOT EXISTS commission_external NUMERIC(15,2) NOT NULL DEFAULT 0;
         """,
+        # ── SPA phase 4: commission ledger + SPA payments ──
+        """
+        CREATE TABLE IF NOT EXISTS spa_commission_payouts (
+            id SERIAL PRIMARY KEY,
+            master_id INTEGER NOT NULL REFERENCES spa_masters(id),
+            amount NUMERIC(15,2) NOT NULL,
+            paid_by BIGINT NOT NULL,
+            note TEXT NULL,
+            wallet_tx_id INTEGER NULL REFERENCES wallet_transactions(id),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_spa_payouts_master ON spa_commission_payouts (master_id);
+        """,
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'income_entries' AND column_name = 'spa_appointment_id'
+            ) THEN
+                ALTER TABLE income_entries ADD COLUMN spa_appointment_id INTEGER
+                    REFERENCES spa_appointments(id) ON DELETE SET NULL;
+                CREATE INDEX IF NOT EXISTS ix_income_entries_spa_appt ON income_entries (spa_appointment_id);
+            END IF;
+        END $$;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:

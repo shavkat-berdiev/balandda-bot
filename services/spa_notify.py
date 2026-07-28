@@ -187,18 +187,47 @@ async def send_daily_digest() -> None:
             parts.append(f"· {a.customer_name}")
         return " ".join(parts)
 
-    # Per-master digests (only when they have appointments)
+    # Per-master digests: today's schedule + earnings (yesterday / 7 days / 30 days)
+    from services import spa_commissions as sc
+
+    async with async_session() as session2:
+        earnings: dict[int, tuple[float, float, float, float]] = {}
+        y_start, y_end = sc.day_bounds((now - timedelta(days=1)).date())
+        w_start, _ = sc.day_bounds((now - timedelta(days=6)).date())
+        m_start, _ = sc.day_bounds((now - timedelta(days=29)).date())
+        for m in masters:
+            if not m.telegram_id:
+                continue
+            earnings[m.id] = (
+                await sc.earned_in_period(session2, y_start, y_end, m.id),
+                await sc.earned_in_period(session2, w_start, day_end, m.id),
+                await sc.earned_in_period(session2, m_start, day_end, m.id),
+                await sc.master_balance(session2, m.id),
+            )
+
     for m in masters:
         if not m.telegram_id:
             continue
         mine = [a for a in appts if a.master_id == m.id]
-        if not mine:
-            continue
-        total_comm = sum(commission_for(a.service, m) for a in mine if a.service)
+        yday, week, month, balance = earnings.get(m.id, (0, 0, 0, 0))
+        if not mine and not month and not balance:
+            continue  # nothing to say
         lines = [f"📋 <b>Ваше расписание на {date_str}</b>", ""]
-        lines += [short(a, with_master=False) for a in mine]
-        if total_comm:
-            lines.append(f"\n💵 Комиссия за день (план): {_fmt(total_comm)} UZS")
+        if mine:
+            lines += [short(a, with_master=False) for a in mine]
+            total_comm = sum(commission_for(a.service, m) for a in mine if a.service)
+            if total_comm:
+                lines.append(f"\n💵 Комиссия за день (план): {_fmt(total_comm)} UZS")
+        else:
+            lines.append("Записей на сегодня нет.")
+        lines += [
+            "",
+            "💰 <b>Ваш заработок:</b>",
+            f"• Вчера: {_fmt(yday)} UZS",
+            f"• За 7 дней: {_fmt(week)} UZS",
+            f"• За 30 дней: {_fmt(month)} UZS",
+            f"• Не выплачено: <b>{_fmt(balance)} UZS</b>",
+        ]
         await send_message(m.telegram_id, "\n".join(lines))
 
     # Admin + owners — full day (always, so silence ≠ broken bot)
