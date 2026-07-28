@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Plus, Pencil, Check, X, ToggleLeft, ToggleRight } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Plus, Pencil, Check, X, ToggleLeft, ToggleRight, ChevronUp, ChevronDown, ChevronsUpDown } from 'lucide-react';
 import { api } from '../api';
 
 const EMPTY_FORM = {
@@ -24,6 +24,7 @@ export default function AdminServices() {
   const [editId, setEditId] = useState(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [error, setError] = useState('');
+  const [sort, setSort] = useState({ key: 'sort_order', dir: 'asc' });
 
   useEffect(() => {
     load();
@@ -88,6 +89,41 @@ export default function AdminServices() {
   }
 
   const fmt = (n) => Number(n).toLocaleString('ru-RU');
+
+  function toggleSort(key) {
+    setSort(s => s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' });
+  }
+
+  const sortedItems = useMemo(() => {
+    const arr = [...items];
+    const { key, dir } = sort;
+    const mul = dir === 'asc' ? 1 : -1;
+    arr.sort((a, b) => {
+      let va = a[key], vb = b[key];
+      if (key === 'price' || key === 'duration_minutes' || key === 'sort_order') {
+        return (Number(va) - Number(vb)) * mul;
+      }
+      if (key === 'is_active') {
+        return ((va === vb) ? 0 : va ? -1 : 1) * mul;
+      }
+      va = (va || '').toString().toLowerCase();
+      vb = (vb || '').toString().toLowerCase();
+      return va.localeCompare(vb, 'ru') * mul;
+    });
+    return arr;
+  }, [items, sort]);
+
+  function SortTh({ colKey, children, align = 'left' }) {
+    const active = sort.key === colKey;
+    const Icon = active ? (sort.dir === 'asc' ? ChevronUp : ChevronDown) : ChevronsUpDown;
+    return (
+      <th className={`px-4 py-3 text-${align} cursor-pointer select-none hover:bg-gray-100`} onClick={() => toggleSort(colKey)}>
+        <span className={`inline-flex items-center gap-1 ${active ? 'text-blue-600' : ''}`}>
+          {children} <Icon size={13} className={active ? '' : 'text-gray-300'} />
+        </span>
+      </th>
+    );
+  }
 
   return (
     <div>
@@ -217,22 +253,22 @@ export default function AdminServices() {
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-gray-600 text-xs uppercase tracking-wider">
                 <tr>
-                  <th className="px-4 py-3 text-left">Услуга</th>
-                  <th className="px-4 py-3 text-left">Категория</th>
-                  <th className="px-4 py-3 text-center">Мин.</th>
-                  <th className="px-4 py-3 text-right">Цена</th>
-                  <th className="px-4 py-3 text-center">Статус</th>
+                  <SortTh colKey="name_ru">Услуга</SortTh>
+                  <SortTh colKey="service_type_label">Тип</SortTh>
+                  <SortTh colKey="duration_minutes" align="center">Мин.</SortTh>
+                  <SortTh colKey="price" align="right">Цена</SortTh>
+                  <SortTh colKey="is_active" align="center">Статус</SortTh>
                   <th className="px-4 py-3 text-center">Действия</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {items.map(item => (
+                {sortedItems.map(item => (
                   <tr key={item.id} className={!item.is_active ? 'opacity-50 bg-gray-50' : 'hover:bg-gray-50'}>
                     <td className="px-4 py-3">
                       <p className="font-medium text-gray-800">{item.name_ru}</p>
                       <p className="text-xs text-gray-500">{item.name_uz}</p>
                     </td>
-                    <td className="px-4 py-3 text-gray-600">{item.category_name || <span className="text-gray-300">—</span>}</td>
+                    <td className="px-4 py-3 text-gray-600">{item.service_type_label || <span className="text-gray-300">—</span>}</td>
                     <td className="px-4 py-3 text-center text-gray-600">{item.duration_minutes}</td>
                     <td className="px-4 py-3 text-right font-mono text-gray-800">{fmt(item.price)}</td>
                     <td className="px-4 py-3 text-center">
