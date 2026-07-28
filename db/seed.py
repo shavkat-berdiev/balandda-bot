@@ -298,7 +298,7 @@ async def _seed_service_items(async_session: AsyncSession) -> None:
 
     services = [
         ServiceItem(
-            service_type=ServiceType.CLASSIC_AROMA_45,
+            service_type=ServiceType.CLASSIC_AROMA_45.value,
             name_ru="Классический аромамассаж 45мин",
             name_uz="Klassik aroma massage 45 min",
             duration_minutes=45,
@@ -306,7 +306,7 @@ async def _seed_service_items(async_session: AsyncSession) -> None:
             sort_order=1,
         ),
         ServiceItem(
-            service_type=ServiceType.CLASSIC_AROMA_60,
+            service_type=ServiceType.CLASSIC_AROMA_60.value,
             name_ru="Классический аромамассаж 60мин",
             name_uz="Klassik aroma massage 60 min",
             duration_minutes=60,
@@ -314,7 +314,7 @@ async def _seed_service_items(async_session: AsyncSession) -> None:
             sort_order=2,
         ),
         ServiceItem(
-            service_type=ServiceType.DETOX_60,
+            service_type=ServiceType.DETOX_60.value,
             name_ru="Детокс терапия 60мин",
             name_uz="Detoks terapiya 60 min",
             duration_minutes=60,
@@ -322,7 +322,7 @@ async def _seed_service_items(async_session: AsyncSession) -> None:
             sort_order=3,
         ),
         ServiceItem(
-            service_type=ServiceType.DETOX_95,
+            service_type=ServiceType.DETOX_95.value,
             name_ru="Детокс терапия 95мин",
             name_uz="Detoks terapiya 95 min",
             duration_minutes=95,
@@ -330,7 +330,7 @@ async def _seed_service_items(async_session: AsyncSession) -> None:
             sort_order=4,
         ),
         ServiceItem(
-            service_type=ServiceType.FOOT_MASSAGE_30,
+            service_type=ServiceType.FOOT_MASSAGE_30.value,
             name_ru="Массаж для ног 30мин",
             name_uz="Oyoq massazhi 30 min",
             duration_minutes=30,
@@ -338,7 +338,7 @@ async def _seed_service_items(async_session: AsyncSession) -> None:
             sort_order=5,
         ),
         ServiceItem(
-            service_type=ServiceType.BACK_MASSAGE_30,
+            service_type=ServiceType.BACK_MASSAGE_30.value,
             name_ru="Массаж спины 30мин",
             name_uz="Orqa massazhi 30 min",
             duration_minutes=30,
@@ -346,7 +346,7 @@ async def _seed_service_items(async_session: AsyncSession) -> None:
             sort_order=6,
         ),
         ServiceItem(
-            service_type=ServiceType.HAMMAM,
+            service_type=ServiceType.HAMMAM.value,
             name_ru="Хаммам",
             name_uz="Hammam",
             duration_minutes=60,
@@ -354,7 +354,7 @@ async def _seed_service_items(async_session: AsyncSession) -> None:
             sort_order=7,
         ),
         ServiceItem(
-            service_type=ServiceType.OTHER_SERVICE,
+            service_type=ServiceType.OTHER_SERVICE.value,
             name_ru="Другое",
             name_uz="Boshqa",
             duration_minutes=0,

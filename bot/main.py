@@ -561,6 +561,52 @@ async def run_migrations():
         UPDATE bot_templates SET keywords_ru = keywords
         WHERE keywords IS NOT NULL AND keywords <> '' AND (keywords_ru IS NULL OR keywords_ru = '');
         """,
+        # ── Editable service types («Тип» dropdown): table + enum→varchar ──
+        """
+        CREATE TABLE IF NOT EXISTS service_types (
+            code VARCHAR(40) PRIMARY KEY,
+            label_ru VARCHAR(100) NOT NULL,
+            label_uz VARCHAR(100) NOT NULL,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            sort_order INTEGER NOT NULL DEFAULT 0
+        );
+        """,
+        # Seed from the old fixed enum (idempotent — never overwrites edits)
+        """
+        INSERT INTO service_types (code, label_ru, label_uz, sort_order) VALUES
+            ('CLASSIC_AROMA_45', 'Классический аромамассаж 45мин', 'Klassik aroma massaj 45 daq', 1),
+            ('CLASSIC_AROMA_60', 'Классический аромамассаж 60мин', 'Klassik aroma massaj 60 daq', 2),
+            ('DETOX_60',         'Детокс терапия 60мин',           'Detoks terapiya 60 daq',      3),
+            ('DETOX_95',         'Детокс терапия 95мин',           'Detoks terapiya 95 daq',      4),
+            ('FOOT_MASSAGE_30',  'Массаж для ног 30мин',           'Oyoq massaji 30 daq',         5),
+            ('BACK_MASSAGE_30',  'Массаж спины 30мин',             'Orqa massaji 30 daq',         6),
+            ('HAMMAM',           'Хаммам',                         'Hammom',                      7),
+            ('OTHER_SERVICE',    'Другое',                         'Boshqa',                      8)
+        ON CONFLICT (code) DO NOTHING;
+        """,
+        # Convert service_items.service_type from the native Postgres enum to
+        # VARCHAR so admins can add brand-new types without a DB migration.
+        """
+        DO $$
+        BEGIN
+            IF EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'service_items'
+                  AND column_name = 'service_type'
+                  AND data_type = 'USER-DEFINED'
+            ) THEN
+                ALTER TABLE service_items
+                ALTER COLUMN service_type TYPE VARCHAR(40) USING service_type::text;
+            END IF;
+        END $$;
+        """,
+        # Safety net: any code present on services but missing in service_types
+        """
+        INSERT INTO service_types (code, label_ru, label_uz, sort_order)
+        SELECT DISTINCT service_type, service_type, service_type, 99
+        FROM service_items
+        ON CONFLICT (code) DO NOTHING;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:

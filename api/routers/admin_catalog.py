@@ -2,9 +2,11 @@
 
 from decimal import Decimal
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -23,9 +25,11 @@ from db.models import (
     PropertyTypeLabel,
     ServiceCategory,
     ServiceItem,
+    ServiceTypeDef,
     SpaLocation,
     SpaMaster,
     StaffMember,
+    get_service_type_labels,
 )
 
 LOCATION_MODES = {"room_only", "room_or_cottage", "cottage_only"}
@@ -260,17 +264,33 @@ class StaffOut(BaseModel):
 
 
 @router.get("/enums")
-async def list_enums(user: dict = Depends(get_current_user)):
+async def list_enums(
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
     """Return available enum values for dropdowns."""
+    type_rows = (
+        await session.execute(
+            select(ServiceTypeDef)
+            .where(ServiceTypeDef.is_active.is_(True))
+            .order_by(ServiceTypeDef.sort_order, ServiceTypeDef.code)
+        )
+    ).scalars().all()
+    service_types = (
+        [{"value": r.code, "label": r.label_ru} for r in type_rows]
+        if type_rows
+        # Fallback for a DB that predates the service_types migration
+        else [
+            {"value": st.value, "label": SERVICE_TYPE_LABELS.get(st, st.value)}
+            for st in ServiceType
+        ]
+    )
     return {
         "property_types": [
             {"value": pt.value, "label": PROPERTY_TYPE_LABELS.get(pt, pt.value)}
             for pt in PropertyType
         ],
-        "service_types": [
-            {"value": st.value, "label": SERVICE_TYPE_LABELS.get(st, st.value)}
-            for st in ServiceType
-        ],
+        "service_types": service_types,
         "business_units": [
             {"value": bu.value, "label": bu.value}
             for bu in BusinessUnit
@@ -440,11 +460,11 @@ _SERVICE_OPTS = (
 )
 
 
-def _service_out(s: ServiceItem) -> ServiceOut:
+def _service_out(s: ServiceItem, labels: dict[str, str]) -> ServiceOut:
     return ServiceOut(
         id=s.id,
-        service_type=s.service_type.value,
-        service_type_label=SERVICE_TYPE_LABELS.get(s.service_type, s.service_type.value),
+        service_type=s.service_type,
+        service_type_label=labels.get(s.service_type, s.service_type),
         name_ru=s.name_ru,
         name_uz=s.name_uz,
         duration_minutes=s.duration_minutes,
@@ -489,7 +509,8 @@ async def list_services(
     result = await session.execute(
         select(ServiceItem).options(*_SERVICE_OPTS).order_by(ServiceItem.sort_order)
     )
-    return [_service_out(s) for s in result.scalars().all()]
+    labels = await get_service_type_labels(session)
+    return [_service_out(s, labels) for s in result.scalars().all()]
 
 
 @router.post("/services", response_model=ServiceOut)
@@ -501,8 +522,25 @@ async def create_service(
     _require_admin(user)
     if data.location_mode not in LOCATION_MODES:
         raise HTTPException(status_code=422, detail="Invalid location_mode")
+    if not data.service_type:
+        raise HTTPException(status_code=422, detail="Выберите тип услуги")
+    labels = await get_service_type_labels(session)
+    if data.service_type not in labels:
+        raise HTTPException(status_code=422, detail="Неизвестный тип услуги")
+    # NOTE: relations are fetched up-front and passed to the constructor.
+    # Assigning svc.masters/allowed_locations AFTER flush() lazy-loads the old
+    # collection, which raises MissingGreenlet under the async engine (this is
+    # what made every "add service" request fail with a 500).
+    masters = (
+        list((await session.execute(select(SpaMaster).where(SpaMaster.id.in_(data.master_ids)))).scalars().all())
+        if data.master_ids else []
+    )
+    locations = (
+        list((await session.execute(select(SpaLocation).where(SpaLocation.id.in_(data.location_ids)))).scalars().all())
+        if data.location_ids else []
+    )
     svc = ServiceItem(
-        service_type=ServiceType(data.service_type),
+        service_type=data.service_type,
         name_ru=data.name_ru,
         name_uz=data.name_uz,
         duration_minutes=data.duration_minutes,
@@ -511,12 +549,12 @@ async def create_service(
         category_id=data.category_id,
         location_mode=data.location_mode,
         master_percent=Decimal(str(data.master_percent)),
+        masters=masters,
+        allowed_locations=locations,
     )
     session.add(svc)
-    await session.flush()
-    await _apply_service_relations(session, svc, data.master_ids, data.location_ids)
     await session.commit()
-    return _service_out(await _load_service(session, svc.id))
+    return _service_out(await _load_service(session, svc.id), labels)
 
 
 @router.put("/services/{item_id}", response_model=ServiceOut)
@@ -534,8 +572,9 @@ async def update_service(
     updates = data.model_dump(exclude_none=True)
     master_ids = updates.pop("master_ids", None)
     location_ids = updates.pop("location_ids", None)
-    if "service_type" in updates:
-        updates["service_type"] = ServiceType(updates["service_type"])
+    labels = await get_service_type_labels(session)
+    if "service_type" in updates and updates["service_type"] not in labels:
+        raise HTTPException(status_code=422, detail="Неизвестный тип услуги")
     if "price" in updates:
         updates["price"] = Decimal(str(updates["price"]))
     if "master_percent" in updates:
@@ -548,7 +587,155 @@ async def update_service(
     await _apply_service_relations(session, svc, master_ids, location_ids)
 
     await session.commit()
-    return _service_out(await _load_service(session, item_id))
+    return _service_out(await _load_service(session, item_id), labels)
+
+
+# ── Service type CRUD (editable «Тип» dropdown) ───────────────────
+
+
+class ServiceTypeCreate(BaseModel):
+    label_ru: str
+    label_uz: str = ""
+    code: str | None = None
+    sort_order: int = 0
+
+
+class ServiceTypeUpdate(BaseModel):
+    label_ru: str | None = None
+    label_uz: str | None = None
+    sort_order: int | None = None
+    is_active: bool | None = None
+
+
+class ServiceTypeOut(BaseModel):
+    code: str
+    label_ru: str
+    label_uz: str
+    is_active: bool
+    sort_order: int
+    services_count: int
+
+
+_TRANSLIT = {
+    "а": "A", "б": "B", "в": "V", "г": "G", "д": "D", "е": "E", "ё": "E",
+    "ж": "ZH", "з": "Z", "и": "I", "й": "Y", "к": "K", "л": "L", "м": "M",
+    "н": "N", "о": "O", "п": "P", "р": "R", "с": "S", "т": "T", "у": "U",
+    "ф": "F", "х": "KH", "ц": "TS", "ч": "CH", "ш": "SH", "щ": "SCH",
+    "ъ": "", "ы": "Y", "ь": "", "э": "E", "ю": "YU", "я": "YA",
+    "ў": "O", "қ": "Q", "ғ": "G", "ҳ": "H",
+}
+
+
+def _slug_code(label: str) -> str:
+    out = "".join(_TRANSLIT.get(ch, ch) for ch in label.lower())
+    out = re.sub(r"[^A-Za-z0-9]+", "_", out.upper()).strip("_")
+    return out[:32] or "TYPE"
+
+
+async def _service_type_counts(session: AsyncSession) -> dict[str, int]:
+    rows = (
+        await session.execute(
+            select(ServiceItem.service_type, func.count(ServiceItem.id))
+            .group_by(ServiceItem.service_type)
+        )
+    ).all()
+    return {code: cnt for code, cnt in rows}
+
+
+def _type_out(t: ServiceTypeDef, counts: dict[str, int]) -> ServiceTypeOut:
+    return ServiceTypeOut(
+        code=t.code, label_ru=t.label_ru, label_uz=t.label_uz,
+        is_active=t.is_active, sort_order=t.sort_order,
+        services_count=counts.get(t.code, 0),
+    )
+
+
+@router.get("/service-types", response_model=list[ServiceTypeOut])
+async def list_service_types(
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    rows = (
+        await session.execute(
+            select(ServiceTypeDef).order_by(ServiceTypeDef.sort_order, ServiceTypeDef.code)
+        )
+    ).scalars().all()
+    counts = await _service_type_counts(session)
+    return [_type_out(t, counts) for t in rows]
+
+
+@router.post("/service-types", response_model=ServiceTypeOut)
+async def create_service_type(
+    data: ServiceTypeCreate,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    label_ru = data.label_ru.strip()
+    if not label_ru:
+        raise HTTPException(status_code=422, detail="Укажите название типа (RU)")
+    existing = {
+        c for (c,) in (await session.execute(select(ServiceTypeDef.code))).all()
+    }
+    code = (data.code or "").strip().upper() or _slug_code(label_ru)
+    code = re.sub(r"[^A-Z0-9_]+", "_", code).strip("_")[:36] or "TYPE"
+    base, n = code, 2
+    while code in existing:
+        code = f"{base}_{n}"
+        n += 1
+    t = ServiceTypeDef(
+        code=code,
+        label_ru=label_ru,
+        label_uz=data.label_uz.strip() or label_ru,
+        sort_order=data.sort_order,
+    )
+    session.add(t)
+    await session.commit()
+    await session.refresh(t)
+    return _type_out(t, await _service_type_counts(session))
+
+
+@router.put("/service-types/{code}", response_model=ServiceTypeOut)
+async def update_service_type(
+    code: str,
+    data: ServiceTypeUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    t = (
+        await session.execute(select(ServiceTypeDef).where(ServiceTypeDef.code == code))
+    ).scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="Тип не найден")
+    for field, value in data.model_dump(exclude_none=True).items():
+        setattr(t, field, value)
+    await session.commit()
+    await session.refresh(t)
+    return _type_out(t, await _service_type_counts(session))
+
+
+@router.delete("/service-types/{code}")
+async def delete_service_type(
+    code: str,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    t = (
+        await session.execute(select(ServiceTypeDef).where(ServiceTypeDef.code == code))
+    ).scalar_one_or_none()
+    if not t:
+        raise HTTPException(status_code=404, detail="Тип не найден")
+    counts = await _service_type_counts(session)
+    if counts.get(code):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Тип используется в {counts[code]} услуг(ах) — сначала переведите их на другой тип или выключите тип.",
+        )
+    await session.delete(t)
+    await session.commit()
+    return {"ok": True}
 
 
 # ── SPA Category CRUD ─────────────────────────────────────────────

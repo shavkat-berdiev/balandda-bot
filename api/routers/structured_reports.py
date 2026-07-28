@@ -18,7 +18,6 @@ from db.enums import (
     PAYMENT_METHOD_LABELS,
     PaymentMethod,
     PROPERTY_TYPE_LABELS,
-    SERVICE_TYPE_LABELS,
 )
 from db.models import (
     BusinessUnit,
@@ -32,6 +31,7 @@ from db.models import (
     ServiceItem,
     StaffMember,
     StructuredReport,
+    get_service_type_labels,
 )
 
 router = APIRouter()
@@ -186,12 +186,13 @@ async def list_services(
         query = query.where(ServiceItem.is_active == True)
     result = await session.execute(query)
     services = result.scalars().all()
+    type_labels = await get_service_type_labels(session)
 
     return [
         ServiceItemResponse(
             id=s.id,
-            service_type=s.service_type.value,
-            service_type_label=SERVICE_TYPE_LABELS.get(s.service_type, s.service_type.value),
+            service_type=s.service_type,
+            service_type_label=type_labels.get(s.service_type, s.service_type),
             name_ru=s.name_ru,
             name_uz=s.name_uz,
             duration_minutes=s.duration_minutes,
@@ -929,6 +930,7 @@ async def spa_daily(
         .options(selectinload(StructuredReport.income_entries).selectinload(IncomeEntry.service_item))
     )
     reports = result.scalars().all()
+    type_labels = await get_service_type_labels(session)
 
     type_totals: dict[str, float] = {}
     name_totals: dict[str, float] = {}
@@ -941,7 +943,7 @@ async def spa_daily(
                 continue
             amt = float(entry.amount)
             svc = entry.service_item
-            t_label = SERVICE_TYPE_LABELS.get(svc.service_type, svc.service_type.value)
+            t_label = type_labels.get(svc.service_type, svc.service_type)
             type_totals[t_label] = type_totals.get(t_label, 0) + amt
             name_totals[svc.name_ru] = name_totals.get(svc.name_ru, 0) + amt
             day = daily_type.setdefault(dk, {})

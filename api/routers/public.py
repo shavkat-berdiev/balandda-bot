@@ -166,7 +166,7 @@ async def public_catalog(
     spa = [
         {
             "id": s.id,
-            "code": s.service_type.value,
+            "code": s.service_type,
             "name": {"ru": s.name_ru, "uz": s.name_uz},
             "duration_minutes": s.duration_minutes,
             "price": _i(s.price),

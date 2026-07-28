@@ -22,6 +22,7 @@ const adminItems = [
   { path: '/admin/properties', label: 'Объекты', icon: Home },
   { path: '/admin/type-labels', label: 'Названия типов', icon: Tag },
   { path: '/admin/services', label: 'Услуги', icon: Sparkles },
+  { path: '/admin/service-types', label: 'Типы услуг', icon: Tag },
   { path: '/admin/service-categories', label: 'SPA категории', icon: Layers },
   { path: '/admin/spa-locations', label: 'SPA кабинеты', icon: MapPin },
   { path: '/admin/spa-masters', label: 'SPA мастера', icon: Contact },

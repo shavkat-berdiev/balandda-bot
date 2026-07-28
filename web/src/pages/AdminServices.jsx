@@ -115,6 +115,7 @@ export default function AdminServices() {
                 <option value="">-- Выберите --</option>
                 {enums.service_types.map(st => <option key={st.value} value={st.value}>{st.label}</option>)}
               </select>
+              <p className="text-xs text-gray-400 mt-1">Добавить или переименовать — раздел <a href="/admin/service-types" className="text-blue-500 hover:underline">«Типы услуг»</a></p>
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Название (RU)</label>

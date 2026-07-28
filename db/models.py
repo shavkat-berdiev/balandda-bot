@@ -76,7 +76,8 @@ __all__ = [
     "UserRole",
     "User", "Category", "Transaction",
     "DailyReport", "ReportLineItem", "ReportExpense",
-    "Property", "PropertyTypeLabel", "ServiceItem", "MinibarItem", "StaffMember",
+    "Property", "PropertyTypeLabel", "ServiceItem", "ServiceTypeDef", "MinibarItem", "StaffMember",
+    "get_service_type_labels",
     "StructuredReport", "IncomeEntry", "ExpenseEntry",
     "Prepayment",
     "WalletTransaction",
@@ -239,7 +240,9 @@ class ServiceItem(Base):
     __tablename__ = "service_items"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    service_type: Mapped[ServiceType] = mapped_column(Enum(ServiceType))
+    # Plain string code referencing service_types.code (was a fixed Postgres enum;
+    # converted to VARCHAR in run_migrations so types are editable in the admin UI).
+    service_type: Mapped[str] = mapped_column(String(40))
     name_ru: Mapped[str] = mapped_column(String(100))
     name_uz: Mapped[str] = mapped_column(String(100))
     duration_minutes: Mapped[int] = mapped_column(Integer)
@@ -258,6 +261,31 @@ class ServiceItem(Base):
     masters: Mapped[list["SpaMaster"]] = relationship(secondary="service_masters", back_populates="services")
     allowed_locations: Mapped[list["SpaLocation"]] = relationship(secondary="service_locations", back_populates="services")
     income_entries: Mapped[list["IncomeEntry"]] = relationship(back_populates="service_item", cascade="all, delete-orphan")
+
+
+class ServiceTypeDef(Base):
+    """Editable service types — the «Тип» dropdown for services.
+
+    Replaces the old fixed ServiceType Python/Postgres enum. Seeded from the
+    enum defaults in run_migrations(); admins add/rename types in the web UI.
+    """
+    __tablename__ = "service_types"
+
+    code: Mapped[str] = mapped_column(String(40), primary_key=True)
+    label_ru: Mapped[str] = mapped_column(String(100))
+    label_uz: Mapped[str] = mapped_column(String(100))
+    is_active: Mapped[bool] = mapped_column(default=True)
+    sort_order: Mapped[int] = mapped_column(default=0)
+
+
+async def get_service_type_labels(session) -> dict[str, str]:
+    """{code: label_ru} for all service types (enum defaults as fallback)."""
+    from sqlalchemy import select as _select
+
+    rows = (await session.execute(_select(ServiceTypeDef))).scalars().all()
+    if rows:
+        return {r.code: r.label_ru for r in rows}
+    return {st.value: SERVICE_TYPE_LABELS.get(st, st.value) for st in ServiceType}
 
 
 class ServiceCategory(Base):

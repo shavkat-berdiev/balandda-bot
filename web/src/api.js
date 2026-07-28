@@ -115,6 +115,12 @@ export const api = {
   getTypeLabels: () => request('/admin/type-labels'),
   updateTypeLabel: (type, data) => request(`/admin/type-labels/${type}`, { method: 'PUT', body: JSON.stringify(data) }),
 
+  // Admin — Service types (the «Тип» dropdown, editable)
+  getAdminServiceTypes: () => request('/admin/service-types'),
+  createAdminServiceType: (data) => request('/admin/service-types', { method: 'POST', body: JSON.stringify(data) }),
+  updateAdminServiceType: (code, data) => request(`/admin/service-types/${code}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteAdminServiceType: (code) => request(`/admin/service-types/${code}`, { method: 'DELETE' }),
+
   // Admin — Services
   getAdminServices: () => request('/admin/services'),
   createAdminService: (data) => request('/admin/services', { method: 'POST', body: JSON.stringify(data) }),
