@@ -1,0 +1,890 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="theme-color" content="#17212b">
+<title>Техкарты Balandda</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  :root {
+    --bg:        var(--tg-theme-bg-color, #17212b);
+    --text:      var(--tg-theme-text-color, #f5f5f5);
+    --hint:      var(--tg-theme-hint-color, #708499);
+    --link:      var(--tg-theme-link-color, #6ab3f3);
+    --button:    var(--tg-theme-button-color, #5288c1);
+    --btext:     var(--tg-theme-button-text-color, #fff);
+    --secbg:     var(--tg-theme-secondary-bg-color, #232e3c);
+    --sep:       rgba(255,255,255,0.08);
+    --accent:    #5fb878;
+    --warn:      #e67e22;
+    --danger:    #d9534f;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; padding: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; font-size: 16px; }
+  body { display: flex; flex-direction: column; }
+
+  .search-row { padding: 12px 16px; position: sticky; top: 0; background: var(--bg); z-index: 5;
+    border-bottom: 1px solid var(--sep); }
+  .search { width: 100%; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--sep);
+    background: var(--secbg); color: var(--text); font-size: 16px; outline: none; }
+  .search:focus { border-color: var(--button); }
+
+  .list { flex: 1; overflow-y: auto; padding: 8px 0 16px; }
+  .item { padding: 12px 16px; border-bottom: 1px solid var(--sep); cursor: pointer; transition: background .1s; }
+  .item:active { background: var(--secbg); }
+  .item .name { font-size: 15px; font-weight: 500; }
+  .item .num { color: var(--hint); font-size: 12px; margin-top: 2px; font-family: monospace; }
+
+  .placeholder { padding: 32px 16px; color: var(--hint); text-align: center; font-size: 14px; }
+
+  /* Recipe modal */
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 10;
+    opacity: 0; pointer-events: none; transition: opacity .15s; }
+  .modal-bg.open { opacity: 1; pointer-events: auto; }
+  .modal { position: fixed; left: 0; right: 0; bottom: 0; max-height: 90%; background: var(--bg);
+    border-radius: 16px 16px 0 0; z-index: 11; transform: translateY(100%); transition: transform .2s;
+    display: flex; flex-direction: column; }
+  .modal.open { transform: translateY(0); }
+  .modal-head { padding: 14px 16px 10px; border-bottom: 1px solid var(--sep); position: relative; }
+  .modal-head .dish-name { font-size: 17px; font-weight: 600; padding-right: 30px; }
+  .modal-head .dish-num { color: var(--hint); font-size: 12px; margin-top: 2px; font-family: monospace; }
+  .modal-head .dates { color: var(--hint); font-size: 12px; margin-top: 6px; }
+  .modal-head .close { position: absolute; top: 10px; right: 10px; width: 32px; height: 32px;
+    display: flex; align-items: center; justify-content: center; color: var(--hint); font-size: 22px;
+    cursor: pointer; border-radius: 8px; }
+
+  .modal-body { flex: 1; overflow-y: auto; padding: 0; }
+  .ingr { display: flex; align-items: flex-start; padding: 11px 16px; border-bottom: 1px solid var(--sep);
+          gap: 10px; cursor: pointer; transition: background .1s; }
+  .ingr:active { background: var(--secbg); }
+  .ingr .ingr-info { flex: 1; min-width: 0; }
+  .ingr .ingr-name { font-size: 14px; word-break: break-word; }
+  .ingr .ingr-meta { color: var(--hint); font-size: 11px; margin-top: 2px; }
+  .ingr .ingr-qty { white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; font-size: 14px; }
+  .ingr.is-prepared { background: rgba(95, 184, 120, 0.05); }
+  .ingr.is-deleted .ingr-name { color: var(--hint); }
+  .badge { display: inline-block; padding: 1px 6px; font-size: 10px; border-radius: 6px;
+    background: rgba(255,255,255,0.08); margin-left: 6px; vertical-align: 1px; }
+  .badge.prep { background: rgba(95, 184, 120, 0.18); color: var(--accent); }
+  .badge.del  { background: rgba(217, 83, 79, 0.18); color: var(--danger); }
+
+  .summary { padding: 12px 16px; color: var(--hint); font-size: 12px; }
+
+  /* Second modal (ingredient detail) */
+  .modal2-bg { position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 20;
+    opacity: 0; pointer-events: none; transition: opacity .15s; }
+  .modal2-bg.open { opacity: 1; pointer-events: auto; }
+  .modal2 { position: fixed; left: 0; right: 0; bottom: 0; max-height: 92%; background: var(--bg);
+    border-radius: 16px 16px 0 0; z-index: 21; transform: translateY(100%); transition: transform .2s;
+    display: flex; flex-direction: column; }
+  .modal2.open { transform: translateY(0); }
+  .modal2-head { padding: 14px 16px 10px; border-bottom: 1px solid var(--sep); position: relative; }
+  .modal2-head .h-name { font-size: 17px; font-weight: 600; padding-right: 30px; }
+  .modal2-head .h-meta { color: var(--hint); font-size: 12px; margin-top: 3px; font-family: monospace; }
+  .modal2-head .h-close { position: absolute; top: 10px; right: 10px; width: 32px; height: 32px;
+    display: flex; align-items: center; justify-content: center; color: var(--hint); font-size: 22px;
+    cursor: pointer; border-radius: 8px; }
+  .modal2-body { flex: 1; overflow-y: auto; padding: 0; }
+
+  .section-title { padding: 14px 16px 4px; color: var(--hint); font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.5px; font-weight: 600; }
+  .total-row { padding: 6px 16px 12px; font-size: 22px; font-weight: 700; }
+  .total-row.neg { color: var(--danger); }
+
+  .store-row { display: flex; justify-content: space-between; padding: 8px 16px;
+    border-bottom: 1px solid var(--sep); gap: 10px; }
+  .store-row .store-name { font-size: 13px; flex: 1; min-width: 0; word-break: break-word; }
+  .store-row .store-amt { white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .store-row.neg .store-amt { color: var(--danger); }
+
+  .tx-row { padding: 9px 16px; border-bottom: 1px solid var(--sep); }
+  .tx-row .tx-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .tx-row .tx-icon { font-size: 14px; }
+  .tx-row .tx-type-label { font-size: 13px; font-weight: 500; flex: 1; }
+  .tx-row .tx-dt { color: var(--hint); font-size: 11px; white-space: nowrap; }
+  .tx-row .tx-amount { font-weight: 600; font-variant-numeric: tabular-nums; font-size: 13px; white-space: nowrap; }
+  .tx-row .tx-amount.in { color: var(--accent); }
+  .tx-row .tx-amount.out { color: var(--danger); }
+  .tx-row .tx-amount.neutral { color: var(--hint); }
+  .tx-row .tx-meta { color: var(--hint); font-size: 11px; margin-top: 3px; word-break: break-word; }
+
+  .loading { display: flex; justify-content: center; align-items: center; padding: 24px; color: var(--hint); }
+  .spinner { width: 18px; height: 18px; border: 2px solid var(--sep); border-top-color: var(--button);
+    border-radius: 50%; animation: spin .8s linear infinite; margin-right: 8px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+
+  .top-bar { display: flex; gap: 8px; padding: 8px 16px 0; flex-wrap: wrap; }
+  .top-bar .chip { padding: 7px 12px; border-radius: 16px; background: var(--secbg); color: var(--text);
+    font-size: 13px; cursor: pointer; border: 1px solid var(--sep); transition: all .15s; }
+  .top-bar .chip:active, .top-bar .chip.active { background: var(--button); color: var(--btext); border-color: var(--button); }
+  .top-bar.sub-bar { padding: 6px 16px 8px; border-bottom: 1px solid var(--sep); }
+  .top-bar.sub-bar .chip { padding: 6px 10px; font-size: 12px; }
+  .stock-item .stock-meta { color: var(--hint); font-size: 11px; margin-top: 2px; }
+  .stock-item .stock-qty { white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; font-size: 14px; }
+  .stock-item .stock-sum { color: var(--hint); font-size: 11px; margin-top: 2px; white-space: nowrap; }
+
+  .error { padding: 24px 16px; color: var(--danger); text-align: center; font-size: 14px; }
+
+  /* ── Закуп ── */
+  .cart-bar { position: sticky; bottom: 0; background: var(--accent); color: #fff;
+    padding: 16px; display: flex; justify-content: space-between; align-items: center;
+    z-index: 4; cursor: pointer; box-shadow: 0 -2px 12px rgba(0,0,0,.25); }
+  .cart-bar.hidden { display: none; }
+  .cart-bar .cart-count { font-size: 15px; font-weight: 500; }
+  .cart-bar .cart-total { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  /* форма ввода товара */
+  .pf-name { font-size: 18px; font-weight: 600; }
+  .pf-meta { color: var(--hint); font-size: 12px; margin-top: 3px; font-family: monospace; }
+  .pf-field { padding: 14px 16px 0; }
+  .pf-label { color: var(--hint); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+  .pf-input { width: 100%; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--sep);
+    background: var(--secbg); color: var(--text); font-size: 22px; font-weight: 600; outline: none;
+    font-variant-numeric: tabular-nums; }
+  .pf-input:focus { border-color: var(--button); }
+  .pf-total { text-align: right; color: var(--hint); font-size: 14px; padding: 8px 16px 0;
+    font-variant-numeric: tabular-nums; }
+  .pf-btn { display: block; width: calc(100% - 32px); margin: 20px 16px; padding: 16px;
+    background: var(--button); color: var(--btext); border: none; border-radius: 10px;
+    font-size: 16px; font-weight: 600; cursor: pointer; text-align: center; }
+  .pf-btn:active { opacity: 0.85; }
+  .pf-btn.green { background: var(--accent); }
+  .pf-btn:disabled { opacity: 0.4; cursor: default; }
+
+  /* корзина в модалке */
+  .cart-item { padding: 12px 16px; border-bottom: 1px solid var(--sep); display: flex;
+    justify-content: space-between; align-items: center; gap: 10px; }
+  .cart-item .ci-info { flex: 1; min-width: 0; }
+  .cart-item .ci-name { font-size: 14px; word-break: break-word; }
+  .cart-item .ci-meta { color: var(--hint); font-size: 11px; margin-top: 2px; }
+  .cart-item .ci-sum { white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; font-size: 14px; }
+  .cart-item .ci-del { color: var(--danger); font-size: 20px; padding: 8px; cursor: pointer; }
+  .cart-total-row { padding: 14px 16px; display: flex; justify-content: space-between;
+    align-items: center; border-top: 2px solid var(--sep); border-bottom: 1px solid var(--sep);
+    font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .cart-total-row .lbl { color: var(--hint); font-size: 14px; font-weight: 400; }
+
+  /* источник оплаты */
+  .pay-src { padding: 14px 16px 4px; border-bottom: 1px solid var(--sep); }
+  .pay-src .ps-lbl { color: var(--hint); font-size: 12px; text-transform: uppercase;
+    letter-spacing: .4px; margin-bottom: 8px; }
+  .pay-src .ps-btns { display: flex; gap: 8px; }
+  .pay-src .ps-btn { flex: 1; padding: 11px 6px; border-radius: 10px; border: 1.5px solid var(--sep);
+    background: transparent; color: var(--fg); font-size: 12.5px; line-height: 1.25; font-family: inherit;
+    cursor: pointer; text-align: center; transition: background .15s, border-color .15s; }
+  .pay-src .ps-btn.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .pay-src .ps-hint { color: var(--hint); font-size: 11px; margin-top: 7px; min-height: 14px; }
+  .pay-src { flex: 0 0 auto; }
+  #pay-src + .pf-btn { margin-top: 14px; }
+
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(120%);
+    background: var(--accent); color: #fff; padding: 14px 22px; border-radius: 24px; font-size: 15px;
+    font-weight: 500; z-index: 100; opacity: 0; transition: transform .2s, opacity .2s;
+    box-shadow: 0 4px 16px rgba(0,0,0,.3); max-width: 90%; text-align: center; }
+  .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+  .toast.err { background: var(--danger); }
+</style>
+</head>
+<body>
+
+<div class="top-bar" id="top-bar">
+  <div class="chip" id="mode-search" style="display:none">🔍 Поиск блюд</div>
+  <div class="chip" id="mode-stores" style="display:none">📦 Склады</div>
+  <div class="chip" id="mode-buy"    style="display:none">🛒 Закуп</div>
+</div>
+
+<div class="top-bar sub-bar" id="stores-tabs" style="display:none">
+  <div class="chip sub" data-store="STAFF">STAFF</div>
+  <div class="chip sub" data-store="Склад Бар Ресторан">Бар</div>
+  <div class="chip sub" data-store="Кухня">Кухня</div>
+  <div class="chip sub" data-store="Центральный Склад">Центральный</div>
+</div>
+
+<div class="search-row" id="search-row">
+  <input id="q" class="search" placeholder="Название или артикул…" autocomplete="off" autocapitalize="off" spellcheck="false">
+</div>
+
+<div id="list" class="list">
+  <div class="placeholder">Загрузка…</div>
+</div>
+
+<div id="cart-bar" class="cart-bar hidden">
+  <span class="cart-count" id="cart-count">Чек пуст</span>
+  <span class="cart-total" id="cart-total">0 сум ›</span>
+</div>
+
+<div id="modal-bg" class="modal-bg"></div>
+<div id="modal" class="modal">
+  <div class="modal-head">
+    <div class="dish-name" id="m-name">—</div>
+    <div class="dish-num"  id="m-num"></div>
+    <div class="dates"     id="m-dates"></div>
+    <div class="close" id="m-close">×</div>
+  </div>
+  <div id="m-body" class="modal-body"></div>
+</div>
+
+<div id="modal2-bg" class="modal2-bg"></div>
+<div id="modal2" class="modal2">
+  <div class="modal2-head">
+    <div class="h-name" id="i-name">—</div>
+    <div class="h-meta" id="i-meta"></div>
+    <div class="h-close" id="i-close">×</div>
+  </div>
+  <div id="i-body" class="modal2-body"></div>
+</div>
+
+<!-- Модалка ввода количества и цены товара -->
+<div id="pf-bg" class="modal-bg"></div>
+<div id="pf-modal" class="modal">
+  <div class="modal-head">
+    <div class="pf-name" id="pf-name">—</div>
+    <div class="pf-meta" id="pf-meta"></div>
+    <div class="close" id="pf-close">×</div>
+  </div>
+  <div class="modal-body">
+    <div class="pf-field">
+      <div class="pf-label">Количество, <span id="pf-unit">—</span></div>
+      <input id="pf-amount" class="pf-input" type="text" inputmode="decimal" placeholder="0">
+    </div>
+    <div class="pf-field">
+      <div class="pf-label">Цена за <span id="pf-unit2">—</span>, сум</div>
+      <input id="pf-price" class="pf-input" type="text" inputmode="decimal" placeholder="0">
+    </div>
+    <div class="pf-total" id="pf-total">= 0 сум</div>
+    <button class="pf-btn" id="pf-add" disabled>Добавить в чек</button>
+  </div>
+</div>
+
+<!-- Модалка корзины -->
+<div id="cart-bg" class="modal-bg"></div>
+<div id="cart-modal" class="modal">
+  <div class="modal-head">
+    <div class="dish-name" id="cart-title">Чек</div>
+    <div class="close" id="cart-close">×</div>
+  </div>
+  <div class="modal-body" id="cart-body"></div>
+  <div class="pay-src" id="pay-src">
+    <div class="ps-lbl">Источник оплаты</div>
+    <div class="ps-btns">
+      <button type="button" class="ps-btn" data-src="TRANSFER">Перечисление</button>
+      <button type="button" class="ps-btn" data-src="CASH">Наличные</button>
+      <button type="button" class="ps-btn" data-src="CARD">Корп. карта</button>
+    </div>
+    <div class="ps-hint" id="ps-hint"></div>
+  </div>
+  <button class="pf-btn green" id="cart-submit">Отправить в iiko</button>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+if (tg) { tg.ready(); tg.expand(); }
+const INIT = tg ? tg.initData : "";
+// Режим редактирования — ?edit=<pendingId> в URL
+const EDIT_ID = new URLSearchParams(location.search).get("edit") || "";
+
+const $ = sel => document.querySelector(sel);
+const list = $("#list");
+const inp  = $("#q");
+const modal = $("#modal"), bg = $("#modal-bg"), body = $("#m-body");
+const modal2 = $("#modal2"), bg2 = $("#modal2-bg"), ibody = $("#i-body");
+
+async function api(path) {
+  const r = await fetch(path, { headers: { "X-Tg-Init-Data": INIT }, cache: "no-store" });
+  if (!r.ok) { const j = await r.json().catch(()=>({error:r.status})); throw new Error(j.error || r.statusText); }
+  return r.json();
+}
+
+function escapeHtml(s){return String(s||"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);}
+
+function fmtQty(n) {
+  if (n == null) return "—";
+  if (Math.abs(n) >= 1) return n.toFixed(3).replace(/\.?0+$/, "");
+  if (Math.abs(n) >= 0.001) return n.toFixed(4).replace(/\.?0+$/, "");
+  return n.toExponential(2);
+}
+function humanize(amount, unit) {
+  const u = (unit || "").toLowerCase();
+  const sign = amount < 0 ? "-" : "";
+  const abs = Math.abs(amount);
+  if (u === "кг") {
+    if (abs < 1) return `${sign}${(abs * 1000).toFixed(abs * 1000 < 10 ? 2 : abs * 1000 < 100 ? 1 : 0)} г`;
+    return `${sign}${abs.toFixed(3)} кг`;
+  }
+  if (u === "л") {
+    if (abs < 1) return `${sign}${(abs * 1000).toFixed(abs * 1000 < 10 ? 2 : abs * 1000 < 100 ? 1 : 0)} мл`;
+    return `${sign}${abs.toFixed(3)} л`;
+  }
+  return `${sign}${fmtQty(abs)} ${unit || ""}`;
+}
+function fmtDate(s){
+  const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+  return m ? `${m[3]}.${m[2]} ${m[4]}:${m[5]}` : s;
+}
+function fmtMoney(n){
+  if (!n) return "";
+  return new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 0 }).format(n);
+}
+
+// ── Search ──
+let lastQ = "", searchTimer = null, searchSeq = 0;
+function renderList(items, q) {
+  if (!q) { list.innerHTML = '<div class="placeholder">Введите название или артикул блюда</div>'; return; }
+  if (!items.length) { list.innerHTML = '<div class="placeholder">Ничего не найдено</div>'; return; }
+  list.innerHTML = items.map(it =>
+    `<div class="item" data-id="${escapeHtml(it.id)}">
+      <div class="name">${escapeHtml(it.name)}</div>
+      <div class="num">${it.num ? escapeHtml(it.num) : ""}</div>
+    </div>`).join("");
+  list.querySelectorAll(".item").forEach(el => el.addEventListener("click", () => openRecipe(el.dataset.id, el.querySelector(".name").textContent)));
+}
+function renderGoodsList(items, q) {
+  if (!q) { list.innerHTML = '<div class="placeholder">Введите название товара</div>'; return; }
+  if (!items.length) { list.innerHTML = '<div class="placeholder">Ничего не найдено</div>'; return; }
+  list.innerHTML = items.map(it =>
+    `<div class="item" data-id="${escapeHtml(it.id)}" data-name="${escapeHtml(it.name)}" data-unit="${escapeHtml(it.unit)}" data-unitid="${escapeHtml(it.unitId)}" data-num="${escapeHtml(it.num)}">
+      <div class="name">${escapeHtml(it.name)}</div>
+      <div class="num">${it.num ? "Арт. " + escapeHtml(it.num) + " · " : ""}${escapeHtml(it.unit)}</div>
+    </div>`).join("");
+  list.querySelectorAll(".item").forEach(el => el.addEventListener("click", () => {
+    openProductForm({
+      id: el.dataset.id, name: el.dataset.name,
+      unit: el.dataset.unit, unitId: el.dataset.unitid, num: el.dataset.num,
+    });
+  }));
+}
+
+inp.addEventListener("input", () => {
+  const q = inp.value;
+  if (q === lastQ) return;
+  lastQ = q;
+  // В режиме "Склады" фильтруем локально
+  if (currentMode === "stores") {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => filterStoreItems(q), 100);
+    return;
+  }
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(async () => {
+    const seq = ++searchSeq;
+    if (!q.trim()) { currentMode === "buy" ? renderGoodsList([], q) : renderList([], q); return; }
+    try {
+      const endpoint = currentMode === "buy" ? "./api/purchase/search" : "./api/search";
+      const j = await api(`${endpoint}?q=${encodeURIComponent(q)}`);
+      if (seq !== searchSeq) return;
+      if (currentMode === "buy") renderGoodsList(j.results, q);
+      else renderList(j.results, q);
+    } catch(e) {
+      list.innerHTML = `<div class="error">Ошибка: ${escapeHtml(e.message)}</div>`;
+    }
+  }, 250);
+});
+
+// ─── Закуп: корзина ───
+const cartBar = $("#cart-bar");
+const CART_KEY = "akbar_cart_v1";
+function loadCart(){
+  try { return JSON.parse(localStorage.getItem(CART_KEY) || "[]"); } catch { return []; }
+}
+function saveCart(c){ localStorage.setItem(CART_KEY, JSON.stringify(c)); }
+function cartTotal(c){ return c.reduce((s, it) => s + it.amount * it.price, 0); }
+function updateCartBar() {
+  const c = loadCart();
+  if (!c.length) {
+    $("#cart-count").textContent = "Чек пуст";
+    $("#cart-total").textContent = "";
+  } else {
+    $("#cart-count").textContent = `Чек: ${c.length} ${plural(c.length, "позиция","позиции","позиций")}`;
+    $("#cart-total").textContent = fmtMoney(cartTotal(c)) + " сум ›";
+  }
+}
+function plural(n, a, b, c){
+  const m = n % 100;
+  if (m >= 11 && m <= 19) return c;
+  const l = n % 10;
+  if (l === 1) return a;
+  if (l >= 2 && l <= 4) return b;
+  return c;
+}
+
+// ─── Модалка ввода товара ───
+const pfBg = $("#pf-bg"), pfModal = $("#pf-modal");
+const pfAmt = $("#pf-amount"), pfPr = $("#pf-price"), pfTotal = $("#pf-total"), pfAdd = $("#pf-add");
+let currentProduct = null;
+
+function openProductForm(prod) {
+  currentProduct = prod;
+  $("#pf-name").textContent = prod.name;
+  $("#pf-meta").textContent = (prod.num ? "Арт. " + prod.num + " · " : "") + prod.unit;
+  $("#pf-unit").textContent = prod.unit;
+  $("#pf-unit2").textContent = prod.unit;
+  pfAmt.value = ""; pfPr.value = "";
+  pfTotal.textContent = "= 0 сум";
+  pfAdd.disabled = true;
+  pfBg.classList.add("open"); pfModal.classList.add("open");
+  setTimeout(() => pfAmt.focus(), 100);
+}
+function closeProductForm() {
+  pfBg.classList.remove("open"); pfModal.classList.remove("open");
+  currentProduct = null;
+}
+$("#pf-close").addEventListener("click", closeProductForm);
+pfBg.addEventListener("click", closeProductForm);
+
+function parseNum(s) {
+  const n = parseFloat(String(s).replace(",", ".").replace(/\s/g, ""));
+  return isNaN(n) ? 0 : n;
+}
+function recalcPfTotal() {
+  const a = parseNum(pfAmt.value);
+  const p = parseNum(pfPr.value);
+  const total = a * p;
+  pfTotal.textContent = "= " + fmtMoney(total) + " сум";
+  pfAdd.disabled = !(a > 0 && p >= 0);
+}
+pfAmt.addEventListener("input", recalcPfTotal);
+pfPr.addEventListener("input", recalcPfTotal);
+
+pfAdd.addEventListener("click", () => {
+  if (!currentProduct) return;
+  const a = parseNum(pfAmt.value);
+  const p = parseNum(pfPr.value);
+  if (!(a > 0)) return;
+  const cart = loadCart();
+  // если уже есть — увеличиваем количество, цена усредняется по деньгам
+  const idx = cart.findIndex(it => it.productId === currentProduct.id && it.price === p);
+  if (idx >= 0) {
+    cart[idx].amount = +(cart[idx].amount + a).toFixed(3);
+  } else {
+    cart.push({
+      productId: currentProduct.id,
+      name: currentProduct.name,
+      num: currentProduct.num,
+      unit: currentProduct.unit,
+      unitId: currentProduct.unitId,
+      amount: a,
+      price: p,
+    });
+  }
+  saveCart(cart);
+  updateCartBar();
+  closeProductForm();
+  showToast(`✓ ${currentProduct.name} — ${a} ${currentProduct.unit}`);
+});
+
+// ─── Модалка корзины ───
+const cartBg = $("#cart-bg"), cartModal = $("#cart-modal"), cartBody = $("#cart-body");
+function openCart() {
+  const cart = loadCart();
+  if (!cart.length) { showToast("Чек пуст"); return; }
+  $("#cart-title").textContent = `Чек: ${cart.length} ${plural(cart.length, "позиция","позиции","позиций")}`;
+  renderCartBody(cart);
+  cartBg.classList.add("open"); cartModal.classList.add("open");
+}
+function closeCart() { cartBg.classList.remove("open"); cartModal.classList.remove("open"); }
+$("#cart-close").addEventListener("click", closeCart);
+cartBg.addEventListener("click", closeCart);
+cartBar.addEventListener("click", openCart);
+
+function renderCartBody(cart) {
+  const rows = cart.map((it, i) => {
+    const sum = it.amount * it.price;
+    return `<div class="cart-item">
+      <div class="ci-info">
+        <div class="ci-name">${escapeHtml(it.name)}</div>
+        <div class="ci-meta">${it.amount} ${escapeHtml(it.unit)} × ${fmtMoney(it.price)} сум</div>
+      </div>
+      <div class="ci-sum">${fmtMoney(sum)}</div>
+      <div class="ci-del" data-i="${i}">×</div>
+    </div>`;
+  }).join("");
+  const total = cartTotal(cart);
+  cartBody.innerHTML = rows + `<div class="cart-total-row"><span class="lbl">Итого</span><span>${fmtMoney(total)} сум</span></div>`;
+  cartBody.querySelectorAll(".ci-del").forEach(el => el.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const i = +el.dataset.i;
+    const c = loadCart();
+    c.splice(i, 1);
+    saveCart(c);
+    updateCartBar();
+    if (!c.length) closeCart();
+    else renderCartBody(c);
+    $("#cart-title").textContent = `Чек: ${c.length} ${plural(c.length, "позиция","позиции","позиций")}`;
+  }));
+}
+
+// ─── Источник оплаты ───
+const PAY_LABELS = { TRANSFER: "Перечисление", CASH: "Наличные", CARD: "Корпоративная карта" };
+const PAY_KEY = "akbar_paysrc_v1";
+let PAY_SRC = "";
+function setPaySrc(src, remember = true) {
+  PAY_SRC = PAY_LABELS[src] ? src : "";
+  document.querySelectorAll("#pay-src .ps-btn").forEach(b => {
+    b.classList.toggle("on", b.dataset.src === PAY_SRC);
+  });
+  $("#ps-hint").textContent = PAY_SRC === "CASH"
+    ? "Сумма спишется с вашего кошелька в аналитике после подтверждения."
+    : (PAY_SRC ? "Списание с кошелька не производится." : "");
+  if (remember && PAY_SRC) { try { localStorage.setItem(PAY_KEY, PAY_SRC); } catch {} }
+}
+document.querySelectorAll("#pay-src .ps-btn").forEach(b => {
+  b.addEventListener("click", () => setPaySrc(b.dataset.src));
+});
+try { setPaySrc(localStorage.getItem(PAY_KEY) || "", false); } catch { setPaySrc("", false); }
+
+// ─── Отправка ───
+$("#cart-submit").addEventListener("click", async () => {
+  const cart = loadCart();
+  if (!cart.length) return;
+  if (!PAY_SRC) { showToast("Выберите источник оплаты", 2600, true); return; }
+  const total = cartTotal(cart);
+  const editing = !!EDIT_ID;
+  const payLine = `\nОплата: ${PAY_LABELS[PAY_SRC]}`;
+  const confirmMsg = editing
+    ? `Сохранить изменения?\n${cart.length} позиций · ${fmtMoney(total)} сум${payLine}`
+    : `Отправить приёмку в iiko?\n${cart.length} позиций · ${fmtMoney(total)} сум${payLine}`;
+  if (!confirm(confirmMsg)) return;
+  const btn = $("#cart-submit");
+  btn.disabled = true;
+  btn.textContent = editing ? "Сохраняем…" : "Отправляем…";
+  try {
+    const items = cart.map(it => ({ productId: it.productId, amount: it.amount, price: it.price, unitId: it.unitId }));
+    const endpoint = editing ? `./api/purchase/pending/${encodeURIComponent(EDIT_ID)}` : "./api/purchase/submit";
+    const r = await fetch(endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Tg-Init-Data": INIT },
+      body: JSON.stringify({ items, paymentSource: PAY_SRC }),
+    });
+    const j = await r.json();
+    if (!r.ok || !j.ok) throw new Error(j.error || r.statusText);
+    saveCart([]);
+    updateCartBar();
+    closeCart();
+    if (editing) {
+      showToast("✓ Изменения сохранены", 2500);
+      setTimeout(() => { try { tg && tg.close(); } catch{} }, 1200);
+    } else if (j.pending) {
+      showToast("🕒 Отправлено на подтверждение", 4500);
+    } else {
+      showToast(`✓ Приёмка №${j.docNum} создана`, 4000);
+    }
+  } catch(e) {
+    const msg = e.message === "bad_payment_source" ? "Выберите источник оплаты" : e.message;
+    showToast("Ошибка: " + msg, 5000, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = editing ? "Сохранить изменения" : "Отправить в iiko";
+  }
+});
+
+// ─── Тост ───
+let toastTimer = null;
+function showToast(msg, ms = 2200, err = false) {
+  const el = $("#toast");
+  el.textContent = msg;
+  el.classList.toggle("err", err);
+  el.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), ms);
+}
+
+// ── Recipe modal ──
+function openModal() { bg.classList.add("open"); modal.classList.add("open"); }
+function closeModal() { bg.classList.remove("open"); modal.classList.remove("open"); }
+$("#m-close").addEventListener("click", closeModal);
+bg.addEventListener("click", closeModal);
+
+async function openRecipe(id, fallbackName) {
+  $("#m-name").textContent = fallbackName || "Загрузка…";
+  $("#m-num").textContent = "";
+  $("#m-dates").textContent = "";
+  body.innerHTML = '<div class="loading"><div class="spinner"></div>Загружаем техкарту…</div>';
+  openModal();
+  try {
+    const j = await api(`./api/recipe?id=${encodeURIComponent(id)}`);
+    $("#m-name").textContent = j.dish.name;
+    $("#m-num").textContent  = j.dish.num ? `Артикул ${j.dish.num}` : "";
+    if (j.error) {
+      $("#m-dates").textContent = "";
+      body.innerHTML = `<div class="error">${escapeHtml(j.error)}</div>`;
+      return;
+    }
+    const dt = `Действует с ${j.dateFrom || "?"}${j.dateTo ? " по " + j.dateTo : " (бессрочно)"}`;
+    $("#m-dates").textContent = dt;
+    if (!j.items.length) {
+      body.innerHTML = '<div class="error">В техкарте нет ингредиентов</div>';
+      return;
+    }
+    const rows = j.items.map(it => {
+      const isPrep = it.type === "PREPARED";
+      const isDel  = it.deleted;
+      const badges = (isPrep ? '<span class="badge prep">ПФ</span>' : "") +
+                     (isDel  ? '<span class="badge del">удалён</span>' : "");
+      const cls = [];
+      if (isPrep) cls.push("is-prepared");
+      if (isDel)  cls.push("is-deleted");
+      return `<div class="ingr${cls.length ? " " + cls.join(" ") : ""}" data-pid="${escapeHtml(it.productId)}">
+        <div class="ingr-info">
+          <div class="ingr-name">${escapeHtml(it.name)}${badges}</div>
+          <div class="ingr-meta">${it.num ? "Арт. " + escapeHtml(it.num) : ""}</div>
+        </div>
+        <div class="ingr-qty">${escapeHtml(humanize(it.amount, it.unit))}</div>
+      </div>`;
+    }).join("");
+    body.innerHTML = rows + `<div class="summary">${j.items.length} ингредиентов · ${j.items.filter(x=>x.type==="PREPARED").length} полуфабрикатов</div>`;
+  } catch(e) {
+    body.innerHTML = `<div class="error">Ошибка: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ── Ingredient detail modal ──
+function openModal2(){ bg2.classList.add("open"); modal2.classList.add("open"); }
+function closeModal2(){ bg2.classList.remove("open"); modal2.classList.remove("open"); }
+$("#i-close").addEventListener("click", closeModal2);
+bg2.addEventListener("click", closeModal2);
+
+// Делегация: клик по любому .ingr внутри тела рецепта → детали ингредиента
+body.addEventListener("click", e => {
+  const ingr = e.target.closest(".ingr[data-pid]");
+  if (!ingr) return;
+  const pid = ingr.dataset.pid;
+  if (!pid || pid === "undefined") return;
+  openIngredient(pid);
+});
+
+const TX_TYPES = {
+  INVOICE:               { icon: "➕", label: "Приёмка",                 dir: "in"  },
+  WRITEOFF:              { icon: "➖", label: "Списание",                dir: "out" },
+  SESSION_WRITEOFF:      { icon: "🍽️", label: "Списание по продаже",    dir: "out" },
+  TRANSFER:              { icon: "🔄", label: "Перемещение",             dir: "neutral" },
+  INVENTORY_CORRECTION:  { icon: "📊", label: "Корректировка инвентаризации", dir: "neutral" },
+  STORE_COST_CORRECTION: { icon: "💰", label: "Корректировка стоимости", dir: "neutral" }
+};
+
+async function openIngredient(pid){
+  $("#i-name").textContent = "Загрузка…";
+  $("#i-meta").textContent = "";
+  ibody.innerHTML = '<div class="loading"><div class="spinner"></div>Тянем остатки и историю…</div>';
+  openModal2();
+  try {
+    const j = await api(`./api/ingredient?id=${encodeURIComponent(pid)}`);
+    $("#i-name").textContent = j.product.name + (j.product.deleted ? " (удалён)" : "");
+    const metaParts = [];
+    if (j.product.num) metaParts.push("Арт. " + j.product.num);
+    if (j.product.unit) metaParts.push("ед. " + j.product.unit);
+    $("#i-meta").textContent = metaParts.join("  ·  ");
+
+    const totalCls = j.totalNow < 0 ? "neg" : "";
+    let html = `<div class="section-title">Остаток сейчас</div>
+      <div class="total-row ${totalCls}">${escapeHtml(humanize(j.totalNow, j.product.unit))}</div>`;
+    if (j.byStore.length) {
+      html += j.byStore.map(s => {
+        const neg = s.amount < 0 ? " neg" : "";
+        return `<div class="store-row${neg}">
+          <div class="store-name">${escapeHtml(s.storeName)}</div>
+          <div class="store-amt">${escapeHtml(humanize(s.amount, j.product.unit))}</div>
+        </div>`;
+      }).join("");
+    } else {
+      html += `<div class="placeholder">Нет остатков ни на одном складе</div>`;
+    }
+
+    html += `<div class="section-title">История за ${j.historyDays} дней (${j.transactions.length})</div>`;
+    if (!j.transactions.length) {
+      html += `<div class="placeholder">Движений не было</div>`;
+    } else {
+      html += j.transactions.map(t => {
+        const meta = TX_TYPES[t.type] || { icon: "·", label: t.type, dir: "neutral" };
+        const amt = (meta.dir === "in" ? t.amtIn : meta.dir === "out" ? t.amtOut : (t.amtIn || t.amtOut));
+        const amtStr = amt ? (meta.dir === "in" ? "+" : meta.dir === "out" ? "−" : "") + humanize(Math.abs(amt), j.product.unit) : "";
+        const moneyStr = (t.sumIn || t.sumOut) ? fmtMoney(t.sumIn || t.sumOut) + " UZS" : "";
+        const moves = [t.contr, t.account].filter(Boolean).join(" → ");
+        const extra = [];
+        if (t.counter) extra.push(escapeHtml(t.counter));
+        if (t.doc)     extra.push("№" + escapeHtml(t.doc));
+        if (moves)     extra.push(escapeHtml(moves));
+        if (t.comment) extra.push(escapeHtml(t.comment));
+        return `<div class="tx-row">
+          <div class="tx-top">
+            <span class="tx-icon">${meta.icon}</span>
+            <span class="tx-type-label">${escapeHtml(meta.label)}</span>
+            <span class="tx-dt">${escapeHtml(fmtDate(t.dt))}</span>
+            <span class="tx-amount ${meta.dir}">${escapeHtml(amtStr)}</span>
+          </div>
+          ${(extra.length || moneyStr) ? `<div class="tx-meta">${extra.join(" · ")}${moneyStr ? " · " + moneyStr : ""}</div>` : ""}
+        </div>`;
+      }).join("");
+    }
+    ibody.innerHTML = html;
+  } catch(e) {
+    ibody.innerHTML = `<div class="error">Ошибка: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+// ─── Роли + режимы ───
+const chipSearch = $("#mode-search"), chipStores = $("#mode-stores"), chipBuy = $("#mode-buy");
+const storesTabs = $("#stores-tabs");
+let currentMode = null;
+let currentStore = "STAFF";
+let USER_ROLES = [];
+
+function setMode(m) {
+  currentMode = m;
+  chipSearch.classList.toggle("active", m === "search");
+  chipStores.classList.toggle("active", m === "stores");
+  chipBuy.classList.toggle("active",    m === "buy");
+  cartBar.classList.toggle("hidden", m !== "buy");
+  storesTabs.style.display = (m === "stores") ? "" : "none";
+  inp.value = "";
+  lastQ = "";
+
+  if (m === "search") {
+    $("#search-row").style.display = "";
+    inp.placeholder = "Название блюда или артикул…";
+    list.innerHTML = '<div class="placeholder">Введите название или артикул блюда</div>';
+    setTimeout(() => inp.focus(), 50);
+  } else if (m === "stores") {
+    $("#search-row").style.display = "";
+    inp.placeholder = "Поиск в этом складе…";
+    setActiveStoreTab(currentStore);
+    loadStoreStock(currentStore);
+  } else if (m === "buy") {
+    $("#search-row").style.display = "";
+    inp.placeholder = "Помидор, огурец, лимон…";
+    list.innerHTML = '<div class="placeholder">Введите название товара</div>';
+    updateCartBar();
+    setTimeout(() => inp.focus(), 50);
+  }
+}
+function setActiveStoreTab(storeName) {
+  storesTabs.querySelectorAll(".chip").forEach(el => {
+    el.classList.toggle("active", el.dataset.store === storeName);
+  });
+}
+storesTabs.querySelectorAll(".chip").forEach(el => {
+  el.addEventListener("click", () => {
+    currentStore = el.dataset.store;
+    setActiveStoreTab(currentStore);
+    inp.value = ""; lastQ = "";
+    loadStoreStock(currentStore);
+  });
+});
+chipSearch.addEventListener("click", () => setMode("search"));
+chipStores.addEventListener("click", () => setMode("stores"));
+chipBuy.addEventListener("click",    () => setMode("buy"));
+
+async function initRoles() {
+  try {
+    const me = await api("./api/whoami");
+    USER_ROLES = me.roles || [];
+    const isAdmin = USER_ROLES.includes("admin");
+    const isBuyer = USER_ROLES.includes("purchase");
+
+    // Режим редактирования pending — грузим его и открываем корзину
+    if (EDIT_ID) {
+      chipSearch.style.display = "none";
+      chipStores.style.display = "none";
+      chipBuy.style.display    = "";
+      chipBuy.textContent = "✏️ Редактирование";
+      try {
+        const p = await api(`./api/purchase/pending/${encodeURIComponent(EDIT_ID)}`);
+        const editCart = p.items.map(it => ({
+          productId: it.productId, name: it.name, num: it.code,
+          unit: it.unit, unitId: it.unitId, amount: it.amount, price: it.price,
+        }));
+        saveCart(editCart);
+        setPaySrc(p.paymentSource || "", false);   // источник закупщика, аппрувер может поправить
+        setMode("buy");
+        setTimeout(openCart, 300);
+      } catch(e){
+        list.innerHTML = `<div class="error">Не удалось загрузить закуп: ${escapeHtml(e.message)}</div>`;
+      }
+      return;
+    }
+
+    chipSearch.style.display = isAdmin ? "" : "none";
+    chipStores.style.display = isAdmin ? "" : "none";
+    chipBuy.style.display    = (isAdmin || isBuyer) ? "" : "none";
+    if (isBuyer && !isAdmin) setMode("buy");
+    else if (isAdmin) setMode("search");
+    else {
+      list.innerHTML = '<div class="error">Нет доступа</div>';
+    }
+  } catch(e){
+    list.innerHTML = `<div class="error">Ошибка проверки доступа: ${escapeHtml(e.message)}</div>`;
+  }
+}
+initRoles();
+
+let currentStoreItems = null;   // кэш загруженных позиций текущего склада
+let currentStoreName = "";
+
+function renderStoreItems(items) {
+  const totalSum = items.reduce((s,it) => s + it.sum, 0);
+  const header = `<div class="summary">📦 <b>${escapeHtml(currentStoreName)}</b> · ${items.length} позиций · ≈ ${fmtMoney(totalSum)} UZS</div>`;
+  const rows = items.map(it => {
+    const isDel = it.deleted;
+    const isPrep = it.type === "PREPARED";
+    const badges = (isPrep ? '<span class="badge prep">ПФ</span>' : "") +
+                   (isDel  ? '<span class="badge del">удалён</span>' : "");
+    const negCls = it.qty < 0 ? " is-deleted" : "";
+    return `<div class="ingr stock-item${negCls}" data-pid="${escapeHtml(it.productId)}">
+      <div class="ingr-info">
+        <div class="ingr-name">${escapeHtml(it.name)}${badges}</div>
+        <div class="stock-meta">${it.num ? "Арт. " + escapeHtml(it.num) : ""}</div>
+      </div>
+      <div>
+        <div class="stock-qty">${escapeHtml(humanize(it.qty, it.unit))}</div>
+        <div class="stock-sum">${fmtMoney(it.sum)} UZS</div>
+      </div>
+    </div>`;
+  }).join("");
+  list.innerHTML = header + rows;
+  list.querySelectorAll(".stock-item").forEach(el => {
+    el.addEventListener("click", () => openIngredient(el.dataset.pid));
+  });
+}
+
+function filterStoreItems(q) {
+  if (!currentStoreItems) return;
+  const ql = (q || "").toLowerCase().trim();
+  if (!ql) { renderStoreItems(currentStoreItems); return; }
+  const filtered = currentStoreItems.filter(it => {
+    return (it.name || "").toLowerCase().includes(ql) || (it.num || "").toString().includes(ql);
+  });
+  if (!filtered.length) {
+    list.innerHTML = `<div class="placeholder">Ничего не найдено на складе «${escapeHtml(currentStoreName)}»</div>`;
+    return;
+  }
+  renderStoreItems(filtered);
+}
+
+async function loadStoreStock(storeName) {
+  list.innerHTML = '<div class="loading"><div class="spinner"></div>Тянем остатки склада…</div>';
+  currentStoreItems = null;
+  currentStoreName = storeName;
+  inp.value = "";
+  lastQ = "";
+  try {
+    const j = await api(`./api/store-stock?store=${encodeURIComponent(storeName)}`);
+    if (!j.items || !j.items.length) {
+      list.innerHTML = `<div class="placeholder">На складе «${escapeHtml(storeName)}» пусто</div>`;
+      currentStoreItems = [];
+      return;
+    }
+    currentStoreItems = j.items;
+    renderStoreItems(currentStoreItems);
+  } catch(e) {
+    list.innerHTML = `<div class="error">Ошибка: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+</script>
+
+</body>
+</html>

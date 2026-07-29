@@ -46,6 +46,17 @@ ROOM_MAP: dict[str, int] = {
 }
 ROOM_MAP_REV = {v: k for k, v in ROOM_MAP.items()}
 
+# Per-unit Beds24 rooms (Airbnb allows one listing per room, so multi-unit types
+# with several Airbnb listings get one Beds24 room per physical unit).
+# Property.code → Beds24 roomId
+UNIT_ROOM_MAP: dict[str, int] = {
+    "apartment_1": 712009,
+    "apartment_2": 712010,
+    "spa_suite_1": 712011,
+    "spa_suite_2": 712012,
+}
+UNIT_ROOM_MAP_REV = {v: k for k, v in UNIT_ROOM_MAP.items()}
+
 # Statuses that occupy a unit (mirror of the reservations_no_overlap constraint)
 OCCUPYING = [s for s in ReservationStatus
              if s not in (ReservationStatus.CANCELLED, ReservationStatus.NO_SHOW,
@@ -140,14 +151,16 @@ async def _compute_calendar(days: int) -> list[dict]:
     async with aiohttp.ClientSession() as s:
         rate = await get_usd_rate(s)
 
-    # busy count per (type, date)
+    # busy count per (type, date) + exact busy nights per unit (for per-unit rooms)
     busy_count: dict[tuple[str, date], int] = {}
+    busy_unit: set[tuple[int, date]] = set()
     for pid, ci, co in busy:
         t = prop_type[pid]
         d = max(ci, start)
         stop = min(co, end)
         while d < stop:
             busy_count[(t, d)] = busy_count.get((t, d), 0) + 1
+            busy_unit.add((pid, d))
             d += timedelta(days=1)
 
     # admin blocks: resort-wide date ranges + per-(type,date) blocked-unit counts
@@ -161,6 +174,7 @@ async def _compute_calendar(days: int) -> list[dict]:
             stop = min(b.date_to, end - timedelta(days=1))
             while d <= stop:
                 busy_count[(t, d)] = busy_count.get((t, d), 0) + 1
+                busy_unit.add((b.property_id, d))
                 d += timedelta(days=1)
 
     def _closed(d: date) -> bool:
@@ -182,6 +196,32 @@ async def _compute_calendar(days: int) -> list[dict]:
             days_list.append((d, n, p1))
             d += timedelta(days=1)
         # compress consecutive identical (numAvail, price) into ranges
+        cal = []
+        s0 = prev = days_list[0]
+        for cur in days_list[1:]:
+            if cur[1] == prev[1] and cur[2] == prev[2]:
+                prev = cur
+                continue
+            cal.append({"from": s0[0].isoformat(), "to": prev[0].isoformat(),
+                        "numAvail": s0[1], "price1": s0[2]})
+            s0 = prev = cur
+        cal.append({"from": s0[0].isoformat(), "to": prev[0].isoformat(),
+                    "numAvail": s0[1], "price1": s0[2]})
+        payload.append({"roomId": room_id, "calendar": cal})
+
+    # per-unit rooms (Airbnb listings): numAvail 0/1 + that unit's own price
+    code_prop = {p.code: p for p in props}
+    for code, room_id in UNIT_ROOM_MAP.items():
+        p = code_prop.get(code)
+        if p is None:
+            continue
+        days_list = []
+        d = start
+        while d < end:
+            n = 0 if (_closed(d) or (p.id, d) in busy_unit) else 1
+            uzs = float((p.price_weekend if d.weekday() == 5 else p.price_weekday) or 0)
+            days_list.append((d, n, _usd(uzs, rate)))
+            d += timedelta(days=1)
         cal = []
         s0 = prev = days_list[0]
         for cur in days_list[1:]:
@@ -299,11 +339,12 @@ async def _import_booking(b: dict) -> int:
     bid = str(b.get("id") or "")
     room_id = b.get("roomId")
     status = str(b.get("status") or "").lower()
-    if not bid or room_id not in ROOM_MAP_REV:
+    unit_code = UNIT_ROOM_MAP_REV.get(room_id)          # per-unit room (Airbnb)
+    tval = ROOM_MAP_REV.get(room_id)                    # type-level room
+    if not bid or (unit_code is None and tval is None):
         return 0
     arrival = date.fromisoformat(b["arrival"])
     departure = date.fromisoformat(b["departure"])
-    tval = ROOM_MAP_REV[room_id]
     src = _map_source(b)
     guest = " ".join(x for x in (b.get("firstName"), b.get("lastName")) if x).strip() or None
     phone = b.get("phone") or b.get("mobile") or None
@@ -338,20 +379,30 @@ async def _import_booking(b: dict) -> int:
                 return 1
             return 0
 
-        # choose a free unit of this type for the dates
         busy = (
             select(Reservation.property_id)
             .where(Reservation.check_in < departure)
             .where(Reservation.check_out > arrival)
             .where(Reservation.status.in_(OCCUPYING))
         )
-        unit = (await session.execute(
-            select(Property)
-            .where(Property.is_active.is_(True))
-            .where(Property.property_type == PropertyType(tval))
-            .where(Property.id.notin_(busy))
-            .order_by(Property.sort_order)
-        )).scalars().first()
+        if unit_code is not None:
+            # per-unit room: the booking belongs to this exact unit
+            unit = (await session.execute(
+                select(Property)
+                .where(Property.code == unit_code)
+                .where(Property.is_active.is_(True))
+                .where(Property.id.notin_(busy))
+            )).scalars().first()
+            tval = unit.property_type.value if unit else unit_code
+        else:
+            # type-level room: choose any free unit of this type
+            unit = (await session.execute(
+                select(Property)
+                .where(Property.is_active.is_(True))
+                .where(Property.property_type == PropertyType(tval))
+                .where(Property.id.notin_(busy))
+                .order_by(Property.sort_order)
+            )).scalars().first()
 
         rate = _rate_cache["rate"] or CBU_FALLBACK_RATE
         price_usd = float(b.get("price") or 0)
