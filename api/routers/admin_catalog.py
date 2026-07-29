@@ -1,5 +1,6 @@
 """Admin CRUD endpoints for catalog items (properties, services, minibar, staff)."""
 
+from datetime import date
 from decimal import Decimal
 
 import re
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from api.auth import get_current_user, require_admin
+from db.booking_rules import WINDOW_KEY, get_blocked, get_max_date, get_window_months, today_local
 from db.database import get_session
 from db.enums import (
     PROPERTY_TYPE_LABELS,
@@ -19,6 +21,8 @@ from db.enums import (
     ServiceType,
 )
 from db.models import (
+    AppSetting,
+    BlockedPeriod,
     BusinessUnit,
     MinibarItem,
     Property,
@@ -31,6 +35,7 @@ from db.models import (
     StaffMember,
     get_service_type_labels,
 )
+from services.beds24 import kick as beds24_kick  # re-push OTA availability on rule changes
 
 LOCATION_MODES = {"room_only", "room_or_cottage", "cottage_only"}
 
@@ -1043,3 +1048,115 @@ async def update_staff(
     await session.commit()
     await session.refresh(member)
     return _staff_out(member)
+
+
+# ── Booking rules: sales window + blocked (closed) dates ──────────
+# Window: bookings open only `today + N months` ahead (rolling, default 9).
+# Blocks: resort-wide (property_id null) or per-unit; nights date_from..date_to
+# inclusive are unsellable. Both are enforced in public availability + bridge
+# bookings and pushed to OTAs (Beds24 numAvail=0) — beds24_kick() re-syncs.
+
+
+class WindowUpdate(BaseModel):
+    months: int
+
+
+class BlockedCreate(BaseModel):
+    date_from: date
+    date_to: date
+    property_id: int | None = None  # null = whole resort
+    reason: str | None = None
+
+
+class BlockedOut(BaseModel):
+    id: int
+    date_from: date
+    date_to: date
+    property_id: int | None
+    unit_name: str | None
+    unit_code: str | None
+    reason: str | None
+
+
+async def _blocked_out(session: AsyncSession, b: BlockedPeriod) -> BlockedOut:
+    prop = await session.get(Property, b.property_id) if b.property_id else None
+    return BlockedOut(
+        id=b.id, date_from=b.date_from, date_to=b.date_to, property_id=b.property_id,
+        unit_name=(prop.name_ru if prop else None), unit_code=(prop.code if prop else None),
+        reason=b.reason,
+    )
+
+
+@router.get("/booking-rules")
+async def admin_booking_rules(
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    months = await get_window_months(session)
+    blocked = [await _blocked_out(session, b) for b in await get_blocked(session, include_past=True)]
+    blocked.sort(key=lambda b: b.date_from, reverse=True)
+    return {
+        "window_months": months,
+        "max_date": (await get_max_date(session)).isoformat(),
+        "today": today_local().isoformat(),
+        "blocked": blocked,
+    }
+
+
+@router.put("/booking-rules/window")
+async def set_booking_window(
+    data: WindowUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    if not 1 <= data.months <= 24:
+        raise HTTPException(status_code=400, detail="months must be between 1 and 24")
+    row = await session.get(AppSetting, WINDOW_KEY)
+    if row:
+        row.value = str(data.months)
+    else:
+        session.add(AppSetting(key=WINDOW_KEY, value=str(data.months)))
+    await session.commit()
+    beds24_kick()  # close/open the tail of the OTA calendar
+    return {"window_months": data.months, "max_date": (await get_max_date(session)).isoformat()}
+
+
+@router.post("/blocked-dates", response_model=BlockedOut)
+async def create_blocked_period(
+    data: BlockedCreate,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    if data.date_to < data.date_from:
+        raise HTTPException(status_code=400, detail="date_to must be >= date_from")
+    if data.property_id is not None and not await session.get(Property, data.property_id):
+        raise HTTPException(status_code=404, detail="Unit not found")
+    b = BlockedPeriod(
+        date_from=data.date_from, date_to=data.date_to,
+        property_id=data.property_id,
+        reason=(data.reason or "").strip()[:200] or None,
+        created_by=user.get("telegram_id"),
+    )
+    session.add(b)
+    await session.commit()
+    await session.refresh(b)
+    beds24_kick()  # zero these dates on the OTAs
+    return await _blocked_out(session, b)
+
+
+@router.delete("/blocked-dates/{item_id}")
+async def delete_blocked_period(
+    item_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    b = await session.get(BlockedPeriod, item_id)
+    if not b:
+        raise HTTPException(status_code=404, detail="Not found")
+    await session.delete(b)
+    await session.commit()
+    beds24_kick()  # reopen the dates on the OTAs
+    return {"ok": True}

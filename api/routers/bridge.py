@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routers.public import _stay_total
 from bot.config import settings
+from db.booking_rules import validate_stay
 from db.database import get_session
 from db.enums import (
     BusinessUnit,
@@ -112,6 +113,11 @@ async def self_book(
     if not prop:
         raise HTTPException(status_code=404, detail="unit not found")
 
+    # Booking date rules: no past check-ins, sales window, admin-blocked dates.
+    date_err = await validate_stay(session, prop.id, data.check_in, data.check_out)
+    if date_err:
+        return {"ok": False, "error": date_err}
+
     now = datetime.now(timezone.utc)
     total = _stay_total(prop.price_weekday, prop.price_weekend, data.check_in, data.check_out)
     res = Reservation(
@@ -192,6 +198,11 @@ async def web_book(
     ).scalar_one_or_none()
     if not prop:
         raise HTTPException(status_code=404, detail="unit not found")
+
+    # Booking date rules: no past check-ins, sales window, admin-blocked dates.
+    date_err = await validate_stay(session, prop.id, data.check_in, data.check_out)
+    if date_err:
+        return {"ok": False, "error": date_err}
 
     now = datetime.now(timezone.utc)
     total = _stay_total(prop.price_weekday, prop.price_weekend, data.check_in, data.check_out)

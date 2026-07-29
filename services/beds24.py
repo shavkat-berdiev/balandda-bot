@@ -108,7 +108,14 @@ def _usd(uzs: float, rate: float) -> int:
 
 # ── availability + price computation (single source: our DB) ───────────────
 async def _compute_calendar(days: int) -> list[dict]:
-    """Per Beds24 room: compressed [{from,to,numAvail,price1}] for the next `days`."""
+    """Per Beds24 room: compressed [{from,to,numAvail,price1}] for the next `days`.
+
+    Booking rules applied here so OTAs always match the direct channels:
+    numAvail=0 beyond the rolling sales window and on admin-blocked dates
+    (resort-wide zeroes every room; a unit block reduces its type's count).
+    """
+    from db.booking_rules import get_blocked, get_max_date
+
     start = date.today()
     end = start + timedelta(days=days)
 
@@ -127,6 +134,9 @@ async def _compute_calendar(days: int) -> list[dict]:
             .where(Reservation.property_id.in_(list(prop_type.keys())))
         )).all()
 
+        max_open = await get_max_date(session)          # last sellable date
+        blocks = await get_blocked(session)             # admin closures
+
     async with aiohttp.ClientSession() as s:
         rate = await get_usd_rate(s)
 
@@ -140,6 +150,22 @@ async def _compute_calendar(days: int) -> list[dict]:
             busy_count[(t, d)] = busy_count.get((t, d), 0) + 1
             d += timedelta(days=1)
 
+    # admin blocks: resort-wide date ranges + per-(type,date) blocked-unit counts
+    resort_blocks: list[tuple[date, date]] = []
+    for b in blocks:
+        if b.property_id is None:
+            resort_blocks.append((b.date_from, b.date_to))
+        elif b.property_id in prop_type:
+            t = prop_type[b.property_id]
+            d = max(b.date_from, start)
+            stop = min(b.date_to, end - timedelta(days=1))
+            while d <= stop:
+                busy_count[(t, d)] = busy_count.get((t, d), 0) + 1
+                d += timedelta(days=1)
+
+    def _closed(d: date) -> bool:
+        return d > max_open or any(f <= d <= t for f, t in resort_blocks)
+
     payload = []
     for tval, room_id in ROOM_MAP.items():
         units = [p for p in props if p.property_type.value == tval]
@@ -151,7 +177,7 @@ async def _compute_calendar(days: int) -> list[dict]:
         days_list = []
         d = start
         while d < end:
-            n = max(0, total - busy_count.get((tval, d), 0))
+            n = 0 if _closed(d) else max(0, total - busy_count.get((tval, d), 0))
             p1 = price_we if d.weekday() == 5 else price_wd  # Saturday = weekend rate
             days_list.append((d, n, p1))
             d += timedelta(days=1)

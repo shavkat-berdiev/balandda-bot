@@ -115,6 +115,12 @@ export const api = {
   getTypeLabels: () => request('/admin/type-labels'),
   updateTypeLabel: (type, data) => request(`/admin/type-labels/${type}`, { method: 'PUT', body: JSON.stringify(data) }),
 
+  // Admin — Booking rules (sales window + blocked dates)
+  getBookingRules: () => request('/admin/booking-rules'),
+  setBookingWindow: (months) => request('/admin/booking-rules/window', { method: 'PUT', body: JSON.stringify({ months }) }),
+  createBlockedDate: (data) => request('/admin/blocked-dates', { method: 'POST', body: JSON.stringify(data) }),
+  deleteBlockedDate: (id) => request(`/admin/blocked-dates/${id}`, { method: 'DELETE' }),
+
   // Admin — Service types (the «Тип» dropdown, editable)
   getAdminServiceTypes: () => request('/admin/service-types'),
   createAdminServiceType: (data) => request('/admin/service-types', { method: 'POST', body: JSON.stringify(data) }),

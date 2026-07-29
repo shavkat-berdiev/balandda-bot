@@ -17,6 +17,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from bot.config import settings
+from db.booking_rules import (
+    get_blocked,
+    get_max_date,
+    get_window_months,
+    today_local,
+    validate_stay,
+)
 from db.database import get_session
 from db.enums import PROPERTY_TYPE_LABELS, PropertyType, ReservationStatus
 from db.models import (
@@ -214,6 +221,46 @@ def _stay_total(price_weekday, price_weekend, ci: date, co: date) -> int:
     return int(round(total))
 
 
+@router.get("/booking-rules")
+async def public_booking_rules(
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+):
+    """Date rules for booking calendars (site / bots): sales window + closed dates.
+
+    `blocked` lists RESORT-WIDE closures only (grey them out in every calendar).
+    Unit-level maintenance blocks are in `blocked_units` for information; they
+    are enforced through /availability and the booking endpoints, because other
+    units of the same type may still be free on those dates.
+    """
+    months = await get_window_months(session)
+    max_date = await get_max_date(session)
+    rows = await get_blocked(session)
+
+    blocked, blocked_units = [], []
+    for b in rows:
+        item = {"from": b.date_from.isoformat(), "to": b.date_to.isoformat()}
+        if b.reason:
+            item["reason"] = b.reason
+        if b.property_id is None:
+            blocked.append(item)
+        else:
+            prop = await session.get(Property, b.property_id)
+            if prop:
+                item["unit"] = prop.code
+                item["unit_name"] = prop.name_ru
+            blocked_units.append(item)
+
+    response.headers["Cache-Control"] = "public, max-age=300"
+    return {
+        "today": today_local().isoformat(),
+        "window_months": months,
+        "max_date": max_date.isoformat(),
+        "blocked": blocked,
+        "blocked_units": blocked_units,
+    }
+
+
 @router.get("/availability")
 async def public_availability(
     check_in: date,
@@ -223,11 +270,17 @@ async def public_availability(
 ):
     """Units free for the whole [check_in, check_out) range, with the stay price.
 
-    A unit is unavailable if any non-cancelled reservation overlaps the range.
+    A unit is unavailable if any non-cancelled reservation overlaps the range,
+    or if the dates break the booking rules (past / beyond the sales window /
+    admin-blocked) — error codes shared with the website: dates_invalid,
+    dates_past, dates_window, dates_blocked.
     """
-    if check_out <= check_in:
-        return {"error": "check_out must be after check_in",
-                "nights": 0, "available_units": [], "available_types": []}
+    err = await validate_stay(session, None, check_in, check_out)
+    # validate_stay(None) flags resort-wide blocks; unit-level blocks filter units below.
+    if err:
+        return {"error": err, "nights": 0, "available_units": [], "available_types": []}
+
+    unit_blocks = [b for b in await get_blocked(session) if b.property_id is not None]
 
     busy = (
         select(Reservation.property_id)
@@ -250,6 +303,10 @@ async def public_availability(
     nights = (check_out - check_in).days
     units = []
     for p in rows:
+        # unit under a maintenance block for these dates → not offered
+        if any(b.property_id == p.id and check_in <= b.date_to and check_out > b.date_from
+               for b in unit_blocks):
+            continue
         total = _stay_total(p.price_weekday, p.price_weekend, check_in, check_out)
         lbl = labels.get(p.property_type.value, {})
         units.append({

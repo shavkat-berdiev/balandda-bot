@@ -776,3 +776,45 @@ class CardTransaction(Base):
     matched_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     match_note: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AppSetting(Base):
+    """Tiny key-value store for admin-editable settings.
+
+    Currently used for the booking sales window (`booking_window_months`,
+    default 9): how many months ahead new bookings are open, everywhere
+    (site / bots / OTAs via Beds24). Managed in the dashboard.
+    """
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(50), primary_key=True)
+    value: Mapped[str] = mapped_column(String(200))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class BlockedPeriod(Base):
+    """Dates closed for NEW bookings — sales stop, not a reservation.
+
+    property_id NULL  → resort-wide (e.g. New Year until prices are set)
+    property_id set   → one unit only (e.g. Шале №4 maintenance)
+
+    date_from..date_to are INCLUSIVE and denote the NIGHTS that cannot be
+    sold: a stay is rejected when any of its nights [check_in, check_out)
+    falls inside a block. Existing reservations are untouched. Enforced in
+    public availability + bridge bookings and pushed to OTAs as numAvail=0.
+    """
+    __tablename__ = "blocked_periods"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    property_id: Mapped[int | None] = mapped_column(
+        ForeignKey("properties.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    date_from: Mapped[date] = mapped_column(Date, index=True)
+    date_to: Mapped[date] = mapped_column(Date)
+    reason: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    property: Mapped["Property"] = relationship()
