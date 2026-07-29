@@ -110,6 +110,23 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
 
   const isOwner = useMemo(() => (currentUser().role || '').toUpperCase() === 'OWNER', []);
 
+  // Admin-closed sale dates («Закрытые даты»): shaded in the grid; creating a booking
+  // on them asks for confirmation (operators may still book, e.g. NY specials by phone).
+  const [saleBlocks, setSaleBlocks] = useState({ resort: [], units: {} });
+  useEffect(() => {
+    if (businessUnit !== 'RESORT') return; // pool calendar is not affected by resort closures
+    fetch('/api/v1/public/booking-rules').then((r) => (r.ok ? r.json() : null)).then((j) => {
+      if (!j) return;
+      const byUnit = {};
+      (j.blocked_units || []).forEach((b) => { if (b.unit) (byUnit[b.unit] = byUnit[b.unit] || []).push(b); });
+      setSaleBlocks({ resort: j.blocked || [], units: byUnit });
+    }).catch(() => {});
+  }, [businessUnit]);
+  const saleBlockFor = useCallback((unit, dstr) => {
+    const hit = (b) => b.from <= dstr && dstr <= b.to;
+    return saleBlocks.resort.find(hit) || (unit && (saleBlocks.units[unit.code] || []).find(hit)) || null;
+  }, [saleBlocks]);
+
   const days = useMemo(
     () => Array.from({ length: span }, (_, i) => addDays(start, i)),
     [start, span]
@@ -299,6 +316,15 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
     if (!form.check_out || form.check_out <= form.check_in) {
       alert('Дата выезда должна быть позже даты заезда.');
       return;
+    }
+    // Closed sale dates: warn, but let the operator proceed deliberately.
+    if (businessUnit === 'RESORT') {
+      const u = units.find((x) => x.id === Number(form.property_id));
+      let hit = null;
+      for (let d = new Date(form.check_in + 'T00:00:00'); ymd(d) < form.check_out && !hit; d.setDate(d.getDate() + 1)) {
+        hit = saleBlockFor(u, ymd(d));
+      }
+      if (hit && !confirm(`Эти даты закрыты для онлайн-продажи${hit.reason ? ` (${hit.reason})` : ''}. Всё равно создать бронь?`)) return;
     }
     try {
       const body = {
@@ -511,6 +537,9 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
         <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-orange-300" />Долг</span>
         <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-gray-400" />Блок</span>
         <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-gray-100 border border-gray-200" />Истекло</span>
+        {businessUnit === 'RESORT' && (
+          <span className="flex items-center gap-1.5"><span className="inline-block w-3 h-3 rounded bg-gray-300" />🔒 Закрыто для продажи</span>
+        )}
       </div>
 
       {loading ? (
@@ -525,9 +554,11 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
                   const isSat = d.getDay() === 6;
                   const isToday = ymd(d) === ymd(today);
                   const mon = MONTHS_SHORT[d.getMonth()];
+                  const blk = businessUnit === 'RESORT' ? saleBlockFor(null, ymd(d)) : null;
                   return (
-                    <th key={ymd(d)} className={`border-b border-gray-200 px-1 py-2 text-center font-medium min-w-[72px] ${isToday ? 'bg-blue-50 text-blue-700' : isSat ? 'bg-rose-50 text-rose-600' : 'text-gray-500'}`}>
-                      <div className="text-[10px] leading-none">{isToday ? 'сегодня' : dow[d.getDay()]}</div>
+                    <th key={ymd(d)} title={blk ? `Закрыто для продажи${blk.reason ? ': ' + blk.reason : ''}` : undefined}
+                      className={`border-b border-gray-200 px-1 py-2 text-center font-medium min-w-[72px] ${isToday ? 'bg-blue-50 text-blue-700' : blk ? 'bg-gray-200 text-gray-500' : isSat ? 'bg-rose-50 text-rose-600' : 'text-gray-500'}`}>
+                      <div className="text-[10px] leading-none">{isToday ? 'сегодня' : blk ? '🔒 ' + dow[d.getDay()] : dow[d.getDay()]}</div>
                       <div>{String(d.getDate()).padStart(2, '0')}<span className="text-[10px] font-normal">, {mon.charAt(0).toUpperCase() + mon.slice(1)}</span></div>
                     </th>
                   );
@@ -536,7 +567,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
             </thead>
             <tbody>
               {units.map((u) => (
-                <UnitRow key={u.id} unit={u} days={days} byCell={byCell} onOpen={openNew} onDetail={setDetail} todayStr={ymd(today)} />
+                <UnitRow key={u.id} unit={u} days={days} byCell={byCell} onOpen={openNew} onDetail={setDetail} todayStr={ymd(today)} saleBlockFor={businessUnit === 'RESORT' ? saleBlockFor : null} />
               ))}
               {units.length === 0 && (
                 <tr><td colSpan={days.length + 1} className="px-3 py-8 text-center text-gray-400">Нет объектов</td></tr>
@@ -885,7 +916,7 @@ function shortName(n) {
     .trim();
 }
 
-function UnitRow({ unit, days, byCell, onOpen, onDetail, todayStr }) {
+function UnitRow({ unit, days, byCell, onOpen, onDetail, todayStr, saleBlockFor }) {
   const cells = [];
   let i = 0;
   while (i < days.length) {
@@ -913,9 +944,12 @@ function UnitRow({ unit, days, byCell, onOpen, onDetail, todayStr }) {
       i += len;
     } else {
       const isSat = d.getDay() === 6;
+      const blk = saleBlockFor ? saleBlockFor(unit, ymd(d)) : null;
       cells.push(
-        <td key={ymd(d)} className={`border-b border-gray-100 p-0 ${isSat ? 'bg-rose-50/40' : ''}`}>
-          <button onClick={() => onOpen(unit, d)} className="w-full h-12 hover:bg-blue-100 transition-colors" />
+        <td key={ymd(d)} className={`border-b border-gray-100 p-0 ${blk ? 'bg-gray-200/80' : isSat ? 'bg-rose-50/40' : ''}`}>
+          <button onClick={() => onOpen(unit, d)}
+            title={blk ? `🔒 Закрыто для продажи${blk.reason ? ': ' + blk.reason : ''} — бронь создастся только после подтверждения` : undefined}
+            className="w-full h-12 hover:bg-blue-100 transition-colors" />
         </td>
       );
       i += 1;
