@@ -1,7 +1,7 @@
 """Daily auto-report sender — sends summary at 21:00 Tashkent time."""
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -194,6 +194,120 @@ async def send_balance_reminders(bot: Bot):
             logger.error(f"Balance reminder failed for {u.telegram_id}: {e}")
 
 
+# ────────────────────────────────────────────────────────────────────────
+# UNACCEPTED TRANSFERS DIGEST  (added 2026-08)
+# ────────────────────────────────────────────────────────────────────────
+
+# A transfer sits PENDING until the receiver taps ✅. PENDING deducts from the
+# sender and credits nobody, so the cash is frozen — invisible on both balances
+# and easy to forget. Azizov quietly accumulated 38 of them (357.6M UZS over four
+# months) before anyone noticed, which is what this digest exists to prevent.
+#
+# Only transfers older than STALE_AFTER_DAYS are listed, so a normal same-day
+# hand-off never shows up as a problem.
+STALE_AFTER_DAYS = 2
+
+
+async def build_pending_transfers_digest() -> str | None:
+    """Employee transfers still unaccepted after STALE_AFTER_DAYS.
+
+    Returns None when there is nothing to report — the caller stays silent
+    rather than posting "all clear" into the group every night.
+    """
+    from db.enums import WalletTransactionStatus, WalletTransactionType
+    from db.models import WalletTransaction
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=STALE_AFTER_DAYS)
+
+    async with async_session() as session:
+        rows = (await session.execute(
+            select(WalletTransaction)
+            .where(
+                WalletTransaction.status == WalletTransactionStatus.PENDING,
+                WalletTransaction.transaction_type.in_([
+                    WalletTransactionType.TRANSFER_TO_EMPLOYEE,
+                    WalletTransactionType.TRANSFER_TO_SHAVKAT,
+                ]),
+                WalletTransaction.created_at < cutoff,
+            )
+            .order_by(WalletTransaction.created_at)
+        )).scalars().all()
+
+        if not rows:
+            return None
+
+        ids = {t.receiver_telegram_id for t in rows} | {t.sender_telegram_id for t in rows}
+        ids.discard(None)
+        names = {
+            u.telegram_id: u.full_name
+            for u in (await session.execute(
+                select(User).where(User.telegram_id.in_(ids))
+            )).scalars().all()
+        }
+
+    by_receiver: dict[int, list] = {}
+    for t in rows:
+        by_receiver.setdefault(t.receiver_telegram_id, []).append(t)
+
+    today = date.today()
+    grand = sum(float(t.amount) for t in rows)
+
+    lines = [
+        "⏳ <b>Непринятые переводы</b>",
+        f"Не подтверждены дольше {STALE_AFTER_DAYS} дн. — деньги «заморожены»: "
+        f"списаны у отправителя, никому не зачислены.",
+        "",
+    ]
+
+    # Worst offender first
+    for rid, txs in sorted(by_receiver.items(), key=lambda kv: -sum(float(t.amount) for t in kv[1])):
+        total = sum(float(t.amount) for t in txs)
+        oldest = min((t.created_at.date() for t in txs if t.created_at), default=None)
+        age = f", самый старый {(today - oldest).days} дн." if oldest else ""
+        lines.append(f"👤 <b>{names.get(rid, '?')}</b> — {len(txs)} шт. на "
+                     f"<b>{format_amount(total)}</b> UZS{age}")
+
+        # Newest few per person; the rest are rolled up so the message stays readable
+        for t in sorted(txs, key=lambda x: x.created_at or datetime.min.replace(tzinfo=timezone.utc),
+                        reverse=True)[:5]:
+            d = t.created_at.strftime("%d.%m") if t.created_at else "—"
+            days = (today - t.created_at.date()).days if t.created_at else 0
+            lines.append(f"   · {d} от {names.get(t.sender_telegram_id, '?')} — "
+                         f"{format_amount(float(t.amount))} ({days} дн.)")
+        if len(txs) > 5:
+            rest = sum(float(t.amount) for t in sorted(
+                txs, key=lambda x: x.created_at or datetime.min.replace(tzinfo=timezone.utc),
+                reverse=True)[5:])
+            lines.append(f"   · … и ещё {len(txs) - 5} на {format_amount(rest)}")
+        lines.append("")
+
+    lines.append(f"💰 <b>Итого заморожено: {format_amount(grand)} UZS</b>")
+    lines.append("")
+    lines.append("Получателю: «Кошелёк» → «📥 Входящие» — принять или отклонить.")
+    return "\n".join(lines)
+
+
+async def send_pending_transfers_digest(bot: Bot):
+    """Post the digest into the Инкассация topic of the reporting group."""
+    from bot.notifications import CAT_INKASSATSIYA, notify_owners, send_via_route
+
+    try:
+        text = await build_pending_transfers_digest()
+        if text is None:
+            logger.info("No stale pending transfers — digest skipped")
+            return
+
+        if await send_via_route(bot, CAT_INKASSATSIYA, text):
+            logger.info("Pending-transfers digest sent to the Инкассация topic")
+            return
+
+        # Not bound to a topic yet — fall back to owner DMs so it is never lost.
+        logger.warning("CAT_INKASSATSIYA not bound to a topic; sending digest to owners")
+        notify_owners(bot, text, category=None)
+    except Exception as e:
+        logger.error(f"Pending-transfers digest failed: {e}", exc_info=True)
+
+
 async def _safe_send(bot: Bot, chat_id: int, text: str) -> None:
     try:
         await bot.send_message(chat_id, text)
@@ -295,6 +409,21 @@ def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
         args=[bot],
         id="balance_reminders",
         name="Balance Reminders",
+        replace_existing=True,
+    )
+
+    # Frozen cash: transfers nobody accepted. A few minutes after the daily report
+    # so the two posts don't race each other into the group.
+    scheduler.add_job(
+        send_pending_transfers_digest,
+        CronTrigger(
+            hour=settings.daily_report_hour,
+            minute=(settings.daily_report_minute + 5) % 60,
+            timezone=settings.timezone,
+        ),
+        args=[bot],
+        id="pending_transfers_digest",
+        name="Unaccepted transfers digest",
         replace_existing=True,
     )
 
