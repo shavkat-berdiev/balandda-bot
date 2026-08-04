@@ -180,6 +180,11 @@ export const api = {
   // Admin — Minibar / Mini shop (two sections of the same catalog)
   getAdminMinibar: (section) => request(`/admin/minibar${section ? `?section=${section}` : ''}`),
   getMinishopSeller: () => request('/admin/minishop/seller'),
+  // Unwind a transfer accepted by the wrong person — both wallets settle at once.
+  reverseWalletTransfer: (txId, reason) =>
+    request(`/wallets/transactions/${txId}/reverse`, {
+      method: 'POST', body: JSON.stringify({ reason: reason || null }),
+    }),
   setMinishopSeller: (telegram_id) =>
     request('/admin/minishop/seller', { method: 'PUT', body: JSON.stringify({ telegram_id }) }),
   createAdminMinibar: (data) => request('/admin/minibar', { method: 'POST', body: JSON.stringify(data) }),

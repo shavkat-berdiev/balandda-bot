@@ -96,6 +96,22 @@ export default function Wallets() {
     catch (e) { alert(e.message || 'Ошибка'); }
   }
 
+  // A transfer accepted by the wrong person. Flipping it to REVERSED drops it out
+  // of both balance formulas at once, so the sender gets the money back and the
+  // wrong receiver loses it in one step. The receiver can also do this themselves
+  // from the bot («Вернуть ошибочный перевод»).
+  async function reverseTx(tx) {
+    if (!window.confirm(
+      `Вернуть перевод ${formatAmount(tx.amount)} UZS отправителю ${tx.sender_name}?\n\n` +
+      `Деньги спишутся с ${tx.receiver_name} и вернутся к ${tx.sender_name}.`
+    )) return;
+    try {
+      await api.reverseWalletTransfer(tx.id);
+      await loadTransactions();
+      await loadData();
+    } catch (e) { alert(e.message || 'Ошибка'); }
+  }
+
   async function resetAll() {
     if (!window.confirm('Обнулить балансы ВСЕХ сотрудников? Будут созданы корректировки.')) return;
     try { const r = await api.resetAllWallets(); await loadData(); alert(`Обнулено кошельков: ${r.reset}`); }
@@ -252,16 +268,29 @@ export default function Wallets() {
                         {formatAmount(tx.amount)} UZS
                       </td>
                       <td className="px-6 py-3">
-                        <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
-                          tx.status === 'COMPLETED' ? 'bg-green-100 text-green-800' :
-                          tx.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
-                          tx.status === 'CANCELLED' ? 'bg-red-100 text-red-800' :
-                          'bg-green-100 text-green-800'
-                        }`}>
-                          {tx.status === 'COMPLETED' ? '✅' :
-                           tx.status === 'PENDING' ? '⏳' :
-                           tx.status === 'CANCELLED' ? '❌' : '✅'}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className={`inline-flex px-2 py-0.5 rounded-full text-xs font-medium ${
+                            tx.status === 'COMPLETED' ? 'bg-green-100 text-green-800' :
+                            tx.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' :
+                            tx.status === 'CANCELLED' ? 'bg-red-100 text-red-800' :
+                            tx.status === 'REVERSED' ? 'bg-orange-100 text-orange-800' :
+                            'bg-green-100 text-green-800'
+                          }`} title={tx.status_label || tx.status}>
+                            {tx.status === 'COMPLETED' ? '✅' :
+                             tx.status === 'PENDING' ? '⏳' :
+                             tx.status === 'CANCELLED' ? '❌' :
+                             tx.status === 'REVERSED' ? '↩️' : '✅'}
+                          </span>
+                          {tx.reversible && (
+                            <button
+                              onClick={() => reverseTx(tx)}
+                              className="text-xs text-orange-700 hover:text-orange-900 hover:underline whitespace-nowrap"
+                              title="Перевод ушёл не тому человеку — вернуть отправителю"
+                            >
+                              ↩️ Вернуть
+                            </button>
+                          )}
+                        </div>
                       </td>
                       <td className="px-6 py-3 text-gray-500 max-w-[200px] truncate">
                         {tx.note || ''}

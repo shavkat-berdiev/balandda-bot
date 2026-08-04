@@ -24,7 +24,7 @@ from sqlalchemy.orm import selectinload
 
 from bot.keyboards.main import main_menu_keyboard
 from bot.locales import get_text
-from bot.notifications import notify_income_entry, notify_report_submitted
+from bot.notifications import notify_entry_corrected, notify_income_entry, notify_report_submitted
 from db.database import async_session
 from db.enums import (
     BusinessUnit,
@@ -78,6 +78,7 @@ class NewReportStates(StatesGroup):
     choosing_service_master = State()
     choosing_minibar = State()
     choosing_minishop = State()
+    choosing_correction = State()
     choosing_restaurant_category = State()
     entering_payment = State()
     entering_amount = State()
@@ -86,6 +87,7 @@ class NewReportStates(StatesGroup):
     entering_days = State()
     entering_minibar_qty = State()
     entering_minishop_qty = State()
+    entering_correction_amount = State()
     entering_restaurant_note = State()
     confirming_entry = State()
 
@@ -99,8 +101,15 @@ async def get_user(telegram_id: int) -> User | None:
         return result.scalar_one_or_none()
 
 
-async def _auto_wallet_cash_in(session, telegram_id: int, amount: Decimal, report_id: int, business_unit):
-    """Auto-create a CASH_IN wallet transaction when cash income is recorded."""
+async def _auto_wallet_cash_in(session, telegram_id: int, amount: Decimal, report_id: int,
+                               business_unit, entry=None):
+    """Auto-create a CASH_IN wallet transaction when cash income is recorded.
+
+    When `entry` is passed, the income row remembers which wallet transaction it
+    produced (`wallet_tx_id`). services/entry_corrections.py needs that to reverse
+    the RIGHT wallet later — for a Mini shop sale the cash belongs to the configured
+    seller, not to whoever typed it in.
+    """
     bu = BusinessUnit(business_unit) if business_unit else None
     tx = WalletTransaction(
         sender_telegram_id=telegram_id,
@@ -110,6 +119,10 @@ async def _auto_wallet_cash_in(session, telegram_id: int, amount: Decimal, repor
         business_unit=bu,
     )
     session.add(tx)
+    if entry is not None:
+        await session.flush()      # assign tx.id / entry.id before linking
+        entry.wallet_tx_id = tx.id
+    return tx
 
 
 async def get_or_create_draft_report(user_id: int, report_date: date, business_unit) -> StructuredReport:
@@ -163,6 +176,7 @@ async def build_report_action_menu(lang: str, business_unit: str = "RESORT") -> 
         buttons = [
             [InlineKeyboardButton(text="💰 Доход", callback_data="rpt:add_restaurant_income")],
             [InlineKeyboardButton(text="💸 Расход", callback_data="rpt:add_expense")],
+            [InlineKeyboardButton(text="✏️ Исправить запись", callback_data="rpt:fix")],
             [InlineKeyboardButton(text="👁 Предпросмотр", callback_data="rpt:preview")],
             [InlineKeyboardButton(text="✅ Завершить отчёт", callback_data="rpt:finalize")],
             [InlineKeyboardButton(text=f"❌ {get_text('btn_cancel', lang)}", callback_data="rpt:cancel")],
@@ -174,6 +188,7 @@ async def build_report_action_menu(lang: str, business_unit: str = "RESORT") -> 
             [InlineKeyboardButton(text="🍹 Мини бар", callback_data="rpt:add_minibar")],
             [InlineKeyboardButton(text="🛒 Мини шоп", callback_data="rpt:add_minishop")],
             [InlineKeyboardButton(text="💸 Расход", callback_data="rpt:add_expense")],
+            [InlineKeyboardButton(text="✏️ Исправить запись", callback_data="rpt:fix")],
             [InlineKeyboardButton(text="👁 Предпросмотр", callback_data="rpt:preview")],
             [InlineKeyboardButton(text="✅ Завершить отчёт", callback_data="rpt:finalize")],
             [InlineKeyboardButton(text=f"❌ {get_text('btn_cancel', lang)}", callback_data="rpt:cancel")],
@@ -832,7 +847,7 @@ async def on_accommodation_confirm(callback: types.CallbackQuery, state: FSMCont
             await _auto_wallet_cash_in(
                 session, callback.from_user.id,
                 Decimal(data["amount"]), report_id,
-                data.get("business_unit"),
+                data.get("business_unit"), entry=entry,
             )
 
         # Record this accommodation payment in the linked booking's change log
@@ -1035,7 +1050,7 @@ async def on_restaurant_income_confirm(callback: types.CallbackQuery, state: FSM
             await _auto_wallet_cash_in(
                 session, callback.from_user.id,
                 Decimal(data["amount"]), report_id,
-                data.get("business_unit"),
+                data.get("business_unit"), entry=entry,
             )
 
         await session.commit()
@@ -1555,7 +1570,7 @@ async def on_minibar_confirm(callback: types.CallbackQuery, state: FSMContext):
             await _auto_wallet_cash_in(
                 session, callback.from_user.id,
                 Decimal(data["amount"]), report_id,
-                data.get("business_unit"),
+                data.get("business_unit"), entry=entry,
             )
 
         await session.commit()
@@ -1757,13 +1772,14 @@ async def on_minishop_confirm(callback: types.CallbackQuery, state: FSMContext):
     amount = Decimal(data["amount"])
 
     async with async_session() as session:
-        session.add(IncomeEntry(
+        entry = IncomeEntry(
             report_id=report_id,
             minibar_item_id=data["current_minibar"],
             payment_method=PaymentMethod.CASH,
             amount=amount,
             quantity=data.get("quantity", 1),
-        ))
+        )
+        session.add(entry)
 
         report = await session.get(StructuredReport, report_id)
         if report:
@@ -1773,7 +1789,7 @@ async def on_minishop_confirm(callback: types.CallbackQuery, state: FSMContext):
         # Hard-locked: the seller's wallet, not the recorder's.
         seller_id = await _minishop_seller_telegram_id(session, callback.from_user.id)
         await _auto_wallet_cash_in(
-            session, seller_id, amount, report_id, data.get("business_unit"),
+            session, seller_id, amount, report_id, data.get("business_unit"), entry=entry,
         )
 
         await session.commit()
@@ -1795,6 +1811,233 @@ async def on_minishop_confirm(callback: types.CallbackQuery, state: FSMContext):
         "✅ Товар добавлен\n\nВыберите действие:",
         reply_markup=keyboard,
     )
+    await callback.answer()
+
+
+# ────────────────────────────────────────────────────────────────────────
+# CORRECTIONS  (added 2026-08)
+#
+# Staff can fix their own mistyped entries while the report is still a DRAFT.
+# Once finalised, only the owner can (via the dashboard). Every change goes
+# through services/entry_corrections so the wallet gets a matching ADJUSTMENT —
+# see that module for why this exists (the «возвраты» workaround cost 22.68M).
+# ────────────────────────────────────────────────────────────────────────
+
+
+def _fmt_entry_button(icon: str, label: str, amount) -> str:
+    text = f"{icon} {label} — {format_amount(amount)}"
+    return text[:60]
+
+
+async def _load_correctable(report_id: int):
+    """Income + expense rows of a report, newest first, with display labels."""
+    from services.entry_corrections import _income_label
+
+    rows = []
+    async with async_session() as session:
+        inc = (await session.execute(
+            select(IncomeEntry).where(IncomeEntry.report_id == report_id).order_by(IncomeEntry.id.desc())
+        )).scalars().all()
+        for e in inc:
+            rows.append(("i", e.id, await _income_label(session, e), e.amount))
+
+        exp = (await session.execute(
+            select(ExpenseEntry).where(ExpenseEntry.report_id == report_id).order_by(ExpenseEntry.id.desc())
+        )).scalars().all()
+        for e in exp:
+            cat = EXPENSE_CATEGORY_LABELS.get(e.expense_category, e.expense_category.value)
+            rows.append(("e", e.id, e.description or cat, e.amount))
+    return rows
+
+
+@router.callback_query(F.data == "rpt:fix", NewReportStates.choosing_action)
+async def on_fix_menu(callback: types.CallbackQuery, state: FSMContext):
+    """List the entries of the current draft report so one can be corrected."""
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+    report_id = data.get("report_id")
+
+    rows = await _load_correctable(report_id) if report_id else []
+    if not rows:
+        await callback.answer("В этом отчёте пока нет записей", show_alert=True)
+        return
+
+    buttons = [
+        [InlineKeyboardButton(
+            text=_fmt_entry_button("📈" if kind == "i" else "📉", label, amount),
+            callback_data=f"fix:{kind}:{eid}",
+        )]
+        for kind, eid, label, amount in rows[:25]
+    ]
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="rpt:back")])
+
+    await state.set_state(NewReportStates.choosing_correction)
+    await callback.message.edit_text(
+        "✏️ <b>Исправить запись</b>\n\nВыберите запись, которую нужно поправить:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("fix:"), NewReportStates.choosing_correction)
+async def on_fix_selected(callback: types.CallbackQuery, state: FSMContext):
+    """Offer edit-amount / delete for the chosen entry."""
+    _, kind, eid = callback.data.split(":")
+    eid = int(eid)
+
+    async with async_session() as session:
+        if kind == "i":
+            from services.entry_corrections import _income_label
+            entry = await session.get(IncomeEntry, eid)
+            label = await _income_label(session, entry) if entry else "?"
+        else:
+            entry = await session.get(ExpenseEntry, eid)
+            label = (entry.description if entry else None) or "Расход"
+
+    if entry is None:
+        await callback.answer("Запись не найдена", show_alert=True)
+        return
+
+    await state.update_data(fix_kind=kind, fix_id=eid, fix_label=label,
+                            fix_amount=str(entry.amount))
+
+    buttons = [
+        [InlineKeyboardButton(text="✏️ Изменить сумму", callback_data="fixact:amount")],
+        [InlineKeyboardButton(text="🗑 Удалить запись", callback_data="fixact:delete")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="rpt:fix_back")],
+    ]
+
+    await callback.message.edit_text(
+        f"{'📈' if kind == 'i' else '📉'} <b>{label}</b>\n"
+        f"Текущая сумма: <b>{format_amount(entry.amount)}</b> UZS\n\n"
+        f"Что сделать?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "rpt:fix_back", NewReportStates.choosing_correction)
+async def on_fix_back(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(NewReportStates.choosing_action)
+    await on_fix_menu(callback, state)
+
+
+@router.callback_query(F.data == "fixact:amount", NewReportStates.choosing_correction)
+async def on_fix_amount_prompt(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    await state.set_state(NewReportStates.entering_correction_amount)
+    await callback.message.edit_text(
+        f"✏️ <b>{data.get('fix_label')}</b>\n"
+        f"Было: {format_amount(Decimal(data.get('fix_amount', '0')))} UZS\n\n"
+        f"Введите правильную сумму:",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+async def _apply_correction(message_or_cb, state: FSMContext, *, new_amount, delete: bool):
+    """Run the correction through the service and report the outcome."""
+    from services.entry_corrections import (
+        CorrectionError, correct_expense_entry, correct_income_entry,
+    )
+
+    data = await state.get_data()
+    kind = data.get("fix_kind")
+    eid = data.get("fix_id")
+    lang = data.get("lang", "ru")
+    actor_id = message_or_cb.from_user.id
+
+    is_privileged = False
+    user = await get_user(actor_id)
+    if user and (user.role.value if hasattr(user.role, "value") else str(user.role)).upper() in ("OWNER", "ADMIN"):
+        is_privileged = True
+
+    send = (message_or_cb.answer if isinstance(message_or_cb, types.Message)
+            else message_or_cb.message.answer)
+
+    async with async_session() as session:
+        try:
+            fn = correct_income_entry if kind == "i" else correct_expense_entry
+            kwargs = dict(actor_telegram_id=actor_id, is_privileged=is_privileged,
+                          delete=delete, reason="правка сотрудником")
+            if not delete:
+                kwargs["new_amount"] = new_amount
+            res = await fn(session, eid, **kwargs)
+            await session.commit()
+        except CorrectionError as e:
+            await session.rollback()
+            await send(f"❌ {e}")
+            return None
+
+        owner_name = None
+        if res.wallet_owner:
+            wu = (await session.execute(
+                select(User).where(User.telegram_id == res.wallet_owner)
+            )).scalar_one_or_none()
+            owner_name = wu.full_name if wu else None
+
+    await notify_entry_corrected(
+        message_or_cb.bot,
+        user_name=user.full_name if user else "?",
+        kind=res.kind, label=res.label,
+        old_amount=float(res.old_amount),
+        new_amount=float(res.new_amount) if res.new_amount is not None else None,
+        wallet_delta=float(res.wallet_delta),
+        business_unit=data.get("business_unit", "RESORT"),
+        wallet_owner_name=owner_name,
+    )
+
+    if res.deleted:
+        summary = f"🗑 Запись удалена: {res.label} (−{format_amount(res.old_amount)})"
+    else:
+        summary = (f"✅ Исправлено: {res.label}\n"
+                   f"{format_amount(res.old_amount)} → <b>{format_amount(res.new_amount)}</b> UZS")
+    if res.wallet_delta:
+        sign = "+" if res.wallet_delta > 0 else "−"
+        summary += f"\n👛 Кошелёк: {sign}{format_amount(abs(res.wallet_delta))} UZS"
+
+    await state.update_data(fix_kind=None, fix_id=None, fix_label=None, fix_amount=None)
+    await state.set_state(NewReportStates.choosing_action)
+    keyboard = await build_report_action_menu(lang, business_unit=data.get("business_unit", "RESORT"))
+    await send(summary + "\n\nВыберите действие:", reply_markup=keyboard, parse_mode="HTML")
+    return res
+
+
+@router.message(NewReportStates.entering_correction_amount)
+async def on_fix_amount_entered(message: types.Message, state: FSMContext):
+    raw = (message.text or "").strip().replace(" ", "").replace(",", ".")
+    try:
+        amount = Decimal(raw)
+        if amount <= 0:
+            raise ValueError
+    except Exception:
+        await message.answer("❌ Введите корректную сумму, например 120000")
+        return
+    await _apply_correction(message, state, new_amount=amount, delete=False)
+
+
+@router.callback_query(F.data == "fixact:delete", NewReportStates.choosing_correction)
+async def on_fix_delete_confirm(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    buttons = [[
+        InlineKeyboardButton(text="🗑 Да, удалить", callback_data="fixact:delete_yes"),
+        InlineKeyboardButton(text="◀️ Отмена", callback_data="rpt:fix_back"),
+    ]]
+    await callback.message.edit_text(
+        f"🗑 Удалить запись <b>{data.get('fix_label')}</b> на "
+        f"{format_amount(Decimal(data.get('fix_amount', '0')))} UZS?\n\n"
+        f"Деньги вернутся в кошелёк, если оплата была наличными.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "fixact:delete_yes", NewReportStates.choosing_correction)
+async def on_fix_delete_yes(callback: types.CallbackQuery, state: FSMContext):
+    await _apply_correction(callback, state, new_amount=None, delete=True)
     await callback.answer()
 
 

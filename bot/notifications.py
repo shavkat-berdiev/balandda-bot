@@ -224,6 +224,53 @@ async def notify_income_entry(bot: Bot, user_name: str, entry_name: str,
     notify_owners(bot, text, category=CAT_OPERATIONS)
 
 
+async def notify_entry_corrected(bot: Bot, user_name: str, kind: str, label: str,
+                                  old_amount: float, new_amount: float | None,
+                                  wallet_delta: float, business_unit: str,
+                                  wallet_owner_name: str | None = None):
+    """Notify owners when somebody corrects or deletes an entry.
+
+    Corrections are self-service for staff (own entries, draft report only), so
+    the owner always sees old → new and exactly how the wallet moved. Anything
+    that changes money must be visible — see services/entry_corrections.py.
+    """
+    bu_label = "Курорт" if business_unit == "RESORT" else "Ресторан"
+    icon = "📈" if kind == "income" else "📉"
+    head = "удалён" if new_amount is None else "исправлен"
+    money = (
+        f"💰 {format_amount(old_amount)} → <s>удалено</s>"
+        if new_amount is None
+        else f"💰 {format_amount(old_amount)} → <b>{format_amount(new_amount)}</b> UZS"
+    )
+    text = (
+        f"✏️ <b>{icon} {'Доход' if kind == 'income' else 'Расход'} {head}</b>\n\n"
+        f"👤 {user_name}\n"
+        f"🏢 {bu_label}\n"
+        f"📝 {label}\n"
+        f"{money}"
+    )
+    if wallet_delta:
+        sign = "+" if wallet_delta > 0 else "−"
+        who = f" ({wallet_owner_name})" if wallet_owner_name else ""
+        text += f"\n👛 Кошелёк{who}: {sign}{format_amount(abs(wallet_delta))} UZS"
+    notify_owners(bot, text, category=CAT_OPERATIONS)
+
+
+async def notify_transfer_reversed(bot: Bot, actor_name: str, sender_name: str,
+                                    receiver_name: str, amount: float, reason: str | None = None):
+    """Notify owners when an accepted transfer was unwound (wrong recipient)."""
+    text = (
+        f"↩️ <b>Перевод возвращён</b>\n\n"
+        f"👤 Вернул: {actor_name}\n"
+        f"➡️ Было: {sender_name} → {receiver_name}\n"
+        f"💰 {format_amount(amount)} UZS\n"
+        f"👛 Деньги вернулись отправителю"
+    )
+    if reason:
+        text += f"\n📝 {reason}"
+    notify_owners(bot, text, category=CAT_OPERATIONS)
+
+
 async def notify_expense_entry(bot: Bot, user_name: str, category_label: str,
                                 amount: float, description: str, business_unit: str):
     """Notify owners when an expense entry is added to a report."""

@@ -32,6 +32,7 @@ from db.enums import (
     MinibarSection,
     MINIBAR_SECTION_LABELS,
     MINISHOP_SELLER_SETTING_KEY,
+    WALLET_TRANSACTION_STATUS_LABELS,
     PaymentMethod,
     PAYMENT_METHOD_LABELS,
     PrepaymentStatus,
@@ -86,6 +87,7 @@ __all__ = [
     "Prepayment",
     "WalletTransaction",
     "WalletTransactionType", "WALLET_TRANSACTION_TYPE_LABELS",
+    "WalletTransactionStatus", "WALLET_TRANSACTION_STATUS_LABELS",
     "RegistrationRequest",
     "RegistrationRequestStatus", "REGISTRATION_REQUEST_STATUS_LABELS",
 ]
@@ -531,6 +533,13 @@ class IncomeEntry(Base):
     created_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=True
     )
+    # The CASH_IN this entry created, if it was a cash payment (added 2026-08).
+    # Corrections reverse THIS wallet — which for a Mini shop sale is the configured
+    # seller's, not the recorder's. NULL for pre-migration rows and for non-cash
+    # entries; services/entry_corrections.py falls back to report.submitted_by.
+    wallet_tx_id: Mapped[int | None] = mapped_column(
+        ForeignKey("wallet_transactions.id", ondelete="SET NULL"), nullable=True
+    )
 
     report: Mapped["StructuredReport"] = relationship(back_populates="income_entries")
     property: Mapped["Property | None"] = relationship(back_populates="income_entries")
@@ -549,6 +558,10 @@ class ExpenseEntry(Base):
     amount: Mapped[float] = mapped_column(Numeric(15, 2))
     description: Mapped[str] = mapped_column(String(255))
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The wallet debit this expense created (added 2026-08) — see IncomeEntry.wallet_tx_id.
+    wallet_tx_id: Mapped[int | None] = mapped_column(
+        ForeignKey("wallet_transactions.id", ondelete="SET NULL"), nullable=True
+    )
 
     report: Mapped["StructuredReport"] = relationship(back_populates="expense_entries")
     staff_member: Mapped["StaffMember | None"] = relationship(back_populates="expense_entries")

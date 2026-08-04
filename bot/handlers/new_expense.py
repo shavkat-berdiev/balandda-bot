@@ -349,7 +349,7 @@ async def on_confirm_expense(callback: types.CallbackQuery, state: FSMContext):
         else:
             wt_type = WalletTransactionType.EXPENSE
             wt_note = data.get("description") or cat_label
-        session.add(WalletTransaction(
+        wallet_tx = WalletTransaction(
             sender_telegram_id=callback.from_user.id,
             amount=Decimal(data["amount"]),
             transaction_type=wt_type,
@@ -357,7 +357,12 @@ async def on_confirm_expense(callback: types.CallbackQuery, state: FSMContext):
             note=wt_note,
             report_id=report_id,
             business_unit=data.get("business_unit", "RESORT"),
-        ))
+        )
+        session.add(wallet_tx)
+        # Remember the debit so a later correction reverses this exact wallet
+        # (services/entry_corrections.py).
+        await session.flush()
+        entry.wallet_tx_id = wallet_tx.id
 
         await session.commit()
 

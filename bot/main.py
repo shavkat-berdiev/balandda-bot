@@ -650,6 +650,45 @@ async def run_migrations():
         """
         UPDATE app_settings SET value = '3' WHERE key = 'spa_admin_percent' AND value = '0';
         """,
+        # Added 2026-08: corrections — remember which wallet transaction an entry
+        # produced, so an edit/delete can reverse exactly that wallet.
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'income_entries' AND column_name = 'wallet_tx_id'
+            ) THEN
+                ALTER TABLE income_entries ADD COLUMN wallet_tx_id INTEGER
+                    REFERENCES wallet_transactions(id) ON DELETE SET NULL;
+            END IF;
+        END $$;
+        """,
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'expense_entries' AND column_name = 'wallet_tx_id'
+            ) THEN
+                ALTER TABLE expense_entries ADD COLUMN wallet_tx_id INTEGER
+                    REFERENCES wallet_transactions(id) ON DELETE SET NULL;
+            END IF;
+        END $$;
+        """,
+        # Added 2026-08: REVERSED wallet status for transfers undone after acceptance.
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_enum
+                WHERE enumlabel = 'REVERSED'
+                  AND enumtypid = (SELECT oid FROM pg_type WHERE typname = 'wallettransactionstatus')
+            ) THEN
+                ALTER TYPE wallettransactionstatus ADD VALUE 'REVERSED';
+            END IF;
+        END $$;
+        """,
         # Added 2026-08: Mini shop — a second shelf on minibar_items.
         """
         DO $$

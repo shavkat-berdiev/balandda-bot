@@ -3,7 +3,7 @@
 from datetime import date, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,8 +16,10 @@ from db.enums import (
     WalletTransactionType,
     WalletTransactionStatus,
     WALLET_TRANSACTION_TYPE_LABELS,
+    WALLET_TRANSACTION_STATUS_LABELS,
 )
 from db.models import IncomeEntry, StructuredReport, User, WalletTransaction
+from services.entry_corrections import CorrectionError, reverse_transfer
 
 router = APIRouter()
 
@@ -243,12 +245,56 @@ async def list_transactions(
                 tx.transaction_type, tx.transaction_type.value
             ),
             "status": tx.status.value if hasattr(tx, 'status') and tx.status else "COMPLETED",
+            "status_label": WALLET_TRANSACTION_STATUS_LABELS.get(tx.status, "Проведён") if tx.status else "Проведён",
+            # Owner may unwind an accepted employee transfer that went to the wrong person
+            "reversible": bool(
+                tx.status == WalletTransactionStatus.COMPLETED
+                and tx.transaction_type in (
+                    WalletTransactionType.TRANSFER_TO_EMPLOYEE,
+                    WalletTransactionType.TRANSFER_TO_SHAVKAT,
+                )
+            ),
             "note": tx.note,
             "business_unit": tx.business_unit.value if tx.business_unit else None,
             "created_at": tx.created_at.isoformat() if tx.created_at else None,
         })
 
     return {"transactions": transactions}
+
+
+class ReverseRequest(BaseModel):
+    reason: str | None = None
+
+
+@router.post("/transactions/{tx_id}/reverse")
+async def reverse_wallet_transfer(
+    tx_id: int,
+    body: ReverseRequest | None = None,
+    user: dict = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Owner force-reverse of a transfer accepted by the wrong person.
+
+    The receiver can do this themselves from the bot («Вернуть отправителю»);
+    this is the escape hatch for when they are offline or uncooperative. Both
+    paths call the same service so the ledger can only move one way.
+    """
+    require_owner(user)
+    try:
+        tx = await reverse_transfer(
+            session, tx_id,
+            actor_telegram_id=user.get("telegram_id"), is_privileged=True,
+            reason=(body.reason if body else None) or "возврат из панели",
+        )
+    except CorrectionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    await session.commit()
+    return {
+        "ok": True, "id": tx.id, "status": tx.status.value,
+        "amount": float(tx.amount),
+        "sender_telegram_id": tx.sender_telegram_id,
+        "receiver_telegram_id": tx.receiver_telegram_id,
+    }
 
 
 # ── Single user balance ──

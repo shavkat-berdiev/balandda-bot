@@ -1,6 +1,7 @@
 """API endpoints for structured reports and catalog data."""
 
 from datetime import date, timedelta
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -33,6 +34,11 @@ from db.models import (
     StaffMember,
     StructuredReport,
     get_service_type_labels,
+)
+from services.entry_corrections import (
+    CorrectionError,
+    correct_expense_entry,
+    correct_income_entry,
 )
 
 router = APIRouter()
@@ -1112,25 +1118,19 @@ async def update_income_entry(
     user: dict = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Edit an income entry. Owner only. Recalculates report total."""
+    """Edit an income entry. Owner only.
+
+    Goes through services/entry_corrections so the wallet gets a signed
+    ADJUSTMENT for the cash delta. Before 2026-08 this endpoint recomputed the
+    report total but left the ledger wrong.
+    """
     require_owner(user)
 
-    result = await session.execute(
-        select(IncomeEntry).where(IncomeEntry.id == entry_id)
-    )
-    entry = result.scalar_one_or_none()
+    entry = await session.get(IncomeEntry, entry_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Income entry not found")
 
-    old_amount = float(entry.amount)
-
-    if body.amount is not None:
-        entry.amount = body.amount
-    if body.payment_method is not None:
-        try:
-            entry.payment_method = PaymentMethod(body.payment_method)
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid payment_method: {body.payment_method}")
+    # Fields that never touch money are applied directly.
     if body.quantity is not None:
         entry.quantity = body.quantity
     if body.num_days is not None:
@@ -1138,14 +1138,31 @@ async def update_income_entry(
     if body.note is not None:
         entry.note = body.note
 
-    # Recalculate report total
-    new_amount = float(entry.amount)
-    report = await session.get(StructuredReport, entry.report_id)
-    if report:
-        report.total_income = float(report.total_income or 0) - old_amount + new_amount
+    new_pm = None
+    if body.payment_method is not None:
+        try:
+            new_pm = PaymentMethod(body.payment_method)
+        except ValueError:
+            raise HTTPException(status_code=400, detail=f"Invalid payment_method: {body.payment_method}")
+
+    try:
+        res = await correct_income_entry(
+            session, entry_id,
+            actor_telegram_id=user.get("telegram_id"), is_privileged=True,
+            new_amount=Decimal(str(body.amount)) if body.amount is not None else None,
+            new_payment_method=new_pm,
+            reason="правка в панели",
+        )
+    except CorrectionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     await session.commit()
-    return {"ok": True, "id": entry.id, "report_id": entry.report_id}
+    return {
+        "ok": True, "id": entry_id, "report_id": res.report_id,
+        "old_amount": float(res.old_amount),
+        "new_amount": float(res.new_amount) if res.new_amount is not None else None,
+        "wallet_delta": float(res.wallet_delta),
+    }
 
 
 @router.put("/expense-entry/{entry_id}")
@@ -1155,20 +1172,13 @@ async def update_expense_entry(
     user: dict = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Edit an expense entry. Owner only. Recalculates report total."""
+    """Edit an expense entry. Owner only. Posts the matching wallet ADJUSTMENT."""
     require_owner(user)
 
-    result = await session.execute(
-        select(ExpenseEntry).where(ExpenseEntry.id == entry_id)
-    )
-    entry = result.scalar_one_or_none()
+    entry = await session.get(ExpenseEntry, entry_id)
     if not entry:
         raise HTTPException(status_code=404, detail="Expense entry not found")
 
-    old_amount = float(entry.amount)
-
-    if body.amount is not None:
-        entry.amount = body.amount
     if body.expense_category is not None:
         try:
             entry.expense_category = ExpenseCategory(body.expense_category)
@@ -1179,14 +1189,23 @@ async def update_expense_entry(
     if body.note is not None:
         entry.note = body.note
 
-    # Recalculate report total
-    new_amount = float(entry.amount)
-    report = await session.get(StructuredReport, entry.report_id)
-    if report:
-        report.total_expense = float(report.total_expense or 0) - old_amount + new_amount
+    try:
+        res = await correct_expense_entry(
+            session, entry_id,
+            actor_telegram_id=user.get("telegram_id"), is_privileged=True,
+            new_amount=Decimal(str(body.amount)) if body.amount is not None else None,
+            reason="правка в панели",
+        )
+    except CorrectionError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     await session.commit()
-    return {"ok": True, "id": entry.id, "report_id": entry.report_id}
+    return {
+        "ok": True, "id": entry_id, "report_id": res.report_id,
+        "old_amount": float(res.old_amount),
+        "new_amount": float(res.new_amount) if res.new_amount is not None else None,
+        "wallet_delta": float(res.wallet_delta),
+    }
 
 
 @router.delete("/income-entry/{entry_id}")
@@ -1195,24 +1214,18 @@ async def delete_income_entry(
     user: dict = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Delete an income entry. Owner only. Recalculates report total."""
+    """Delete an income entry. Owner only. Returns the cash to the right wallet."""
     require_owner(user)
-
-    result = await session.execute(
-        select(IncomeEntry).where(IncomeEntry.id == entry_id)
-    )
-    entry = result.scalar_one_or_none()
-    if not entry:
-        raise HTTPException(status_code=404, detail="Income entry not found")
-
-    # Update report total
-    report = await session.get(StructuredReport, entry.report_id)
-    if report:
-        report.total_income = float(report.total_income or 0) - float(entry.amount)
-
-    await session.delete(entry)
+    try:
+        res = await correct_income_entry(
+            session, entry_id,
+            actor_telegram_id=user.get("telegram_id"), is_privileged=True,
+            delete=True, reason="удаление в панели",
+        )
+    except CorrectionError as e:
+        raise HTTPException(status_code=404 if "не найдена" in str(e) else 400, detail=str(e))
     await session.commit()
-    return {"ok": True, "report_id": report.id if report else None}
+    return {"ok": True, "report_id": res.report_id, "wallet_delta": float(res.wallet_delta)}
 
 
 @router.delete("/expense-entry/{entry_id}")
@@ -1221,21 +1234,15 @@ async def delete_expense_entry(
     user: dict = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Delete an expense entry. Owner only. Recalculates report total."""
+    """Delete an expense entry. Owner only. Returns the cash to the right wallet."""
     require_owner(user)
-
-    result = await session.execute(
-        select(ExpenseEntry).where(ExpenseEntry.id == entry_id)
-    )
-    entry = result.scalar_one_or_none()
-    if not entry:
-        raise HTTPException(status_code=404, detail="Expense entry not found")
-
-    # Update report total
-    report = await session.get(StructuredReport, entry.report_id)
-    if report:
-        report.total_expense = float(report.total_expense or 0) - float(entry.amount)
-
-    await session.delete(entry)
+    try:
+        res = await correct_expense_entry(
+            session, entry_id,
+            actor_telegram_id=user.get("telegram_id"), is_privileged=True,
+            delete=True, reason="удаление в панели",
+        )
+    except CorrectionError as e:
+        raise HTTPException(status_code=404 if "не найдена" in str(e) else 400, detail=str(e))
     await session.commit()
-    return {"ok": True, "report_id": report.id if report else None}
+    return {"ok": True, "report_id": res.report_id, "wallet_delta": float(res.wallet_delta)}

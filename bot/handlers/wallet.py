@@ -12,7 +12,7 @@ Flow:
 import logging
 from decimal import Decimal
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from aiogram import Bot, F, Router, types
 from aiogram.filters import Command
@@ -23,7 +23,7 @@ from sqlalchemy import select, func, case, or_, and_
 
 from bot.keyboards.main import main_menu_keyboard
 from bot.locales import get_text
-from bot.notifications import notify_wallet_transfer
+from bot.notifications import notify_transfer_reversed, notify_wallet_transfer
 from db.database import async_session
 from db.enums import (
     UserRole,
@@ -161,6 +161,7 @@ async def on_wallet(callback: types.CallbackQuery, state: FSMContext):
         [InlineKeyboardButton(text="👑 Передать владельцу", callback_data="wlt:to_owner")],
         [InlineKeyboardButton(text="🏦 Сдать в банк", callback_data="wlt:to_bank")],
         [InlineKeyboardButton(text="📊 Мой отчёт", callback_data="wlt:my_report")],
+        [InlineKeyboardButton(text="↩️ Вернуть ошибочный перевод", callback_data="wlt:return_menu")],
     ]
     # XUSH section: manual cash-in button
     if user.active_section.value == "XUSH":
@@ -191,6 +192,154 @@ async def cmd_balance(message: types.Message, state: FSMContext):
         InlineKeyboardButton(text="💰 Открыть кошелёк", callback_data="action:wallet"),
     ]])
     await message.answer(f"💰 Ваш баланс: <b>{format_amount(bal)} UZS</b>", reply_markup=kb)
+
+
+# ────────────────────────────────────────────────────────────────────────
+# RETURN A WRONGLY-ACCEPTED TRANSFER  (added 2026-08)
+#
+# Accepting used to be final: if the wrong person tapped ✅, the only way back
+# was the owner posting a manual balance correction. Now the receiver can send
+# it straight back, and the owner can force it from the dashboard
+# (POST /wallets/transactions/{id}/reverse). Both call
+# services/entry_corrections.reverse_transfer, which flips the status to
+# REVERSED — excluded from BOTH balance formulas, so the money leaves the
+# receiver and returns to the sender in one step.
+# ────────────────────────────────────────────────────────────────────────
+
+RETURN_WINDOW_DAYS = 14
+
+
+@router.callback_query(F.data == "wlt:return_menu", WalletStates.viewing)
+async def on_return_menu(callback: types.CallbackQuery, state: FSMContext):
+    """List transfers this user accepted recently, so a wrong one can go back."""
+    since = datetime.now(timezone.utc) - timedelta(days=RETURN_WINDOW_DAYS)
+
+    async with async_session() as session:
+        txs = (await session.execute(
+            select(WalletTransaction)
+            .where(
+                WalletTransaction.receiver_telegram_id == callback.from_user.id,
+                WalletTransaction.status == WalletTransactionStatus.COMPLETED,
+                WalletTransaction.transaction_type.in_([
+                    WalletTransactionType.TRANSFER_TO_EMPLOYEE,
+                    WalletTransactionType.TRANSFER_TO_SHAVKAT,
+                ]),
+                WalletTransaction.created_at >= since,
+            )
+            .order_by(WalletTransaction.created_at.desc())
+            .limit(15)
+        )).scalars().all()
+
+        names = {}
+        if txs:
+            senders = {t.sender_telegram_id for t in txs}
+            for u in (await session.execute(
+                select(User).where(User.telegram_id.in_(senders))
+            )).scalars().all():
+                names[u.telegram_id] = u.full_name
+
+    if not txs:
+        await callback.answer(
+            f"Нет принятых переводов за последние {RETURN_WINDOW_DAYS} дней",
+            show_alert=True,
+        )
+        return
+
+    buttons = [
+        [InlineKeyboardButton(
+            text=f"↩️ {names.get(t.sender_telegram_id, '?')} — {format_amount(t.amount)}"[:60],
+            callback_data=f"wlt_return:{t.id}",
+        )]
+        for t in txs
+    ]
+    buttons.append([InlineKeyboardButton(text="◀️ Назад", callback_data="action:wallet")])
+
+    await callback.message.edit_text(
+        "↩️ <b>Вернуть ошибочный перевод</b>\n\n"
+        "Выберите перевод, который вы приняли по ошибке — он вернётся отправителю, "
+        "и балансы обоих сразу станут верными.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("wlt_return:"), WalletStates.viewing)
+async def on_return_confirm(callback: types.CallbackQuery, state: FSMContext):
+    tx_id = int(callback.data.split(":")[1])
+    async with async_session() as session:
+        tx = await session.get(WalletTransaction, tx_id)
+        sender = (await session.execute(
+            select(User).where(User.telegram_id == tx.sender_telegram_id)
+        )).scalar_one_or_none() if tx else None
+
+    if not tx:
+        await callback.answer("Перевод не найден", show_alert=True)
+        return
+
+    buttons = [[
+        InlineKeyboardButton(text="↩️ Да, вернуть", callback_data=f"wlt_return_yes:{tx_id}"),
+        InlineKeyboardButton(text="◀️ Отмена", callback_data="wlt:return_menu"),
+    ]]
+    await callback.message.edit_text(
+        f"↩️ Вернуть <b>{format_amount(tx.amount)} UZS</b> отправителю "
+        f"<b>{sender.full_name if sender else '?'}</b>?\n\n"
+        f"Сумма спишется с вашего баланса и вернётся ему.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("wlt_return_yes:"), WalletStates.viewing)
+async def on_return_yes(callback: types.CallbackQuery, state: FSMContext):
+    from services.entry_corrections import CorrectionError, reverse_transfer
+
+    tx_id = int(callback.data.split(":")[1])
+
+    async with async_session() as session:
+        try:
+            tx = await reverse_transfer(
+                session, tx_id,
+                actor_telegram_id=callback.from_user.id,
+                reason="возврат получателем",
+            )
+            await session.commit()
+        except CorrectionError as e:
+            await session.rollback()
+            await callback.answer(str(e), show_alert=True)
+            return
+
+        amount = float(tx.amount)
+        sender_id = tx.sender_telegram_id
+        people = {}
+        for u in (await session.execute(
+            select(User).where(User.telegram_id.in_([sender_id, callback.from_user.id]))
+        )).scalars().all():
+            people[u.telegram_id] = u.full_name
+
+    sender_name = people.get(sender_id, "?")
+    actor_name = people.get(callback.from_user.id, "?")
+
+    try:
+        await callback.bot.send_message(
+            sender_id,
+            f"↩️ <b>Перевод возвращён</b>\n\n"
+            f"{actor_name} вернул(а) перевод на {format_amount(amount)} UZS — "
+            f"он принял его по ошибке.\n"
+            f"Деньги снова у вас на балансе.",
+            parse_mode="HTML",
+        )
+    except Exception as e:
+        logger.error(f"Failed to notify sender {sender_id} about reversal: {e}")
+
+    await notify_transfer_reversed(
+        callback.bot, actor_name=actor_name, sender_name=sender_name,
+        receiver_name=actor_name, amount=amount, reason="ошибочный получатель",
+    )
+
+    await callback.answer("↩️ Перевод возвращён")
+    await on_wallet(callback, state)
 
 
 # ────────────────────────────────────────────────────────────────────────

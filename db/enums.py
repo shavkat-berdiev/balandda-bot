@@ -219,6 +219,13 @@ class WalletTransactionStatus(str, enum.Enum):
     PENDING = "PENDING"        # Awaiting receiver acceptance
     COMPLETED = "COMPLETED"    # Accepted / auto-completed
     CANCELLED = "CANCELLED"    # Declined by receiver
+    # Was COMPLETED, then unwound because it went to the wrong person (added 2026-08).
+    # Both balance formulas (bot/handlers/wallet.py::get_wallet_balance and
+    # api/routers/wallets.py::_calculate_balance) filter on COMPLETED / PENDING+COMPLETED,
+    # so REVERSED drops out of BOTH the sender's outgoing and the receiver's incoming —
+    # one field flip unwinds the transfer symmetrically. Kept distinct from CANCELLED so
+    # history can tell "receiver declined it" from "it was undone after the fact".
+    REVERSED = "REVERSED"
 
 
 # ── Labels for display ──────────────────────────────────────────────
@@ -236,6 +243,13 @@ PAYMENT_METHOD_LABELS = {
 # app_settings key holding the telegram_id whose wallet receives ALL Mini shop cash,
 # regardless of who records the sale. Empty/absent → fall back to the recording user.
 MINISHOP_SELLER_SETTING_KEY = "minishop_seller_telegram_id"
+
+WALLET_TRANSACTION_STATUS_LABELS = {
+    WalletTransactionStatus.PENDING: "Ожидает",
+    WalletTransactionStatus.COMPLETED: "Проведён",
+    WalletTransactionStatus.CANCELLED: "Отклонён",
+    WalletTransactionStatus.REVERSED: "Возвращён",
+}
 
 MINIBAR_SECTION_LABELS = {
     MinibarSection.MINIBAR: "Мини бар",
