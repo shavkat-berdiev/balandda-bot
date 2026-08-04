@@ -3,7 +3,13 @@
 Replays the incident from project_wallet_gaps.md: 1 260 000 typed as 12 600 000.
 """
 import asyncio
+import os
+import sys
 from decimal import Decimal
+
+# Run from anywhere: `python3 tests/test_entry_corrections.py` puts tests/ on the
+# path, not the repo root, so db/ and services/ would not import.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from sqlalchemy import select, func, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
