@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react';
 import { api } from '../api';
+import { PAYMENT_METHODS } from '../constants/payments';
 
 const STATUS_STYLE = {
   HOLD: { cell: 'bg-red-300 hover:bg-red-400', label: 'Бронь (не оплачено)' },
@@ -14,14 +15,6 @@ const STATUS_STYLE = {
 };
 const STATUS_OPTIONS = ['CONFIRMED', 'HOLD', 'BLOCKED'];
 const SOURCE_OPTIONS = ['MANUAL', 'PHONE', 'DIRECT', 'TELEGRAM', 'INSTAGRAM', 'BOOKING_COM', 'AIRBNB'];
-const PAYMENT_METHODS = [
-  { v: 'CASH', l: 'Наличные' },
-  { v: 'CARD_TRANSFER', l: 'Перевод на карту' },
-  { v: 'WIRE_TRANSFER', l: 'Перечисление' },
-  { v: 'TERMINAL_VISA', l: 'Терминал Visa' },
-  { v: 'TERMINAL_UZCARD', l: 'Терминал UzCard' },
-  { v: 'PAYME', l: 'PayMe' },
-];
 
 const MONTHS = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
@@ -699,7 +692,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
                 <Field label="Сумма предоплаты (сум)"><input type="number" value={form.payAmount} onChange={(e) => setForm({ ...form, payAmount: e.target.value })} className="input" /></Field>
                 <Field label="Способ оплаты">
                   <select value={form.payMethod} onChange={(e) => setForm({ ...form, payMethod: e.target.value })} className="input">
-                    {PAYMENT_METHODS.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
+                    {PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                   </select>
                 </Field>
               </div>
@@ -763,7 +756,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
                     <div className="flex items-center gap-2">
                       <input type="number" value={editPay.amount} onChange={(e) => setEditPay({ ...editPay, amount: e.target.value })} className="input flex-1" />
                       <select value={editPay.method} onChange={(e) => setEditPay({ ...editPay, method: e.target.value })} className="input flex-1">
-                        {PAYMENT_METHODS.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
+                        {PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                       </select>
                       <button onClick={saveEditPay} className="text-blue-600 text-xs font-semibold">OK</button>
                       <button onClick={() => setEditPay(null)} className="text-gray-400 text-sm">×</button>
@@ -793,7 +786,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
               <div className="grid grid-cols-2 gap-2">
                 <input type="number" placeholder="Сумма" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} className="input" />
                 <select value={payForm.method} onChange={(e) => setPayForm({ ...payForm, method: e.target.value })} className="input">
-                  {PAYMENT_METHODS.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
+                  {PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
                 </select>
               </div>
               <div className="flex justify-end gap-2">

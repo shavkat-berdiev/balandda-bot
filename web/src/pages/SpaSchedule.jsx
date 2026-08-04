@@ -1,15 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, X, Check, Trash2, Search, CreditCard } from 'lucide-react';
 import { api } from '../api';
-
-const PAY_METHODS = [
-  { value: 'CASH', label: 'Наличные' },
-  { value: 'CARD_TRANSFER', label: 'Перевод на карту' },
-  { value: 'TERMINAL_UZCARD', label: 'Терминал UzCard' },
-  { value: 'TERMINAL_VISA', label: 'Терминал Visa' },
-  { value: 'PAYME', label: 'PayMe' },
-  { value: 'WIRE_TRANSFER', label: 'Перечисление' },
-];
+import { PAYMENT_METHODS as PAY_METHODS } from '../constants/payments';
 
 const START_MIN = 9 * 60;      // 09:00
 const END_MIN = 22 * 60;       // 22:00

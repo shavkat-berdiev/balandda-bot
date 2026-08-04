@@ -50,10 +50,16 @@ async def get_or_create_report(session: AsyncSession, operator: int) -> Structur
 
 
 async def record_spa_payment(session: AsyncSession, appt: SpaAppointment,
-                             amount: float, pm: PaymentMethod, operator: int) -> IncomeEntry:
+                             amount: float, pm: PaymentMethod, operator: int,
+                             report: StructuredReport | None = None) -> IncomeEntry:
     """Record a guest payment for an appointment. Caller commits.
-    Income entry carries service_item_id → revenue shows in SPA analytics."""
-    report = await get_or_create_report(session, operator)
+    Income entry carries service_item_id → revenue shows in SPA analytics.
+
+    Cash always credits `operator`'s wallet — the person actually taking the money.
+    Pass `report` when the caller already has one (the bot report flow lets the
+    operator pick a date); otherwise today's draft RESORT report is used.
+    """
+    report = report or await get_or_create_report(session, operator)
     amt = round(float(amount))
     income = IncomeEntry(
         report_id=report.id,

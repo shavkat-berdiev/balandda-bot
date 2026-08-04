@@ -11,7 +11,7 @@ Flow:
 """
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from aiogram import F, Router, types
@@ -20,6 +20,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy import and_, select
+from sqlalchemy.orm import selectinload
 
 from bot.keyboards.main import main_menu_keyboard
 from bot.locales import get_text
@@ -49,11 +50,17 @@ from db.models import (
     Property,
     ReportStatus as ReportStatusEnum,
     ServiceItem,
+    SpaAppointment,
+    SpaMaster,
     StaffMember,
     StructuredReport,
     User,
     WalletTransaction,
 )
+from services.spa_notify import notify_appointment_event
+from services.spa_payments import record_spa_payment
+
+TASHKENT = timezone(timedelta(hours=5))
 
 router = Router()
 logger = logging.getLogger(__name__)
@@ -65,6 +72,7 @@ class NewReportStates(StatesGroup):
     choosing_action = State()
     choosing_property = State()
     choosing_service = State()
+    choosing_service_master = State()
     choosing_minibar = State()
     choosing_restaurant_category = State()
     entering_payment = State()
@@ -110,11 +118,9 @@ async def get_or_create_draft_report(user_id: int, report_date: date, business_u
                     StructuredReport.business_unit == business_unit,
                     StructuredReport.status == ReportStatusEnum.DRAFT,
                 )
-            ).order_by(StructuredReport.id)
+            )
         )
-        # .first(), not .scalar_one_or_none(): legacy data can still hold more than one
-        # draft for the same (user, date, unit) and we must not raise MultipleResultsFound.
-        report = result.scalars().first()
+        report = result.scalar_one_or_none()
 
         if not report:
             report = StructuredReport(
@@ -248,10 +254,7 @@ async def on_new_report(callback: types.CallbackQuery, state: FSMContext):
         return
 
     lang = user.language.value.lower()
-    # NOTE: this must be the TELEGRAM id, not the users-table PK. StructuredReport.submitted_by
-    # holds telegram ids everywhere else (reservations, spa_payments, wallet transactions);
-    # passing user.id here orphaned every bot-created report under a ghost owner.
-    await state.update_data(lang=lang, user_id=user.telegram_id, business_unit=user.active_section.value)
+    await state.update_data(lang=lang, user_id=user.id, business_unit=user.active_section.value)
 
     today = date.today()
     yesterday = today - timedelta(days=1)
@@ -1104,28 +1107,86 @@ async def on_add_service(callback: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("svc:"), NewReportStates.choosing_service)
 async def on_service_selected(callback: types.CallbackQuery, state: FSMContext):
-    """Service selected, ask for payment method."""
+    """Service selected — ask who performed it.
+
+    The master is what turns this into a real SPA appointment: it drives the SPA
+    analytics page and earns the master their commission. Without it the revenue
+    lands as an anonymous income line and the commission has to be paid by hand.
+    """
     svc_id = int(callback.data.split(":")[1])
     data = await state.get_data()
     lang = data.get("lang", "ru")
 
     async with async_session() as session:
-        result = await session.execute(select(ServiceItem).where(ServiceItem.id == svc_id))
-        svc = result.scalar_one_or_none()
+        svc = (
+            await session.execute(
+                select(ServiceItem)
+                .options(selectinload(ServiceItem.masters))
+                .where(ServiceItem.id == svc_id)
+            )
+        ).scalar_one_or_none()
 
-    if not svc:
-        await callback.answer("Услуга не найдена")
+        if not svc:
+            await callback.answer("Услуга не найдена")
+            return
+
+        # Masters assigned to this service; fall back to everyone active so a
+        # service with no assignments doesn't dead-end the operator.
+        masters = [m for m in svc.masters if m.is_active]
+        if not masters:
+            masters = (
+                await session.execute(
+                    select(SpaMaster)
+                    .where(SpaMaster.is_active == True)  # noqa: E712
+                    .order_by(SpaMaster.sort_order, SpaMaster.name)
+                )
+            ).scalars().all()
+
+    if not masters:
+        await callback.answer("Нет активных мастеров — добавьте их в «SPA мастера»", show_alert=True)
         return
 
     await state.update_data(
         current_service=svc_id,
+        service_name=svc.name_ru,
         service_price=float(svc.price),
         amount=str(svc.price),
     )
 
-    # Show payment methods
+    buttons = [
+        [InlineKeyboardButton(text=m.name, callback_data=f"svcm:{m.id}")]
+        for m in masters
+    ]
+    buttons.append([InlineKeyboardButton(text=f"❌ {get_text('btn_cancel', lang)}", callback_data="rpt:cancel")])
+
+    await state.set_state(NewReportStates.choosing_service_master)
+    await callback.message.edit_text(
+        f"💆 {svc.name_ru}\nЦена: {format_amount(svc.price)}\n\nКто выполнил услугу?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("svcm:"), NewReportStates.choosing_service_master)
+async def on_service_master_selected(callback: types.CallbackQuery, state: FSMContext):
+    """Master chosen — now ask for the payment method."""
+    master_id = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+
+    async with async_session() as session:
+        master = await session.get(SpaMaster, master_id)
+
+    if not master:
+        await callback.answer("Мастер не найден")
+        return
+
+    await state.update_data(current_master=master_id, master_name=master.name)
+
     buttons = []
     for method in PaymentMethod:
+        if method == PaymentMethod.PREPAYMENT:
+            continue  # produced by the prepayment flow, never picked by hand
         label = PAYMENT_METHOD_LABELS.get(method, method.value)
         buttons.append([InlineKeyboardButton(text=label, callback_data=f"svc_pm:{method.value}")])
 
@@ -1133,7 +1194,10 @@ async def on_service_selected(callback: types.CallbackQuery, state: FSMContext):
 
     await state.set_state(NewReportStates.entering_payment)
     await callback.message.edit_text(
-        f"💳 {svc.name_ru}\nЦена: {format_amount(svc.price)}\n\nВыберите способ оплаты:",
+        f"💆 {data.get('service_name', '')}\n"
+        f"Мастер: {master.name}\n"
+        f"Цена: {format_amount(data.get('amount', 0))}\n\n"
+        f"Выберите способ оплаты:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
     )
     await callback.answer()
@@ -1171,6 +1235,7 @@ async def on_service_payment_selected(callback: types.CallbackQuery, state: FSMC
     await state.set_state(NewReportStates.confirming_entry)
     await callback.message.edit_text(
         f"💆 {svc.name_ru}\n"
+        f"Мастер: {data.get('master_name', '—')}\n"
         f"Сумма: {format_amount(svc.price)}\n"
         f"Способ оплаты: {pm_label}\n\n"
         f"Всё верно?",
@@ -1181,34 +1246,71 @@ async def on_service_payment_selected(callback: types.CallbackQuery, state: FSMC
 
 @router.callback_query(F.data == "svc:confirm", NewReportStates.confirming_entry)
 async def on_service_confirm(callback: types.CallbackQuery, state: FSMContext):
-    """Save service entry."""
+    """Save the SPA sale as a completed appointment plus its payment.
+
+    Everything goes through record_spa_payment so this path produces exactly the
+    same records as «Принять оплату» on the web Расписание SPA: an appointment
+    (so the master earns commission and SPA analytics sees the revenue), an
+    income line, and — for cash — a CASH_IN into THIS operator's wallet.
+    """
     data = await state.get_data()
     lang = data.get("lang", "ru")
     report_id = data["report_id"]
+    amount = Decimal(data["amount"])
 
     async with async_session() as session:
-        entry = IncomeEntry(
-            report_id=report_id,
-            service_item_id=data["current_service"],
-            payment_method=PaymentMethod(data["payment_method"]),
-            amount=Decimal(data["amount"]),
-        )
-        session.add(entry)
-
+        svc = await session.get(ServiceItem, data["current_service"])
         report = await session.get(StructuredReport, report_id)
-        if report:
-            report.total_income = (report.total_income or Decimal(0)) + Decimal(data["amount"])
-            await session.merge(report)
+        if not svc or not report:
+            await callback.answer("Ошибка: услуга или отчёт не найдены", show_alert=True)
+            return
 
-        # Auto wallet CASH_IN for cash payments
-        if data["payment_method"] == PaymentMethod.CASH.value:
-            await _auto_wallet_cash_in(
-                session, callback.from_user.id,
-                Decimal(data["amount"]), report_id,
-                data.get("business_unit"),
-            )
+        # Time the appointment at "now" but on the report's date, so back-dated
+        # reports don't create appointments in the future.
+        now = datetime.now(TASHKENT)
+        start_at = datetime.combine(report.report_date, now.time(), tzinfo=TASHKENT)
 
+        appt = SpaAppointment(
+            service_id=svc.id,
+            master_id=data["current_master"],
+            start_at=start_at,
+            end_at=start_at + timedelta(minutes=svc.duration_minutes or 60),
+            status="done",
+            price=amount,
+            note=f"Из бота · отчёт #{report_id}",
+            created_by=callback.from_user.id,
+        )
+        session.add(appt)
+        await session.flush()  # need appt.id for the income link
+
+        await record_spa_payment(
+            session, appt, float(amount),
+            PaymentMethod(data["payment_method"]),
+            callback.from_user.id,
+            report=report,
+        )
         await session.commit()
+        appt_id = appt.id
+
+    # Same SPA-bot message the master gets when the web records a completed
+    # appointment — including what they earned.
+    try:
+        async with async_session() as session:
+            loaded = (
+                await session.execute(
+                    select(SpaAppointment)
+                    .options(
+                        selectinload(SpaAppointment.service),
+                        selectinload(SpaAppointment.master),
+                        selectinload(SpaAppointment.location),
+                    )
+                    .where(SpaAppointment.id == appt_id)
+                )
+            ).scalar_one_or_none()
+            if loaded:
+                await notify_appointment_event(session, loaded, "done")
+    except Exception as e:  # never let a notification break the report flow
+        logger.warning("SPA notify failed for appointment %s: %s", appt_id, e)
 
     # Notify owner
     user = await get_user(callback.from_user.id)
@@ -1216,13 +1318,13 @@ async def on_service_confirm(callback: types.CallbackQuery, state: FSMContext):
     await notify_income_entry(
         callback.bot,
         user_name=user.full_name if user else "?",
-        entry_name=f"Услуга: {data.get('service_name', '?')}",
+        entry_name=f"Услуга: {data.get('service_name', '?')} · {data.get('master_name', '?')}",
         amount=float(data["amount"]),
         payment_label=pm_label,
         business_unit=data.get("business_unit", "RESORT"),
     )
 
-    await state.update_data(current_service=None)
+    await state.update_data(current_service=None, current_master=None, master_name=None)
     await state.set_state(NewReportStates.choosing_action)
     keyboard = await build_report_action_menu(lang, business_unit=data.get("business_unit", "RESORT"))
     await callback.message.edit_text(
