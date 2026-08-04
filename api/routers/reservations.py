@@ -661,9 +661,9 @@ async def _get_or_create_report(session: AsyncSession, operator: int,
                 StructuredReport.report_date == _today_tashkent(),
                 StructuredReport.business_unit == business_unit,
                 StructuredReport.status == ReportStatus.DRAFT,
-            )
+            ).order_by(StructuredReport.id)
         )
-    ).scalar_one_or_none()
+    ).scalars().first()
     if not report:
         report = StructuredReport(
             report_date=_today_tashkent(), business_unit=business_unit,

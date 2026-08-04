@@ -36,9 +36,9 @@ async def get_or_create_report(session: AsyncSession, operator: int) -> Structur
                 StructuredReport.report_date == today,
                 StructuredReport.business_unit == BusinessUnit.RESORT,
                 StructuredReport.status == ReportStatus.DRAFT,
-            )
+            ).order_by(StructuredReport.id)
         )
-    ).scalar_one_or_none()
+    ).scalars().first()
     if not report:
         report = StructuredReport(
             report_date=today, business_unit=BusinessUnit.RESORT,

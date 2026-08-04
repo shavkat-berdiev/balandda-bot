@@ -114,7 +114,8 @@ async def on_add_expense(callback: types.CallbackQuery, state: FSMContext):
     data = await state.get_data()
     if "report_id" not in data:
         # Standalone expense entry - need to initialize
-        await state.update_data(lang=lang, user_id=user.id)
+        # Telegram id, not the users-table PK — see the note in new_report.on_new_report.
+        await state.update_data(lang=lang, user_id=user.telegram_id)
 
     await state.set_state(ExpenseStates.choosing_category)
     keyboard = await build_category_keyboard(lang)

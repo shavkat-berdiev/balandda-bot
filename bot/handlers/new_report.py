@@ -110,9 +110,11 @@ async def get_or_create_draft_report(user_id: int, report_date: date, business_u
                     StructuredReport.business_unit == business_unit,
                     StructuredReport.status == ReportStatusEnum.DRAFT,
                 )
-            )
+            ).order_by(StructuredReport.id)
         )
-        report = result.scalar_one_or_none()
+        # .first(), not .scalar_one_or_none(): legacy data can still hold more than one
+        # draft for the same (user, date, unit) and we must not raise MultipleResultsFound.
+        report = result.scalars().first()
 
         if not report:
             report = StructuredReport(
@@ -246,7 +248,10 @@ async def on_new_report(callback: types.CallbackQuery, state: FSMContext):
         return
 
     lang = user.language.value.lower()
-    await state.update_data(lang=lang, user_id=user.id, business_unit=user.active_section.value)
+    # NOTE: this must be the TELEGRAM id, not the users-table PK. StructuredReport.submitted_by
+    # holds telegram ids everywhere else (reservations, spa_payments, wallet transactions);
+    # passing user.id here orphaned every bot-created report under a ghost owner.
+    await state.update_data(lang=lang, user_id=user.telegram_id, business_unit=user.active_section.value)
 
     today = date.today()
     yesterday = today - timedelta(days=1)
