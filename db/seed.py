@@ -3,7 +3,7 @@
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.enums import BusinessUnit, PropertyType, ServiceType
+from db.enums import BusinessUnit, MinibarSection, PropertyType, ServiceType
 from db.models import Property, ServiceItem, MinibarItem, StaffMember
 
 
@@ -54,6 +54,9 @@ async def seed_database(async_session: AsyncSession) -> None:
 
     # Seed minibar items
     await _seed_minibar_items(async_session)
+
+    # Seed mini shop items (pool goods)
+    await _seed_minishop_items(async_session)
 
     # Seed staff members
     await _seed_staff_members(async_session)
@@ -364,6 +367,55 @@ async def _seed_service_items(async_session: AsyncSession) -> None:
     ]
 
     async_session.add_all(services)
+    await async_session.commit()
+
+
+async def _seed_minishop_items(async_session: AsyncSession) -> None:
+    """Seed the Mini shop shelf (pool goods) once. Added 2026-08.
+
+    Keyed on the MINISHOP section rather than on the table being empty, because
+    minibar_items already holds the Mini bar rows by the time this runs. Idempotent,
+    so prices edited later in the admin UI are preserved.
+    """
+    result = await async_session.execute(
+        select(MinibarItem).where(MinibarItem.section == MinibarSection.MINISHOP)
+    )
+    if result.scalars().first():
+        return
+
+    items = [
+        MinibarItem(name_ru="Баллон большой", name_uz="Katta ballon", price=100000,
+                    section=MinibarSection.MINISHOP, sort_order=1),
+        MinibarItem(name_ru="Баллон средний", name_uz="O'rta ballon", price=80000,
+                    section=MinibarSection.MINISHOP, sort_order=2),
+        MinibarItem(name_ru="Баллон детский", name_uz="Bolalar balloni", price=60000,
+                    section=MinibarSection.MINISHOP, sort_order=3),
+        MinibarItem(name_ru="Нарукавники", name_uz="Narukavnik (qo'l suzgichi)", price=60000,
+                    section=MinibarSection.MINISHOP, sort_order=4),
+        MinibarItem(name_ru="Очки для плавания", name_uz="Suzish ko'zoynagi", price=40000,
+                    section=MinibarSection.MINISHOP, sort_order=5),
+        MinibarItem(name_ru="Шорты большие", name_uz="Katta shortik", price=180000,
+                    section=MinibarSection.MINISHOP, sort_order=6),
+        MinibarItem(name_ru="Шорты средние", name_uz="O'rta shortik", price=100000,
+                    section=MinibarSection.MINISHOP, sort_order=7),
+        MinibarItem(name_ru="Шорты детские", name_uz="Bolalar shortigi", price=80000,
+                    section=MinibarSection.MINISHOP, sort_order=8),
+        MinibarItem(name_ru="Крем от загара", name_uz="Quyoshdan himoya kremi", price=75000,
+                    section=MinibarSection.MINISHOP, sort_order=9),
+        MinibarItem(name_ru="Купальник хиджаб", name_uz="Hijob cho'milish kostyumi", price=300000,
+                    section=MinibarSection.MINISHOP, sort_order=10),
+        MinibarItem(name_ru="Купальник открытый", name_uz="Ochiq cho'milish kostyumi", price=260000,
+                    section=MinibarSection.MINISHOP, sort_order=11),
+        MinibarItem(name_ru="Купальник подростковый", name_uz="O'smirlar cho'milish kostyumi", price=180000,
+                    section=MinibarSection.MINISHOP, sort_order=12),
+        MinibarItem(name_ru="Купальник детский", name_uz="Bolalar cho'milish kostyumi", price=100000,
+                    section=MinibarSection.MINISHOP, sort_order=13),
+        MinibarItem(name_ru="Памперс для бассейна", name_uz="Basseyn uchun pampers", price=15000,
+                    section=MinibarSection.MINISHOP, sort_order=14),
+    ]
+
+    for item in items:
+        async_session.add(item)
     await async_session.commit()
 
 

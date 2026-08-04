@@ -2,27 +2,53 @@ import { useState, useEffect } from 'react';
 import { Plus, Pencil, Check, X, ToggleLeft, ToggleRight } from 'lucide-react';
 import { api } from '../api';
 
-const EMPTY_FORM = { name_ru: '', name_uz: '', price: 0, sort_order: 0 };
+/**
+ * Catalog editor for one shelf of `minibar_items`.
+ *
+ * section="MINIBAR"  — in-room drinks & snacks, any payment method.
+ * section="MINISHOP" — pool shop goods (added 2026-08). Cash only, and the cash
+ *                      always lands in the configured seller's wallet — that part
+ *                      is enforced in the bot, see AdminShop.jsx for the picker.
+ */
+const SECTION_COPY = {
+  MINIBAR: {
+    title: 'Мини бар',
+    subtitle: 'Напитки и закуски из минибара',
+    newLabel: 'Новый товар',
+    placeholderRu: 'Кока-Кола',
+    placeholderUz: 'Coca-Cola',
+  },
+  MINISHOP: {
+    title: 'Мини шоп',
+    subtitle: 'Товары у бассейна — только наличные',
+    newLabel: 'Новый товар мини-шопа',
+    placeholderRu: 'Очки для плавания',
+    placeholderUz: 'Suzish ko’zoynagi',
+  },
+};
 
-export default function AdminMinibar() {
+export default function AdminMinibar({ section = 'MINIBAR' }) {
+  const copy = SECTION_COPY[section] || SECTION_COPY.MINIBAR;
+  const emptyForm = { name_ru: '', name_uz: '', price: 0, sort_order: 0, section };
+
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editId, setEditId] = useState(null);
-  const [form, setForm] = useState(EMPTY_FORM);
+  const [form, setForm] = useState(emptyForm);
   const [error, setError] = useState('');
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [section]);
 
   async function load() {
     setLoading(true);
-    try { setItems(await api.getAdminMinibar()); } catch (err) { setError(err.message); }
+    try { setItems(await api.getAdminMinibar(section)); } catch (err) { setError(err.message); }
     setLoading(false);
   }
 
   function startEdit(item) {
     setEditId(item.id);
-    setForm({ name_ru: item.name_ru, name_uz: item.name_uz, price: item.price, sort_order: item.sort_order });
+    setForm({ name_ru: item.name_ru, name_uz: item.name_uz, price: item.price, sort_order: item.sort_order, section });
     setShowForm(true);
     setError('');
   }
@@ -30,7 +56,7 @@ export default function AdminMinibar() {
   async function handleSave() {
     try {
       setError('');
-      const payload = { ...form, price: parseFloat(form.price), sort_order: parseInt(form.sort_order) };
+      const payload = { ...form, section, price: parseFloat(form.price), sort_order: parseInt(form.sort_order) };
       if (editId) { await api.updateAdminMinibar(editId, payload); } else { await api.createAdminMinibar(payload); }
       setShowForm(false);
       load();
@@ -47,10 +73,10 @@ export default function AdminMinibar() {
     <div>
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Минибар</h1>
-          <p className="text-gray-500 text-sm mt-1">Напитки и закуски из минибара</p>
+          <h1 className="text-2xl font-bold text-gray-800">{copy.title}</h1>
+          <p className="text-gray-500 text-sm mt-1">{copy.subtitle}</p>
         </div>
-        <button onClick={() => { setEditId(null); setForm(EMPTY_FORM); setShowForm(true); setError(''); }}
+        <button onClick={() => { setEditId(null); setForm(emptyForm); setShowForm(true); setError(''); }}
           className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
           <Plus size={18} /> Добавить
         </button>
@@ -60,17 +86,17 @@ export default function AdminMinibar() {
 
       {showForm && (
         <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4">{editId ? 'Редактировать' : 'Новый товар'}</h2>
+          <h2 className="text-lg font-semibold text-gray-800 mb-4">{editId ? 'Редактировать' : copy.newLabel}</h2>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Название (RU)</label>
               <input type="text" value={form.name_ru} onChange={(e) => setForm({ ...form, name_ru: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Кока-Кола" />
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" placeholder={copy.placeholderRu} />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Название (UZ)</label>
               <input type="text" value={form.name_uz} onChange={(e) => setForm({ ...form, name_uz: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" placeholder="Coca-Cola" />
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm" placeholder={copy.placeholderUz} />
             </div>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Цена</label>
@@ -109,7 +135,9 @@ export default function AdminMinibar() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
-                {items.map(item => (
+                {items.length === 0 ? (
+                  <tr><td colSpan={4} className="px-4 py-12 text-center text-gray-400">Товары не заведены</td></tr>
+                ) : items.map(item => (
                   <tr key={item.id} className={!item.is_active ? 'opacity-50 bg-gray-50' : 'hover:bg-gray-50'}>
                     <td className="px-4 py-3">
                       <p className="font-medium text-gray-800">{item.name_ru}</p>

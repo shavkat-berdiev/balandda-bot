@@ -29,6 +29,9 @@ from db.enums import (
     ExpenseCategory,
     EXPENSE_CATEGORY_LABELS,
     Language,
+    MinibarSection,
+    MINIBAR_SECTION_LABELS,
+    MINISHOP_SELLER_SETTING_KEY,
     PaymentMethod,
     PAYMENT_METHOD_LABELS,
     PrepaymentStatus,
@@ -77,6 +80,7 @@ __all__ = [
     "User", "Category", "Transaction",
     "DailyReport", "ReportLineItem", "ReportExpense",
     "Property", "PropertyTypeLabel", "ServiceItem", "ServiceTypeDef", "MinibarItem", "StaffMember",
+    "MinibarSection", "MINIBAR_SECTION_LABELS", "MINISHOP_SELLER_SETTING_KEY",
     "get_service_type_labels", "SpaCommissionPayout",
     "StructuredReport", "IncomeEntry", "ExpenseEntry",
     "Prepayment",
@@ -442,13 +446,24 @@ class SpaCommissionPayout(Base):
 
 
 class MinibarItem(Base):
-    """Minibar product catalog."""
+    """Minibar / Mini shop product catalog.
+
+    One table, two shelves — see `MinibarSection`. Mini shop was added 2026-08 for
+    pool goods (swim shorts, armbands, sunscreen…). Sharing the table means income
+    entries, reports and analytics keep working through the existing
+    `IncomeEntry.minibar_item_id` FK; only the bot flow and the admin UI branch on
+    `section`.
+    """
     __tablename__ = "minibar_items"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name_ru: Mapped[str] = mapped_column(String(100))
     name_uz: Mapped[str] = mapped_column(String(100))
     price: Mapped[float] = mapped_column(Numeric(15, 2))
+    section: Mapped[MinibarSection] = mapped_column(
+        Enum(MinibarSection), default=MinibarSection.MINIBAR,
+        server_default="MINIBAR", index=True,
+    )
     is_active: Mapped[bool] = mapped_column(default=True)
     sort_order: Mapped[int] = mapped_column(default=0)
 

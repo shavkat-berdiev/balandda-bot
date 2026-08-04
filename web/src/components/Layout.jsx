@@ -1,35 +1,65 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { BarChart3, FolderOpen, Users, ArrowLeftRight, LogOut, Menu, X, Home, Sparkles, Wine, UserCog, FileText, CreditCard, Wallet, UserPlus, CalendarDays, History, Waves, Tag, Layers, MapPin, Contact, CalendarClock, CalendarOff, MessageSquare } from 'lucide-react';
+import {
+  BarChart3, FolderOpen, Users, ArrowLeftRight, LogOut, Menu, X, Home, Sparkles, Wine,
+  FileText, CreditCard, Wallet, CalendarDays, History, Waves, Layers, CalendarClock,
+  MessageSquare, ChevronDown, PieChart,
+} from 'lucide-react';
 
-const navItems = [
-  { path: '/', label: 'Dashboard', icon: BarChart3 },
-  { path: '/spa-analytics', label: 'SPA аналитика', icon: Sparkles },
-  { path: '/spa-commissions', label: 'Комиссии SPA', icon: Wallet },
+/**
+ * Sidebar structure (2026-08 reorg).
+ *
+ * Booking views (Календарь, Бассейн, Расписание SPA, Журнал броней) are no longer
+ * listed here — they live on calendar.balandda.uz. Their routes are kept in App.jsx
+ * for the front-office domain and for old bookmarks.
+ *
+ * Related admin screens are merged into tabbed hub pages, so one menu entry now
+ * covers what used to be 3–5 entries.
+ */
+const navSections = [
+  {
+    // Top-level, no section header.
+    items: [
+      { path: '/', label: 'Дашборд', icon: BarChart3 },
+    ],
+  },
+  {
+    title: 'Финансы',
+    key: 'finance',
+    items: [
+      { path: '/analytics', label: 'Финансовая аналитика', icon: PieChart },
+      { path: '/transactions', label: 'Транзакции', icon: ArrowLeftRight },
+      { path: '/prepayments', label: 'Предоплаты', icon: CreditCard },
+      { path: '/wallets', label: 'Кошельки', icon: Wallet },
+      { path: '/categories', label: 'Категории операций', icon: FolderOpen },
+      { path: '/admin/reports', label: 'Отчёты', icon: FileText },
+    ],
+  },
+  {
+    title: 'SPA',
+    key: 'spa',
+    items: [
+      { path: '/spa-analytics', label: 'Аналитика SPA', icon: Sparkles },
+      { path: '/spa-commissions', label: 'Комиссии SPA', icon: Wallet },
+      { path: '/admin/spa', label: 'Справочник SPA', icon: Layers },
+    ],
+  },
+  {
+    title: 'Управление',
+    key: 'admin',
+    items: [
+      { path: '/admin/users', label: 'Пользователи', icon: Users },
+      { path: '/admin/properties', label: 'Объекты', icon: Home },
+      { path: '/admin/shop', label: 'Мини бар и шоп', icon: Wine },
+    ],
+  },
+];
+
+const frontOfficeItems = [
   { path: '/calendar', label: 'Календарь', icon: CalendarDays },
   { path: '/pool', label: 'Бассейн', icon: Waves },
   { path: '/spa-schedule', label: 'Расписание SPA', icon: CalendarClock },
   { path: '/changelog', label: 'Журнал броней', icon: History },
-  { path: '/transactions', label: 'Transactions', icon: ArrowLeftRight },
-  { path: '/prepayments', label: 'Предоплаты', icon: CreditCard },
-  { path: '/wallets', label: 'Кошельки', icon: Wallet },
-  { path: '/registration', label: 'Заявки', icon: UserPlus },
-  { path: '/categories', label: 'Categories', icon: FolderOpen },
-  { path: '/users', label: 'Users', icon: Users },
-];
-
-const adminItems = [
-  { path: '/admin/reports', label: 'Отчёты', icon: FileText },
-  { path: '/admin/properties', label: 'Объекты', icon: Home },
-  { path: '/admin/type-labels', label: 'Названия типов', icon: Tag },
-  { path: '/admin/blocked-dates', label: 'Закрытые даты', icon: CalendarOff },
-  { path: '/admin/services', label: 'Услуги', icon: Sparkles },
-  { path: '/admin/service-types', label: 'Типы услуг', icon: Tag },
-  { path: '/admin/service-categories', label: 'SPA категории', icon: Layers },
-  { path: '/admin/spa-locations', label: 'SPA кабинеты', icon: MapPin },
-  { path: '/admin/spa-masters', label: 'SPA мастера', icon: Contact },
-  { path: '/admin/minibar', label: 'Минибар', icon: Wine },
-  { path: '/admin/staff', label: 'Сотрудники', icon: UserCog },
 ];
 
 export default function Layout({ user, onLogout, children, frontOffice }) {
@@ -92,15 +122,32 @@ export default function Layout({ user, onLogout, children, frontOffice }) {
   );
 }
 
+function NavLink({ item, location, onClose }) {
+  const { path, label, icon: Icon } = item;
+  // Hub pages keep their sub-screen in ?tab=, so pathname comparison is enough.
+  const active = location.pathname === path;
+  return (
+    <Link
+      to={path}
+      onClick={onClose}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+        active ? 'bg-blue-50 text-blue-700' : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+      }`}
+    >
+      <Icon size={20} />
+      {label}
+    </Link>
+  );
+}
+
 function SidebarContent({ user, roleLabels, location, onLogout, onClose, frontOffice }) {
-  const items = frontOffice
-    ? [
-        { path: '/calendar', label: 'Календарь', icon: CalendarDays },
-        { path: '/pool', label: 'Бассейн', icon: Waves },
-        { path: '/spa-schedule', label: 'Расписание SPA', icon: CalendarClock },
-        { path: '/changelog', label: 'Журнал броней', icon: History },
-      ]
-    : navItems;
+  // Sections stay open by default; a section containing the active route can't be collapsed shut.
+  const [collapsed, setCollapsed] = useState({});
+
+  function toggle(key) {
+    setCollapsed((c) => ({ ...c, [key]: !c[key] }));
+  }
+
   return (
     <div className="flex flex-col h-full">
       {/* Logo */}
@@ -118,58 +165,61 @@ function SidebarContent({ user, roleLabels, location, onLogout, onClose, frontOf
 
       {/* Navigation */}
       <nav className="flex-1 min-h-0 overflow-y-auto px-3 py-4 space-y-1">
-        {items.map(({ path, label, icon: Icon }) => {
-          const active = location.pathname === path;
-          return (
-            <Link
-              key={path}
-              to={path}
-              onClick={onClose}
-              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                active
-                  ? 'bg-blue-50 text-blue-700'
-                  : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-              }`}
-            >
-              <Icon size={20} />
-              {label}
-            </Link>
-          );
-        })}
-
-        {!frontOffice && (
+        {frontOffice ? (
+          frontOfficeItems.map((item) => (
+            <NavLink key={item.path} item={item} location={location} onClose={onClose} />
+          ))
+        ) : (
           <>
-            {/* Bot replies, comment automation, leads & bot stats live in the CRM now */}
-            <a
-              href="https://crm.balandda.uz/panel"
-              target="_blank"
-              rel="noreferrer"
-              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors"
-            >
-              <MessageSquare size={20} />
-              CRM · боты и заявки ↗
-            </a>
-            <div className="pt-4 pb-1">
-              <p className="px-3 text-xs font-semibold text-gray-400 uppercase tracking-wider">Управление</p>
-            </div>
-            {adminItems.map(({ path, label, icon: Icon }) => {
-              const active = location.pathname === path;
+            {navSections.map((section, i) => {
+              const hasActive = section.items.some((it) => it.path === location.pathname);
+              const isOpen = hasActive || !collapsed[section.key];
               return (
-                <Link
-                  key={path}
-                  to={path}
-                  onClick={onClose}
-                  className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                    active
-                      ? 'bg-blue-50 text-blue-700'
-                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                  }`}
-                >
-                  <Icon size={20} />
-                  {label}
-                </Link>
+                <div key={section.key || `section-${i}`} className={section.title ? 'pt-3' : ''}>
+                  {section.title && (
+                    <button
+                      onClick={() => toggle(section.key)}
+                      className="w-full flex items-center justify-between px-3 py-1 mb-1 text-xs font-semibold text-gray-400 uppercase tracking-wider hover:text-gray-600 transition-colors"
+                    >
+                      {section.title}
+                      <ChevronDown
+                        size={14}
+                        className={`transition-transform ${isOpen ? '' : '-rotate-90'}`}
+                      />
+                    </button>
+                  )}
+                  {isOpen && (
+                    <div className="space-y-1">
+                      {section.items.map((item) => (
+                        <NavLink key={item.path} item={item} location={location} onClose={onClose} />
+                      ))}
+                    </div>
+                  )}
+                </div>
               );
             })}
+
+            {/* Bot replies, comment automation, leads & bot stats live in the CRM now */}
+            <div className="pt-4">
+              <a
+                href="https://crm.balandda.uz/panel"
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-emerald-700 bg-emerald-50 hover:bg-emerald-100 transition-colors"
+              >
+                <MessageSquare size={20} />
+                CRM · боты и заявки ↗
+              </a>
+              <a
+                href="https://calendar.balandda.uz"
+                target="_blank"
+                rel="noreferrer"
+                className="mt-1 flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 transition-colors"
+              >
+                <CalendarDays size={20} />
+                Календарь броней ↗
+              </a>
+            </div>
           </>
         )}
       </nav>

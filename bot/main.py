@@ -650,6 +650,29 @@ async def run_migrations():
         """
         UPDATE app_settings SET value = '3' WHERE key = 'spa_admin_percent' AND value = '0';
         """,
+        # Added 2026-08: Mini shop — a second shelf on minibar_items.
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'minibarsection') THEN
+                CREATE TYPE minibarsection AS ENUM ('MINIBAR', 'MINISHOP');
+            END IF;
+        END $$;
+        """,
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'minibar_items' AND column_name = 'section'
+            ) THEN
+                -- every pre-existing row is a real minibar item
+                ALTER TABLE minibar_items
+                    ADD COLUMN section minibarsection NOT NULL DEFAULT 'MINIBAR';
+                CREATE INDEX IF NOT EXISTS ix_minibar_items_section ON minibar_items (section);
+            END IF;
+        END $$;
+        """,
     ]
     async with engine.begin() as conn:
         for sql in migrations:

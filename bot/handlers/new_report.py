@@ -34,6 +34,8 @@ from db.enums import (
     DISCOUNT_TYPE_LABELS,
     ExpenseCategory,
     EXPENSE_CATEGORY_LABELS,
+    MinibarSection,
+    MINISHOP_SELLER_SETTING_KEY,
     PaymentMethod,
     PAYMENT_METHOD_LABELS,
     ReportStatus,
@@ -42,6 +44,7 @@ from db.enums import (
     WalletTransactionType,
 )
 from db.models import (
+    AppSetting,
     DiscountReason as DiscountReasonEnum,
     DiscountType as DiscountTypeEnum,
     ExpenseEntry,
@@ -74,6 +77,7 @@ class NewReportStates(StatesGroup):
     choosing_service = State()
     choosing_service_master = State()
     choosing_minibar = State()
+    choosing_minishop = State()
     choosing_restaurant_category = State()
     entering_payment = State()
     entering_amount = State()
@@ -81,6 +85,7 @@ class NewReportStates(StatesGroup):
     entering_discount_value = State()
     entering_days = State()
     entering_minibar_qty = State()
+    entering_minishop_qty = State()
     entering_restaurant_note = State()
     confirming_entry = State()
 
@@ -167,6 +172,7 @@ async def build_report_action_menu(lang: str, business_unit: str = "RESORT") -> 
             [InlineKeyboardButton(text="🏠 Заселение", callback_data="rpt:add_accommodation")],
             [InlineKeyboardButton(text="💆 Массаж / SPA", callback_data="rpt:add_service")],
             [InlineKeyboardButton(text="🍹 Мини бар", callback_data="rpt:add_minibar")],
+            [InlineKeyboardButton(text="🛒 Мини шоп", callback_data="rpt:add_minishop")],
             [InlineKeyboardButton(text="💸 Расход", callback_data="rpt:add_expense")],
             [InlineKeyboardButton(text="👁 Предпросмотр", callback_data="rpt:preview")],
             [InlineKeyboardButton(text="✅ Завершить отчёт", callback_data="rpt:finalize")],
@@ -1358,6 +1364,7 @@ async def on_add_minibar(callback: types.CallbackQuery, state: FSMContext):
         result = await session.execute(
             select(MinibarItem)
             .where(MinibarItem.is_active == True)
+            .where(MinibarItem.section == MinibarSection.MINIBAR)
             .order_by(MinibarItem.sort_order)
         )
         items = result.scalars().all()
@@ -1392,7 +1399,8 @@ async def on_minibar_selected(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("Товар не найден")
         return
 
-    await state.update_data(current_minibar=item_id, minibar_price=float(item.price))
+    await state.update_data(current_minibar=item_id, minibar_price=float(item.price),
+                            minibar_name=item.name_ru)
 
     buttons = [
         [
@@ -1575,6 +1583,222 @@ async def on_minibar_confirm(callback: types.CallbackQuery, state: FSMContext):
 
 
 # ────────────────────────────────────────────────────────────────────────
+# MINI SHOP FLOW  (added 2026-08)
+#
+# Pool goods sold at the shop. Differs from the mini bar in two ways:
+#   1. CASH ONLY — no payment-method step at all.
+#   2. The cash always lands in the Mini shop seller's wallet
+#      (app_settings.minishop_seller_telegram_id), even when somebody else
+#      types the sale into the bot. Falls back to the recording user if the
+#      seller has not been configured in the dashboard yet.
+# ────────────────────────────────────────────────────────────────────────
+
+
+async def _minishop_seller_telegram_id(session, fallback: int) -> int:
+    """Whose wallet Mini shop cash goes to. See MINISHOP_SELLER_SETTING_KEY."""
+    row = await session.get(AppSetting, MINISHOP_SELLER_SETTING_KEY)
+    if row and str(row.value).strip():
+        try:
+            return int(str(row.value).strip())
+        except ValueError:
+            logger.warning("Bad %s value %r — falling back to recorder",
+                           MINISHOP_SELLER_SETTING_KEY, row.value)
+    return fallback
+
+
+@router.callback_query(F.data == "rpt:add_minishop", NewReportStates.choosing_action)
+async def on_add_minishop(callback: types.CallbackQuery, state: FSMContext):
+    """Show mini shop item selection."""
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+
+    await state.update_data(
+        current_property=None, base_price=None, amount=None,
+        payment_method=None, discount_type=None, discount_value=None,
+        discount_reason=None, num_days=None, current_service=None,
+        service_price=None, current_minibar=None, minibar_price=None,
+        quantity=None, entry_type="minishop",
+    )
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(MinibarItem)
+            .where(MinibarItem.is_active == True)
+            .where(MinibarItem.section == MinibarSection.MINISHOP)
+            .order_by(MinibarItem.sort_order)
+        )
+        items = result.scalars().all()
+
+    if not items:
+        await callback.answer("Товары мини-шопа не заведены", show_alert=True)
+        return
+
+    buttons = [
+        [InlineKeyboardButton(text=f"{i.name_ru} - {format_amount(i.price)}",
+                              callback_data=f"ms:{i.id}")]
+        for i in items
+    ]
+    buttons.append([InlineKeyboardButton(text=f"❌ {get_text('btn_cancel', lang)}", callback_data="rpt:cancel")])
+
+    await state.set_state(NewReportStates.choosing_minishop)
+    await callback.message.edit_text(
+        "🛒 Выберите товар мини-шопа:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("ms:"), NewReportStates.choosing_minishop)
+async def on_minishop_selected(callback: types.CallbackQuery, state: FSMContext):
+    """Mini shop item selected, ask for quantity."""
+    item_id = int(callback.data.split(":")[1])
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+
+    async with async_session() as session:
+        item = await session.get(MinibarItem, item_id)
+
+    if not item:
+        await callback.answer("Товар не найден")
+        return
+
+    await state.update_data(
+        current_minibar=item_id,
+        minibar_price=float(item.price),
+        minibar_name=item.name_ru,
+    )
+
+    buttons = [
+        [InlineKeyboardButton(text=str(n), callback_data=f"ms_qty:{n}") for n in (1, 2, 3, 4, 5)],
+        [InlineKeyboardButton(text="Другое", callback_data="ms_qty:other")],
+        [InlineKeyboardButton(text=f"❌ {get_text('btn_cancel', lang)}", callback_data="rpt:cancel")],
+    ]
+
+    await state.set_state(NewReportStates.entering_minishop_qty)
+    await callback.message.edit_text(
+        f"🛒 {item.name_ru} - {format_amount(item.price)}\n\nКоличество:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons),
+    )
+    await callback.answer()
+
+
+def _minishop_confirm_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✅ Подтвердить", callback_data="ms:confirm"),
+        InlineKeyboardButton(text="❌ Отмена", callback_data="rpt:cancel"),
+    ]])
+
+
+def _minishop_confirm_text(name: str, qty: int, amount: Decimal) -> str:
+    # Cash-only, so no payment-method question — straight to confirmation.
+    return (
+        f"🛒 {name}\n"
+        f"Количество: {qty}\n"
+        f"Сумма: {format_amount(amount)}\n"
+        f"Способ оплаты: {PAYMENT_METHOD_LABELS.get(PaymentMethod.CASH, 'Наличные')}\n\n"
+        f"Всё верно?"
+    )
+
+
+@router.callback_query(F.data.startswith("ms_qty:"), NewReportStates.entering_minishop_qty)
+async def on_minishop_qty_selected(callback: types.CallbackQuery, state: FSMContext):
+    """Mini shop quantity selected."""
+    qty_str = callback.data.split(":")[1]
+    data = await state.get_data()
+
+    if qty_str == "other":
+        await callback.message.edit_text("Введите количество:")
+        await callback.answer()
+        return
+
+    qty = int(qty_str)
+    amount = Decimal(str(data["minibar_price"])) * qty
+    await state.update_data(quantity=qty, amount=str(amount),
+                            payment_method=PaymentMethod.CASH.value)
+
+    await state.set_state(NewReportStates.confirming_entry)
+    await callback.message.edit_text(
+        _minishop_confirm_text(data.get("minibar_name", "Товар"), qty, amount),
+        reply_markup=_minishop_confirm_kb(),
+    )
+    await callback.answer()
+
+
+@router.message(NewReportStates.entering_minishop_qty)
+async def on_minishop_qty_entered(message: types.Message, state: FSMContext):
+    """Mini shop quantity entered as text."""
+    data = await state.get_data()
+
+    try:
+        qty = int(message.text.strip())
+        if qty <= 0:
+            raise ValueError
+    except (ValueError, AttributeError):
+        await message.answer("❌ Введите корректное количество")
+        return
+
+    amount = Decimal(str(data["minibar_price"])) * qty
+    await state.update_data(quantity=qty, amount=str(amount),
+                            payment_method=PaymentMethod.CASH.value)
+
+    await state.set_state(NewReportStates.confirming_entry)
+    await message.answer(
+        _minishop_confirm_text(data.get("minibar_name", "Товар"), qty, amount),
+        reply_markup=_minishop_confirm_kb(),
+    )
+
+
+@router.callback_query(F.data == "ms:confirm", NewReportStates.confirming_entry)
+async def on_minishop_confirm(callback: types.CallbackQuery, state: FSMContext):
+    """Save mini shop entry — cash only, credited to the configured seller."""
+    data = await state.get_data()
+    lang = data.get("lang", "ru")
+    report_id = data["report_id"]
+    amount = Decimal(data["amount"])
+
+    async with async_session() as session:
+        session.add(IncomeEntry(
+            report_id=report_id,
+            minibar_item_id=data["current_minibar"],
+            payment_method=PaymentMethod.CASH,
+            amount=amount,
+            quantity=data.get("quantity", 1),
+        ))
+
+        report = await session.get(StructuredReport, report_id)
+        if report:
+            report.total_income = (report.total_income or Decimal(0)) + amount
+            await session.merge(report)
+
+        # Hard-locked: the seller's wallet, not the recorder's.
+        seller_id = await _minishop_seller_telegram_id(session, callback.from_user.id)
+        await _auto_wallet_cash_in(
+            session, seller_id, amount, report_id, data.get("business_unit"),
+        )
+
+        await session.commit()
+
+    user = await get_user(callback.from_user.id)
+    await notify_income_entry(
+        callback.bot,
+        user_name=user.full_name if user else "?",
+        entry_name=f"Мини-шоп: {data.get('minibar_name', '?')}",
+        amount=float(amount),
+        payment_label=PAYMENT_METHOD_LABELS.get(PaymentMethod.CASH, "Наличные"),
+        business_unit=data.get("business_unit", "RESORT"),
+    )
+
+    await state.update_data(current_minibar=None, quantity=None, minibar_name=None)
+    await state.set_state(NewReportStates.choosing_action)
+    keyboard = await build_report_action_menu(lang, business_unit=data.get("business_unit", "RESORT"))
+    await callback.message.edit_text(
+        "✅ Товар добавлен\n\nВыберите действие:",
+        reply_markup=keyboard,
+    )
+    await callback.answer()
+
+
+# ────────────────────────────────────────────────────────────────────────
 # PREVIEW
 # ────────────────────────────────────────────────────────────────────────
 
@@ -1622,7 +1846,8 @@ async def on_preview(callback: types.CallbackQuery, state: FSMContext):
                 elif entry.minibar_item_id:
                     item = await session.get(MinibarItem, entry.minibar_item_id)
                     qty = entry.quantity or 1
-                    lines.append(f"  • {item.name_ru if item else 'Товар'} (x{qty}): {format_amount(entry.amount)}")
+                    icon = "🛒" if item and item.section == MinibarSection.MINISHOP else "🍹"
+                    lines.append(f"  • {icon} {item.name_ru if item else 'Товар'} (x{qty}): {format_amount(entry.amount)}")
                 else:
                     # Generic income (e.g., restaurant)
                     if entry.restaurant_category:

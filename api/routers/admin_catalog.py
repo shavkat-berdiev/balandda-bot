@@ -5,7 +5,7 @@ from decimal import Decimal
 
 import re
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +25,8 @@ from db.models import (
     BlockedPeriod,
     BusinessUnit,
     MinibarItem,
+    MinibarSection,
+    MINISHOP_SELLER_SETTING_KEY,
     Property,
     PropertyTypeLabel,
     ServiceCategory,
@@ -33,6 +35,7 @@ from db.models import (
     SpaLocation,
     SpaMaster,
     StaffMember,
+    User,
     get_service_type_labels,
 )
 from services.beds24 import kick as beds24_kick  # re-push OTA availability on rule changes
@@ -240,6 +243,7 @@ class MinibarCreate(BaseModel):
     name_uz: str
     price: float = 0
     sort_order: int = 0
+    section: MinibarSection = MinibarSection.MINIBAR
 
 
 class MinibarUpdate(BaseModel):
@@ -248,6 +252,7 @@ class MinibarUpdate(BaseModel):
     price: float | None = None
     sort_order: int | None = None
     is_active: bool | None = None
+    section: MinibarSection | None = None
 
 
 class MinibarOut(BaseModel):
@@ -257,6 +262,7 @@ class MinibarOut(BaseModel):
     price: float
     is_active: bool
     sort_order: int
+    section: MinibarSection
 
 
 # ── Staff schemas ─────────────────────────────────────────────────
@@ -935,15 +941,20 @@ def _minibar_out(m: MinibarItem) -> MinibarOut:
         price=float(m.price),
         is_active=m.is_active,
         sort_order=m.sort_order,
+        section=m.section or MinibarSection.MINIBAR,
     )
 
 
 @router.get("/minibar", response_model=list[MinibarOut])
 async def list_minibar(
+    section: MinibarSection | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
     user: dict = Depends(get_current_user),
 ):
-    result = await session.execute(select(MinibarItem).order_by(MinibarItem.sort_order))
+    query = select(MinibarItem).order_by(MinibarItem.sort_order)
+    if section is not None:
+        query = query.where(MinibarItem.section == section)
+    result = await session.execute(query)
     return [_minibar_out(m) for m in result.scalars().all()]
 
 
@@ -959,6 +970,7 @@ async def create_minibar(
         name_uz=data.name_uz,
         price=Decimal(str(data.price)),
         sort_order=data.sort_order,
+        section=data.section,
     )
     session.add(item)
     await session.commit()
@@ -989,6 +1001,60 @@ async def update_minibar(
     await session.commit()
     await session.refresh(item)
     return _minibar_out(item)
+
+
+# ── Mini shop seller ──────────────────────────────────────────────
+#
+# Mini shop is cash-only and the cash always belongs to one person (the shop
+# seller), whoever happens to type the sale into the bot. That telegram_id lives
+# in app_settings; the bot reads it in new_report.on_minishop_confirm.
+
+
+class MinishopSellerUpdate(BaseModel):
+    telegram_id: int | None = None  # null clears it → cash falls back to the recorder
+
+
+@router.get("/minishop/seller")
+async def get_minishop_seller(
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    row = await session.get(AppSetting, MINISHOP_SELLER_SETTING_KEY)
+    raw = (row.value or "").strip() if row else ""
+    if not raw:
+        return {"telegram_id": None, "full_name": None}
+
+    try:
+        tid = int(raw)
+    except ValueError:
+        return {"telegram_id": None, "full_name": None}
+
+    result = await session.execute(select(User).where(User.telegram_id == tid))
+    seller = result.scalar_one_or_none()
+    return {"telegram_id": tid, "full_name": seller.full_name if seller else None}
+
+
+@router.put("/minishop/seller")
+async def set_minishop_seller(
+    data: MinishopSellerUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    value = "" if data.telegram_id is None else str(data.telegram_id)
+
+    if value:
+        result = await session.execute(select(User).where(User.telegram_id == data.telegram_id))
+        if not result.scalar_one_or_none():
+            raise HTTPException(status_code=400, detail="No user with that telegram_id")
+
+    row = await session.get(AppSetting, MINISHOP_SELLER_SETTING_KEY)
+    if row:
+        row.value = value
+    else:
+        session.add(AppSetting(key=MINISHOP_SELLER_SETTING_KEY, value=value))
+    await session.commit()
+    return await get_minishop_seller(session, user)
 
 
 # ── Staff CRUD ────────────────────────────────────────────────────

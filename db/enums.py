@@ -38,6 +38,18 @@ class PaymentMethod(str, enum.Enum):
     PREPAYMENT = "PREPAYMENT"
 
 
+class MinibarSection(str, enum.Enum):
+    """Which shelf a `minibar_items` row belongs to.
+
+    MINIBAR  — in-room drinks/snacks, any payment method, sold by whoever is on shift.
+    MINISHOP — pool shop goods (added 2026-08): CASH ONLY, and the cash always lands
+               in the Mini Shop seller's wallet (app_settings.minishop_seller_telegram_id),
+               no matter who types the sale into the bot.
+    """
+    MINIBAR = "MINIBAR"
+    MINISHOP = "MINISHOP"
+
+
 class AccommodationType(str, enum.Enum):
     DOMIK = "DOMIK"
     APARTMENT = "APARTMENT"
@@ -219,6 +231,15 @@ PAYMENT_METHOD_LABELS = {
     PaymentMethod.TERMINAL_UZCARD: "Терминал UzCard",
     PaymentMethod.PAYME: "PayMe",
     PaymentMethod.PREPAYMENT: "Предоплата",
+}
+
+# app_settings key holding the telegram_id whose wallet receives ALL Mini shop cash,
+# regardless of who records the sale. Empty/absent → fall back to the recording user.
+MINISHOP_SELLER_SETTING_KEY = "minishop_seller_telegram_id"
+
+MINIBAR_SECTION_LABELS = {
+    MinibarSection.MINIBAR: "Мини бар",
+    MinibarSection.MINISHOP: "Мини шоп",
 }
 
 ACCOMMODATION_TYPE_LABELS = {

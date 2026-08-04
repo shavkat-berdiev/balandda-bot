@@ -177,8 +177,11 @@ export const api = {
   getSpaCommissionsSummary: (from, to) => request(`/spa/commissions/summary?start_date=${from}&end_date=${to}`),
   getSpaCommissionsDetails: (masterId, from, to) => request(`/spa/commissions/details?master_id=${masterId}&start_date=${from}&end_date=${to}`),
 
-  // Admin — Minibar
-  getAdminMinibar: () => request('/admin/minibar'),
+  // Admin — Minibar / Mini shop (two sections of the same catalog)
+  getAdminMinibar: (section) => request(`/admin/minibar${section ? `?section=${section}` : ''}`),
+  getMinishopSeller: () => request('/admin/minishop/seller'),
+  setMinishopSeller: (telegram_id) =>
+    request('/admin/minishop/seller', { method: 'PUT', body: JSON.stringify({ telegram_id }) }),
   createAdminMinibar: (data) => request('/admin/minibar', { method: 'POST', body: JSON.stringify(data) }),
   updateAdminMinibar: (id, data) => request(`/admin/minibar/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
 

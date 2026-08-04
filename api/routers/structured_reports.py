@@ -24,6 +24,7 @@ from db.models import (
     ExpenseEntry,
     IncomeEntry,
     MinibarItem,
+    MinibarSection,
     Prepayment,
     PrepaymentStatus,
     Property,
@@ -74,6 +75,7 @@ class MinibarItemResponse(BaseModel):
     name_uz: str
     price: float
     is_active: bool
+    section: str = "MINIBAR"
 
 
 class StaffMemberResponse(BaseModel):
@@ -88,6 +90,8 @@ class IncomeEntryResponse(BaseModel):
     property_name: str | None
     service_name: str | None
     minibar_name: str | None
+    # "MINIBAR" | "MINISHOP" — lets the dashboard show Мини шоп as its own line
+    minibar_section: str | None = None
     payment_method: str
     payment_label: str
     amount: float
@@ -206,13 +210,16 @@ async def list_services(
 @router.get("/minibar", response_model=list[MinibarItemResponse])
 async def list_minibar(
     active_only: bool = Query(default=True),
+    section: MinibarSection | None = Query(default=None),
     session: AsyncSession = Depends(get_session),
     _user: dict = Depends(get_current_user),
 ):
-    """List all minibar items."""
+    """List minibar / mini shop items. Omit `section` for both shelves."""
     query = select(MinibarItem).order_by(MinibarItem.sort_order)
     if active_only:
         query = query.where(MinibarItem.is_active == True)
+    if section is not None:
+        query = query.where(MinibarItem.section == section)
     result = await session.execute(query)
     items = result.scalars().all()
 
@@ -223,6 +230,7 @@ async def list_minibar(
             name_uz=i.name_uz,
             price=float(i.price),
             is_active=i.is_active,
+            section=(i.section or MinibarSection.MINIBAR).value,
         )
         for i in items
     ]
@@ -302,6 +310,18 @@ async def list_structured_reports(
     ]
 
 
+
+def _minibar_category(item) -> str:
+    """Income-category label for a minibar_items row.
+
+    The Mini bar keeps its historical «Мини-бар» spelling (with the hyphen) so
+    existing charts don't split into two series when Mini shop was added 2026-08.
+    """
+    if item is not None and item.section == MinibarSection.MINISHOP:
+        return "Мини шоп"
+    return "Мини-бар"
+
+
 @router.get("/detail/{report_id}", response_model=StructuredReportResponse)
 async def get_structured_report(
     report_id: int,
@@ -330,6 +350,10 @@ async def get_structured_report(
         prop_name = entry.property.name_ru if entry.property else None
         svc_name = entry.service_item.name_ru if entry.service_item else None
         mb_name = entry.minibar_item.name_ru if entry.minibar_item else None
+        mb_section = (
+            (entry.minibar_item.section or MinibarSection.MINIBAR).value
+            if entry.minibar_item else None
+        )
         disc_reason_label = None
         if entry.discount_reason:
             disc_reason_label = DISCOUNT_REASON_LABELS.get(entry.discount_reason, entry.discount_reason.value)
@@ -339,6 +363,7 @@ async def get_structured_report(
             property_name=prop_name,
             service_name=svc_name,
             minibar_name=mb_name,
+            minibar_section=mb_section,
             payment_method=entry.payment_method.value,
             payment_label=PAYMENT_METHOD_LABELS.get(entry.payment_method, entry.payment_method.value),
             amount=float(entry.amount),
@@ -536,7 +561,7 @@ async def structured_transactions(
                 category = (
                     "Проживание" if entry.property else
                     "Услуги" if entry.service_item else
-                    "Мини-бар" if entry.minibar_item else
+                    _minibar_category(entry.minibar_item) if entry.minibar_item else
                     "Прочее"
                 )
                 transactions.append({
@@ -667,7 +692,7 @@ async def structured_dashboard(
                 svc_name = entry.service_item.name_ru
                 by_service[svc_name] = by_service.get(svc_name, 0) + amt
             elif entry.minibar_item:
-                cat = "Мини-бар"
+                cat = _minibar_category(entry.minibar_item)
             else:
                 cat = "Прочее"
             by_income_cat[cat] = by_income_cat.get(cat, 0) + amt
