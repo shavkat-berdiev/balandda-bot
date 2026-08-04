@@ -238,6 +238,32 @@ async def send_daily_digest() -> None:
         lines = [f"📋 <b>SPA расписание на {date_str}</b>", "", "Записей нет."]
     text = "\n".join(lines)
 
+    # Commission block — what each master earned yesterday and what is still owed.
+    # Goes to the SPA admin and the owners: it is the number they act on when
+    # deciding payouts, and it is the only place the running debt is visible daily.
+    async with async_session() as session4:
+        rows = await sc.summary(session4, y_start, y_end)
+
+    comm_extra = ""
+    active_rows = [r for r in rows if r["earned"] or r["balance"]]
+    if active_rows:
+        cl = ["", "💰 <b>Комиссии мастеров (вчера):</b>"]
+        earned_rows = [r for r in active_rows if r["earned"]]
+        if earned_rows:
+            for r in earned_rows:
+                cl.append(f"• {r['name']} — {r['services_done']} усл. · {_fmt(r['earned'])} UZS")
+            cl.append(f"Итого за вчера: <b>{_fmt(sum(r['earned'] for r in earned_rows))} UZS</b>")
+        else:
+            cl.append("Вчера начислений не было.")
+
+        owed_rows = [r for r in active_rows if r["balance"]]
+        if owed_rows:
+            cl += ["", "📊 <b>Не выплачено (всего):</b>"]
+            for r in owed_rows:
+                cl.append(f"• {r['name']}: {_fmt(r['balance'])} UZS")
+            cl.append(f"Итого к выплате: <b>{_fmt(sum(r['balance'] for r in owed_rows))} UZS</b>")
+        comm_extra = "\n".join(cl)
+
     # SPA admin additionally gets her personal bonus block (% of done revenue)
     admin_extra = ""
     if settings.spa_admin_telegram_id:
@@ -258,5 +284,9 @@ async def send_daily_digest() -> None:
     for tid in [settings.spa_admin_telegram_id, *owner_ids]:
         if tid and tid not in sent:
             sent.add(tid)
-            extra = admin_extra if tid == settings.spa_admin_telegram_id else ""
+            # Everyone in this list sees the commission block; the personal
+            # bonus is the admin's own money, so only she gets that.
+            extra = comm_extra
+            if tid == settings.spa_admin_telegram_id:
+                extra += admin_extra
             await send_message(tid, text + extra)
