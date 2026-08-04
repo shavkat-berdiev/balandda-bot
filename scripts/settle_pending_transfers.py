@@ -46,6 +46,7 @@ import argparse
 import asyncio
 import os
 import sys
+from datetime import date, datetime, time, timezone
 from decimal import Decimal
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -142,14 +143,29 @@ async def survey(session):
     print("\nRe-run with --receiver <tg_id> to see the detail for one person.")
 
 
-async def settle(session, receiver_id: int, apply: bool, reason: str):
+async def settle(session, receiver_id: int, apply: bool, reason: str, before: date | None = None):
+    """`before` (exclusive) limits the sweep to transfers older than that date, so
+    recent legitimate transfers still awaiting a normal accept are left alone."""
+    conds = [WalletTransaction.receiver_telegram_id == receiver_id,
+             WalletTransaction.status == WalletTransactionStatus.PENDING,
+             WalletTransaction.transaction_type.in_(TRANSFER_TYPES)]
+    if before is not None:
+        conds.append(WalletTransaction.created_at
+                     < datetime.combine(before, time.min, tzinfo=timezone.utc))
+
     rows = (await session.execute(
-        select(WalletTransaction)
-        .where(WalletTransaction.receiver_telegram_id == receiver_id,
-               WalletTransaction.status == WalletTransactionStatus.PENDING,
-               WalletTransaction.transaction_type.in_(TRANSFER_TYPES))
-        .order_by(WalletTransaction.created_at)
+        select(WalletTransaction).where(*conds).order_by(WalletTransaction.created_at)
     )).scalars().all()
+
+    skipped = 0
+    if before is not None:
+        total_pending = (await session.execute(
+            select(func.count()).where(
+                WalletTransaction.receiver_telegram_id == receiver_id,
+                WalletTransaction.status == WalletTransactionStatus.PENDING,
+                WalletTransaction.transaction_type.in_(TRANSFER_TYPES))
+        )).scalar()
+        skipped = total_pending - len(rows)
 
     who = await names(session, {receiver_id} | {t.sender_telegram_id for t in rows})
     receiver_name = who.get(receiver_id, "(unknown)")
@@ -173,7 +189,10 @@ async def settle(session, receiver_id: int, apply: bool, reason: str):
     total = sum((Decimal(str(t.amount)) for t in rows), Decimal(0))
 
     print(f"\nReceiver: {receiver_name} ({receiver_id})")
-    print(f"Pending transfers to settle: {len(rows)}   total {money(total)} UZS\n")
+    print(f"Pending transfers to settle: {len(rows)}   total {money(total)} UZS")
+    if before is not None:
+        print(f"Cutoff: before {before} — leaving {skipped} newer transfer(s) untouched")
+    print()
     print(f"  {'id':>6}  {'date':<12} {'from':<26} {'amount':>16}")
     print("  " + "-" * 66)
     for t in rows:
@@ -230,8 +249,9 @@ async def settle(session, receiver_id: int, apply: bool, reason: str):
             WalletTransaction.transaction_type.in_(TRANSFER_TYPES))
     )).scalar()
 
-    print(f"\nPending inbox for {receiver_name}: {left} (was {len(rows)})")
-    print("DONE — every balance unchanged, queue cleared." if ok and left == 0
+    print(f"\nPending inbox for {receiver_name}: {left} (settled {len(rows)})")
+    expected_left = skipped
+    print("DONE — every balance unchanged, queue cleared." if ok and left == expected_left
           else "!! Unexpected result — review before trusting this.")
 
 
@@ -239,6 +259,8 @@ async def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--receiver", type=int, help="telegram_id whose pending inbox to settle")
     ap.add_argument("--apply", action="store_true", help="actually write (default is dry run)")
+    ap.add_argument("--before", type=date.fromisoformat, metavar="YYYY-MM-DD",
+                    help="only settle transfers created BEFORE this date (exclusive)")
     ap.add_argument("--reason", default="учтено в бумажных отчётах до перехода на бота")
     args = ap.parse_args()
 
@@ -246,7 +268,7 @@ async def main():
         if args.receiver is None:
             await survey(session)
         else:
-            await settle(session, args.receiver, args.apply, args.reason)
+            await settle(session, args.receiver, args.apply, args.reason, args.before)
 
 
 asyncio.run(main())
