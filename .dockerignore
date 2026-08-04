@@ -1,0 +1,23 @@
+# Keep the Docker build context small and readable.
+# docker/pgdata and docker/uploads are written by the containers as root — without
+# these entries `docker compose build` fails with "permission denied" reading them.
+docker/pgdata
+docker/uploads
+
+# Frontend deps + build output are never needed inside the api/bot images.
+web/node_modules
+web/dist
+
+.git
+.gitignore
+_to_delete
+
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.venv
+venv
+
+*.tar.gz
+.env
