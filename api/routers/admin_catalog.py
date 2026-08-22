@@ -1,10 +1,11 @@
 """Admin CRUD endpoints for catalog items (properties, services, minibar, staff)."""
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
 import re
 
+import aiohttp
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -20,15 +21,24 @@ from db.enums import (
     PropertyType,
     ServiceType,
 )
+from db.pricing import (
+    freeze_open_totals,
+    load_rate_index,
+    nightly_price,
+)
 from db.models import (
     AppSetting,
     BlockedPeriod,
     BusinessUnit,
+    Holiday,
     MinibarItem,
     MinibarSection,
     MINISHOP_SELLER_SETTING_KEY,
     Property,
     PropertyTypeLabel,
+    RateSeason,
+    RateSeasonPeriod,
+    RateSeasonPrice,
     ServiceCategory,
     ServiceItem,
     ServiceTypeDef,
@@ -39,6 +49,7 @@ from db.models import (
     get_service_type_labels,
 )
 from services.beds24 import kick as beds24_kick  # re-push OTA availability on rule changes
+from services.beds24 import push_full as beds24_push_full
 
 LOCATION_MODES = {"room_only", "room_or_cottage", "cottage_only"}
 
@@ -473,6 +484,9 @@ async def update_property(
 
     await session.commit()
     await session.refresh(prop)
+    # A base-rate edit must reach the OTAs too, not wait for the hourly push.
+    if "price_weekday" in updates or "price_weekend" in updates or "is_active" in updates:
+        beds24_kick()
     return _property_out(prop)
 
 
@@ -1226,3 +1240,488 @@ async def delete_blocked_period(
     await session.commit()
     beds24_kick()  # reopen the dates on the OTAs
     return {"ok": True}
+
+
+# ── Seasonal rates + holidays ─────────────────────────────────────
+# properties.price_weekday/weekend remain the BASE (high season) rate. A season
+# overrides it for the dates it covers; one season can hold several date ranges
+# (autumn + spring = one low season, priced once). Holidays flip a night to the
+# weekend rate. Resolution lives in db/pricing.py — nothing here decides a price.
+# Every write kicks Beds24 so Booking.com/Ostrovok/Airbnb/Google follow.
+
+
+class SeasonPeriodIn(BaseModel):
+    date_from: date
+    date_to: date
+    label: str | None = None
+
+
+class SeasonPriceIn(BaseModel):
+    property_id: int
+    price_weekday: float
+    price_weekend: float
+
+
+class SeasonCreate(BaseModel):
+    name: str
+    priority: int = 0
+    is_active: bool = True
+    periods: list[SeasonPeriodIn] = []
+    # Optional prefill applied to every active RESORT unit when no explicit
+    # prices are given: "delta" adds `amount` (use a negative number),
+    # "percent" scales by `amount` %. Saturday is left untouched unless
+    # `apply_weekend` is set.
+    prefill_mode: str | None = None            # "delta" | "percent" | None
+    prefill_amount: float = 0
+    prefill_apply_weekend: bool = False
+    prices: list[SeasonPriceIn] = []
+
+
+class SeasonUpdate(BaseModel):
+    name: str | None = None
+    priority: int | None = None
+    is_active: bool | None = None
+
+
+class HolidayIn(BaseModel):
+    date: date
+    name: str | None = None
+    is_active: bool = True
+
+
+# Fixed-date public holidays in Uzbekistan. Ramazon/Qurbon Hayit are lunar and
+# shift every year, so they are deliberately NOT preset — add them by hand once
+# the dates are announced.
+UZ_HOLIDAYS = [
+    ((1, 1), "Новый год"),
+    ((1, 14), "День защитников Родины"),
+    ((3, 8), "Международный женский день"),
+    ((3, 21), "Навруз"),
+    ((5, 9), "День памяти и почестей"),
+    ((9, 1), "День Независимости"),
+    ((10, 1), "День учителя и наставника"),
+    ((12, 8), "День Конституции"),
+]
+
+
+async def _season_out(session: AsyncSession, s: RateSeason) -> dict:
+    return {
+        "id": s.id,
+        "name": s.name,
+        "priority": s.priority or 0,
+        "is_active": s.is_active,
+        "periods": [
+            {
+                "id": p.id,
+                "date_from": p.date_from.isoformat(),
+                "date_to": p.date_to.isoformat(),
+                "label": p.label,
+                "nights": (p.date_to - p.date_from).days + 1,
+            }
+            for p in sorted(s.periods, key=lambda x: x.date_from)
+        ],
+        "prices": [
+            {
+                "property_id": pr.property_id,
+                "price_weekday": int(round(float(pr.price_weekday or 0))),
+                "price_weekend": int(round(float(pr.price_weekend or 0))),
+            }
+            for pr in s.prices
+        ],
+    }
+
+
+async def _load_season(session: AsyncSession, season_id: int) -> RateSeason:
+    s = (
+        await session.execute(
+            select(RateSeason)
+            .options(selectinload(RateSeason.periods), selectinload(RateSeason.prices))
+            .where(RateSeason.id == season_id)
+        )
+    ).scalar_one_or_none()
+    if not s:
+        raise HTTPException(status_code=404, detail="Season not found")
+    return s
+
+
+@router.get("/rate-seasons")
+async def list_rate_seasons(
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """All seasons with their date ranges and per-unit prices."""
+    rows = (
+        await session.execute(
+            select(RateSeason)
+            .options(selectinload(RateSeason.periods), selectinload(RateSeason.prices))
+            .order_by(RateSeason.priority.desc(), RateSeason.id)
+        )
+    ).scalars().all()
+    return [await _season_out(session, s) for s in rows]
+
+
+@router.post("/rate-seasons")
+async def create_rate_season(
+    data: SeasonCreate,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    name = (data.name or "").strip()[:80]
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    for p in data.periods:
+        if p.date_to < p.date_from:
+            raise HTTPException(status_code=400, detail="date_to must be >= date_from")
+
+    season = RateSeason(name=name, priority=data.priority or 0, is_active=data.is_active)
+    session.add(season)
+    await session.flush()
+
+    for p in data.periods:
+        session.add(
+            RateSeasonPeriod(
+                season_id=season.id,
+                date_from=p.date_from,
+                date_to=p.date_to,
+                label=(p.label or "").strip()[:80] or None,
+            )
+        )
+
+    if data.prices:
+        for pr in data.prices:
+            session.add(
+                RateSeasonPrice(
+                    season_id=season.id,
+                    property_id=pr.property_id,
+                    price_weekday=Decimal(str(pr.price_weekday)),
+                    price_weekend=Decimal(str(pr.price_weekend)),
+                )
+            )
+    elif data.prefill_mode in ("delta", "percent"):
+        props = (
+            await session.execute(
+                select(Property)
+                .where(Property.is_active.is_(True))
+                .where(Property.business_unit == BusinessUnit.RESORT)
+            )
+        ).scalars().all()
+        amt = float(data.prefill_amount or 0)
+        for p in props:
+            def _apply(v: float) -> float:
+                out = v + amt if data.prefill_mode == "delta" else v * (1 + amt / 100)
+                return max(0.0, round(out))
+
+            wd = _apply(float(p.price_weekday or 0))
+            we = _apply(float(p.price_weekend or 0)) if data.prefill_apply_weekend else float(p.price_weekend or 0)
+            session.add(
+                RateSeasonPrice(
+                    season_id=season.id,
+                    property_id=p.id,
+                    price_weekday=Decimal(str(wd)),
+                    price_weekend=Decimal(str(we)),
+                )
+            )
+
+    await session.commit()
+    beds24_kick()
+    return await _season_out(session, await _load_season(session, season.id))
+
+
+@router.put("/rate-seasons/{season_id}")
+async def update_rate_season(
+    season_id: int,
+    data: SeasonUpdate,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    s = await _load_season(session, season_id)
+    if data.name is not None:
+        s.name = data.name.strip()[:80] or s.name
+    if data.priority is not None:
+        s.priority = data.priority
+    if data.is_active is not None:
+        s.is_active = data.is_active
+    await session.commit()
+    beds24_kick()  # activating/deactivating a season reprices the OTA calendar
+    return await _season_out(session, await _load_season(session, season_id))
+
+
+@router.delete("/rate-seasons/{season_id}")
+async def delete_rate_season(
+    season_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    s = await _load_season(session, season_id)
+    await session.delete(s)
+    await session.commit()
+    beds24_kick()
+    return {"ok": True}
+
+
+@router.post("/rate-seasons/{season_id}/periods")
+async def add_season_period(
+    season_id: int,
+    data: SeasonPeriodIn,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    await _load_season(session, season_id)
+    if data.date_to < data.date_from:
+        raise HTTPException(status_code=400, detail="date_to must be >= date_from")
+    session.add(
+        RateSeasonPeriod(
+            season_id=season_id,
+            date_from=data.date_from,
+            date_to=data.date_to,
+            label=(data.label or "").strip()[:80] or None,
+        )
+    )
+    await session.commit()
+    beds24_kick()
+    return await _season_out(session, await _load_season(session, season_id))
+
+
+@router.delete("/rate-seasons/periods/{period_id}")
+async def delete_season_period(
+    period_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    p = await session.get(RateSeasonPeriod, period_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Not found")
+    season_id = p.season_id
+    await session.delete(p)
+    await session.commit()
+    beds24_kick()
+    return await _season_out(session, await _load_season(session, season_id))
+
+
+@router.put("/rate-seasons/{season_id}/prices")
+async def set_season_prices(
+    season_id: int,
+    data: list[SeasonPriceIn],
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Bulk-save the price grid. Units omitted from the payload are removed
+    from the season and fall back to their base rate."""
+    _require_admin(user)
+    s = await _load_season(session, season_id)
+    existing = {pr.property_id: pr for pr in s.prices}
+    sent: set[int] = set()
+    for row in data:
+        sent.add(row.property_id)
+        cur = existing.get(row.property_id)
+        if cur:
+            cur.price_weekday = Decimal(str(row.price_weekday))
+            cur.price_weekend = Decimal(str(row.price_weekend))
+        else:
+            session.add(
+                RateSeasonPrice(
+                    season_id=season_id,
+                    property_id=row.property_id,
+                    price_weekday=Decimal(str(row.price_weekday)),
+                    price_weekend=Decimal(str(row.price_weekend)),
+                )
+            )
+    for pid, cur in existing.items():
+        if pid not in sent:
+            await session.delete(cur)
+    await session.commit()
+    beds24_kick()
+    return await _season_out(session, await _load_season(session, season_id))
+
+
+@router.get("/rate-preview")
+async def rate_preview(
+    date_from: date,
+    date_to: date,
+    property_id: int | None = None,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Resolved price for every night in the range — the check-before-publish view.
+
+    Returns one row per night per unit with the winning season, the band that
+    was applied and the resulting price, so the owner can see exactly what a
+    guest will be charged before anything goes live.
+    """
+    if date_to < date_from:
+        raise HTTPException(status_code=400, detail="date_to must be >= date_from")
+    if (date_to - date_from).days > 400:
+        raise HTTPException(status_code=400, detail="range too long")
+
+    q = (
+        select(Property)
+        .where(Property.is_active.is_(True))
+        .where(Property.business_unit == BusinessUnit.RESORT)
+        .order_by(Property.sort_order)
+    )
+    if property_id:
+        q = q.where(Property.id == property_id)
+    props = (await session.execute(q)).scalars().all()
+
+    end_exclusive = date_to + timedelta(days=1)
+    idx = await load_rate_index(session, date_from, end_exclusive, property_ids=[p.id for p in props])
+    blocks = await get_blocked(session)
+
+    def _blocked(pid: int, d: date) -> bool:
+        return any(
+            (b.property_id is None or b.property_id == pid) and b.date_from <= d <= b.date_to
+            for b in blocks
+        )
+
+    out = []
+    for p in props:
+        nights = []
+        d = date_from
+        while d <= date_to:
+            w = idx.window_for(p.id, d)
+            nights.append(
+                {
+                    "date": d.isoformat(),
+                    "price": nightly_price(idx, p.id, d),
+                    "band": "weekend" if idx.is_weekend_band(d) else "weekday",
+                    "holiday": idx.holidays.get(d) if d in idx.holidays else None,
+                    "season": w.name if w else None,
+                    "blocked": _blocked(p.id, d),
+                }
+            )
+            d += timedelta(days=1)
+        out.append({"property_id": p.id, "code": p.code, "name": p.name_ru, "nights": nights})
+    return {"from": date_from.isoformat(), "to": date_to.isoformat(), "units": out}
+
+
+@router.get("/holidays")
+async def list_holidays(
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    rows = (await session.execute(select(Holiday).order_by(Holiday.date))).scalars().all()
+    return [
+        {"id": h.id, "date": h.date.isoformat(), "name": h.name, "is_active": h.is_active}
+        for h in rows
+    ]
+
+
+@router.post("/holidays")
+async def create_holiday(
+    data: HolidayIn,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    existing = (
+        await session.execute(select(Holiday).where(Holiday.date == data.date))
+    ).scalar_one_or_none()
+    if existing:
+        existing.name = (data.name or "").strip()[:100] or existing.name
+        existing.is_active = data.is_active
+        h = existing
+    else:
+        h = Holiday(
+            date=data.date,
+            name=(data.name or "").strip()[:100] or None,
+            is_active=data.is_active,
+        )
+        session.add(h)
+    await session.commit()
+    await session.refresh(h)
+    beds24_kick()
+    return {"id": h.id, "date": h.date.isoformat(), "name": h.name, "is_active": h.is_active}
+
+
+@router.delete("/holidays/{item_id}")
+async def delete_holiday(
+    item_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    _require_admin(user)
+    h = await session.get(Holiday, item_id)
+    if not h:
+        raise HTTPException(status_code=404, detail="Not found")
+    await session.delete(h)
+    await session.commit()
+    beds24_kick()
+    return {"ok": True}
+
+
+@router.post("/holidays/preset")
+async def preset_holidays(
+    year: int,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Load the fixed-date Uzbek public holidays for `year`. Skips dates that
+    already exist so manual edits are never overwritten. Lunar holidays
+    (Ramazon/Qurbon Hayit) are not included — add those by hand."""
+    _require_admin(user)
+    if not 2020 <= year <= 2100:
+        raise HTTPException(status_code=400, detail="bad year")
+    have = {
+        d for (d,) in (
+            await session.execute(select(Holiday.date).where(Holiday.date.between(
+                date(year, 1, 1), date(year, 12, 31)
+            )))
+        ).all()
+    }
+    added = 0
+    for (m, dd), name in UZ_HOLIDAYS:
+        d = date(year, m, dd)
+        if d in have:
+            continue
+        session.add(Holiday(date=d, name=name, is_active=True))
+        added += 1
+    await session.commit()
+    if added:
+        beds24_kick()
+    return {"added": added, "year": year}
+
+
+@router.post("/rates/publish")
+async def publish_rates(
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Push everything out now: OTA calendar + the website's rate cache.
+
+    Beds24 normally syncs on a 2s-coalesced kick, and balandda.uz caches the
+    catalog for 15 minutes; this forces both so a price change is visible
+    everywhere within about a minute.
+    """
+    _require_admin(user)
+    ok = await beds24_push_full()
+    site = False
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(
+                "https://balandda.uz/rates.php?fresh=1",
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as r:
+                site = r.status < 400
+    except Exception:  # noqa: BLE001
+        site = False
+    return {"beds24": ok, "site_cache_purged": site}
+
+
+@router.post("/rates/freeze-totals")
+async def freeze_totals(
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Stamp today's price onto future bookings that have no stored total.
+
+    Those bookings otherwise re-price live off the current rates, so they would
+    silently follow a new season down. Run once before activating a season.
+    """
+    _require_admin(user)
+    n = await freeze_open_totals(session)
+    return {"updated": n}

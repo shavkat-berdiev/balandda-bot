@@ -18,6 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from bot.config import settings
 from db.booking_rules import (
+    MAX_NIGHTS,
     get_blocked,
     get_max_date,
     get_window_months,
@@ -26,6 +27,7 @@ from db.booking_rules import (
 )
 from db.database import get_session
 from db.enums import PROPERTY_TYPE_LABELS, PropertyType, ReservationStatus
+from db.pricing import load_rate_index, price_periods, stay_total
 from db.models import (
     BusinessUnit,
     Property,
@@ -96,6 +98,11 @@ async def public_catalog(
       - pages:   {website-filename: {weekday, weekend}} — drop-in for data/rates.json
       - spa:     active SPA/massage services with prices
       - policies: check-in/out, prepayment %, cancellation text
+
+    Prices are the BASE (high-season) rate. Seasonal overrides ride along in a
+    `periods` list on every type and page entry, and `holidays` lists the dates
+    that price at the weekend rate — so a client can compute any night exactly
+    without a round trip. Clients that ignore both keys keep working unchanged.
     """
     prop_rows = (
         await session.execute(
@@ -106,10 +113,22 @@ async def public_catalog(
         )
     ).scalars().all()
 
+    # Seasonal calendar for the whole open sales window, so site/bots can price
+    # any bookable night themselves.
+    rate_start = today_local()
+    rate_end = await get_max_date(session) + timedelta(days=MAX_NIGHTS + 1)
+    idx = await load_rate_index(session, rate_start, rate_end)
+    ids_by_type: dict[str, list[int]] = {}
+    ids_by_page: dict[str, list[int]] = {}
+
     labels = await load_type_labels(session)
     units = []
     for p in prop_rows:
         lbl = labels.get(p.property_type.value, {})
+        ids_by_type.setdefault(p.property_type.value, []).append(p.id)
+        slug_ = TYPE_TO_WEB_SLUG.get(p.property_type)
+        if slug_:
+            ids_by_page.setdefault(slug_, []).append(p.id)
         units.append(
             {
                 "code": p.code,
@@ -162,6 +181,12 @@ async def public_catalog(
             cur["weekday"] = min(cur["weekday"], u["price"]["weekday"])
             cur["weekend"] = min(cur["weekend"], u["price"]["weekend"])
 
+    # Seasonal overrides, aggregated the same "from" way as the base prices.
+    for agg in types.values():
+        agg["periods"] = price_periods(idx, ids_by_type.get(agg["type"], []))
+    for slug, entry in pages.items():
+        entry["periods"] = price_periods(idx, ids_by_page.get(slug, []))
+
     spa_rows = (
         await session.execute(
             select(ServiceItem)
@@ -204,21 +229,22 @@ async def public_catalog(
         "units": units,
         "types": list(types.values()),
         "pages": pages,
+        "holidays": [d.isoformat() for d in sorted(idx.holidays)],
         "spa": spa,
         "spa_categories": spa_categories,
         "policies": POLICIES,
     }
 
 
-def _stay_total(price_weekday, price_weekend, ci: date, co: date) -> int:
-    """Sum nightly prices over the stay. Saturday = weekend rate; Sunday counts
-    as a weekday (per Balandda pricing). Holidays are confirmed by the operator."""
-    total = 0.0
-    d = ci
-    while d < co:
-        total += float(price_weekend if d.weekday() == 5 else price_weekday)
-        d += timedelta(days=1)
-    return int(round(total))
+async def _stay_total(session: AsyncSession, prop: Property, ci: date, co: date) -> int:
+    """Season- and holiday-aware stay price for one unit.
+
+    Thin wrapper kept for callers that price a single stay (bridge.py). When
+    pricing many units at once, load the index yourself and call
+    db.pricing.stay_total directly instead of paying for a query per unit.
+    """
+    idx = await load_rate_index(session, ci, co, property_ids=[prop.id])
+    return stay_total(idx, prop.id, ci, co)
 
 
 @router.get("/booking-rules")
@@ -301,13 +327,15 @@ async def public_availability(
 
     labels = await load_type_labels(session)
     nights = (check_out - check_in).days
+    # One index for every candidate unit — seasons and holidays included.
+    idx = await load_rate_index(session, check_in, check_out, property_ids=[p.id for p in rows])
     units = []
     for p in rows:
         # unit under a maintenance block for these dates → not offered
         if any(b.property_id == p.id and check_in <= b.date_to and check_out > b.date_from
                for b in unit_blocks):
             continue
-        total = _stay_total(p.price_weekday, p.price_weekend, check_in, check_out)
+        total = stay_total(idx, p.id, check_in, check_out)
         lbl = labels.get(p.property_type.value, {})
         units.append({
             "code": p.code,

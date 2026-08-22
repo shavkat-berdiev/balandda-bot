@@ -955,6 +955,138 @@ async def run_migrations():
         CREATE UNIQUE INDEX IF NOT EXISTS ix_reservations_channel_booking_id
         ON reservations (channel_booking_id) WHERE channel_booking_id IS NOT NULL;
         """,
+        # ── Seasonal pricing ──
+        # properties.price_weekday/weekend stay the BASE (high season) rate; a
+        # season overrides it for the dates it covers. One season can own many
+        # date ranges (autumn + spring priced once). Holidays flip a night to
+        # the weekend rate. create_all() makes the tables; these statements add
+        # the indexes/constraints it does not.
+        """
+        CREATE TABLE IF NOT EXISTS rate_seasons (
+            id SERIAL PRIMARY KEY,
+            name VARCHAR(80) NOT NULL,
+            priority INTEGER NOT NULL DEFAULT 0,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ DEFAULT now()
+        );
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS rate_season_periods (
+            id SERIAL PRIMARY KEY,
+            season_id INTEGER NOT NULL REFERENCES rate_seasons(id) ON DELETE CASCADE,
+            date_from DATE NOT NULL,
+            date_to   DATE NOT NULL,
+            label VARCHAR(80) NULL
+        );
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS ix_rate_season_periods_dates
+        ON rate_season_periods (date_from, date_to);
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS rate_season_prices (
+            id SERIAL PRIMARY KEY,
+            season_id INTEGER NOT NULL REFERENCES rate_seasons(id) ON DELETE CASCADE,
+            property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+            price_weekday NUMERIC(15,2) NOT NULL,
+            price_weekend NUMERIC(15,2) NOT NULL
+        );
+        """,
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_season_property
+        ON rate_season_prices (season_id, property_id);
+        """,
+        """
+        CREATE TABLE IF NOT EXISTS holidays (
+            id SERIAL PRIMARY KEY,
+            date DATE NOT NULL UNIQUE,
+            name VARCHAR(100) NULL,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE
+        );
+        """,
+        # Two chalets carried each other's type: domik_3 has a sauna and the
+        # with-sauna price, domik_6 has neither. Because the OTA push takes the
+        # cheapest unit of a type, this was selling the with-sauna chalet at the
+        # without-sauna price on Booking.com, Ostrovok, Airbnb and Google.
+        # Corrected off has_sauna, which agrees with the price on both rows.
+        """
+        UPDATE properties SET property_type = 'CHALET_WITH_SAUNA'
+        WHERE code = 'domik_3' AND has_sauna = TRUE
+          AND property_type = 'CHALET_WITHOUT_SAUNA';
+        """,
+        """
+        UPDATE properties SET property_type = 'CHALET_WITHOUT_SAUNA'
+        WHERE code = 'domik_6' AND has_sauna = FALSE
+          AND property_type = 'CHALET_WITH_SAUNA';
+        """,
+        # Seed the low season ONCE (only while the table is still empty), so a
+        # later edit or deletion in the dashboard is never undone by a redeploy.
+        """
+        INSERT INTO rate_seasons (name, priority, is_active)
+        SELECT 'Низкий сезон', 0, TRUE
+        WHERE NOT EXISTS (SELECT 1 FROM rate_seasons);
+        """,
+        """
+        INSERT INTO rate_season_periods (season_id, date_from, date_to, label)
+        SELECT s.id, v.f, v.t, v.l
+        FROM rate_seasons s
+        CROSS JOIN (VALUES
+            (DATE '2026-09-01', DATE '2026-11-30', 'Осень 2026'),
+            (DATE '2027-03-01', DATE '2027-05-31', 'Весна 2027')
+        ) AS v(f, t, l)
+        WHERE s.name = 'Низкий сезон'
+          AND NOT EXISTS (SELECT 1 FROM rate_season_periods);
+        """,
+        # Low-season rates, per type (weekday / Saturday & holidays), UZS.
+        """
+        INSERT INTO rate_season_prices (season_id, property_id, price_weekday, price_weekend)
+        SELECT s.id, p.id,
+               CASE p.property_type::text
+                   WHEN 'APARTMENT'            THEN 2600000
+                   WHEN 'WHITE_CHALET'         THEN 2600000
+                   WHEN 'CHALET_WITHOUT_SAUNA' THEN 3000000
+                   WHEN 'CHALET_WITH_SAUNA'    THEN 3500000
+                   WHEN 'PENTHOUSE'            THEN 4000000
+                   WHEN 'VILLA'                THEN 7000000
+                   WHEN 'SPA_SUITE'            THEN 2000000
+               END,
+               CASE p.property_type::text
+                   WHEN 'APARTMENT'            THEN 3500000
+                   WHEN 'WHITE_CHALET'         THEN 3600000
+                   WHEN 'CHALET_WITHOUT_SAUNA' THEN 4000000
+                   WHEN 'CHALET_WITH_SAUNA'    THEN 4500000
+                   WHEN 'PENTHOUSE'            THEN 5000000
+                   WHEN 'VILLA'                THEN 10000000
+                   WHEN 'SPA_SUITE'            THEN 2800000
+               END
+        FROM rate_seasons s
+        CROSS JOIN properties p
+        WHERE s.name = 'Низкий сезон'
+          AND p.is_active
+          AND p.business_unit::text = 'RESORT'
+          AND p.property_type::text IN (
+              'APARTMENT','WHITE_CHALET','CHALET_WITHOUT_SAUNA',
+              'CHALET_WITH_SAUNA','PENTHOUSE','VILLA','SPA_SUITE'
+          )
+          AND NOT EXISTS (SELECT 1 FROM rate_season_prices);
+        """,
+        # Fixed-date Uzbek public holidays — these now price at the Saturday
+        # rate, which is what every price table has always claimed. Lunar
+        # holidays (Ramazon/Qurbon Hayit) move yearly and are added by hand.
+        """
+        INSERT INTO holidays (date, name, is_active)
+        SELECT d::date, n, TRUE FROM (VALUES
+            (DATE '2026-09-01', 'День Независимости'),
+            (DATE '2026-10-01', 'День учителя и наставника'),
+            (DATE '2026-12-08', 'День Конституции'),
+            (DATE '2027-01-01', 'Новый год'),
+            (DATE '2027-01-14', 'День защитников Родины'),
+            (DATE '2027-03-08', 'Международный женский день'),
+            (DATE '2027-03-21', 'Навруз'),
+            (DATE '2027-05-09', 'День памяти и почестей')
+        ) AS v(d, n)
+        WHERE NOT EXISTS (SELECT 1 FROM holidays);
+        """,
     ]
     async with engine.begin() as conn:
         for sql in post_enum:

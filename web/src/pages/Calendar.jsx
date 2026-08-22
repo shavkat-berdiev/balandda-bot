@@ -58,13 +58,25 @@ function barClass(r, todayStr) {
   if (r.check_out <= todayStr) return 'bg-orange-300 hover:bg-orange-400'; // stay ended, not fully paid
   return (STATUS_STYLE[r.status] && STATUS_STYLE[r.status].cell) || STATUS_STYLE.CONFIRMED.cell;
 }
-function stayTotal(unit, ciStr, coStr) {
+/**
+ * Stay price for the operator's quote.
+ *
+ * `rates` is the resolved per-night map from /admin/rate-preview — seasons and
+ * holidays already applied, the same numbers the guest sees on the site and on
+ * the OTAs. It only covers the loaded window, so nights outside it fall back to
+ * the unit's base rate (Saturday = weekend, Sunday = weekday).
+ */
+function stayTotal(unit, ciStr, coStr, rates) {
   if (!unit || !ciStr || !coStr) return 0;
   let d = new Date(ciStr + 'T00:00:00');
   const end = new Date(coStr + 'T00:00:00');
   let total = 0;
   while (d < end) {
-    total += Number(d.getDay() === 6 ? unit.price_weekend : unit.price_weekday) || 0; // Sat = weekend
+    const key = ymd(d);
+    const resolved = rates && rates[unit.id] && rates[unit.id][key];
+    total += resolved != null
+      ? Number(resolved) || 0
+      : Number(d.getDay() === 6 ? unit.price_weekend : unit.price_weekday) || 0;
     d = addDays(d, 1);
   }
   return Math.round(total);
@@ -77,6 +89,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
   const [importing, setImporting] = useState(false);
   const [units, setUnits] = useState([]);
   const [reservations, setReservations] = useState([]);
+  const [rates, setRates] = useState(null); // {property_id: {'YYYY-MM-DD': price}}
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [form, setForm] = useState(null);     // new-reservation form
@@ -151,6 +164,27 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
   }, [rangeFrom, rangeTo, businessUnit]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Resolved nightly prices for the visible range (seasons + holidays applied),
+  // so an operator quote matches the site, the bots and the OTAs to the sum.
+  // Purely additive: if this fails the quote falls back to the base rate.
+  useEffect(() => {
+    if (!autoPrice) { setRates(null); return; }
+    let cancelled = false;
+    api.getRatePreview({ date_from: rangeFrom, date_to: rangeTo })
+      .then((r) => {
+        if (cancelled) return;
+        const map = {};
+        (r.units || []).forEach((u) => {
+          const byDate = {};
+          (u.nights || []).forEach((n) => { byDate[n.date] = n.price; });
+          map[u.property_id] = byDate;
+        });
+        setRates(map);
+      })
+      .catch(() => { if (!cancelled) setRates(null); });
+    return () => { cancelled = true; };
+  }, [rangeFrom, rangeTo, autoPrice]);
 
   // When a booking is selected: load an editable copy + its change log + payment ledger.
   useEffect(() => {
@@ -234,7 +268,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
   function calcAmounts(propertyId, ci, co, discount = 0) {
     if (!autoPrice) return { total_amount: '', deposit_amount: '' }; // pool: amounts empty/manual
     const u = units.find((x) => x.id === Number(propertyId));
-    let total = stayTotal(u, ci, co);
+    let total = stayTotal(u, ci, co, rates);
     if (total && discount) total = Math.round(total * (1 - discount / 100));
     return {
       total_amount: total ? String(total) : '',

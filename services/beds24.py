@@ -126,6 +126,7 @@ async def _compute_calendar(days: int) -> list[dict]:
     (resort-wide zeroes every room; a unit block reduces its type's count).
     """
     from db.booking_rules import get_blocked, get_max_date
+    from db.pricing import load_rate_index, nightly_price
 
     start = date.today()
     end = start + timedelta(days=days)
@@ -147,6 +148,9 @@ async def _compute_calendar(days: int) -> list[dict]:
 
         max_open = await get_max_date(session)          # last sellable date
         blocks = await get_blocked(session)             # admin closures
+        # Seasonal + holiday rates for the whole push window, so OTA prices
+        # match what the site and the bots quote for the same night.
+        rate_idx = await load_rate_index(session, start, end)
 
     async with aiohttp.ClientSession() as s:
         rate = await get_usd_rate(s)
@@ -186,13 +190,14 @@ async def _compute_calendar(days: int) -> list[dict]:
         if not units:
             continue
         total = len(units)
-        price_wd = _usd(min(float(p.price_weekday or 0) for p in units) or 0, rate)
-        price_we = _usd(min(float(p.price_weekend or 0) for p in units) or 0, rate)
         days_list = []
         d = start
         while d < end:
             n = 0 if _closed(d) else max(0, total - busy_count.get((tval, d), 0))
-            p1 = price_we if d.weekday() == 5 else price_wd  # Saturday = weekend rate
+            # "From" price for the type, resolved per DATE: seasons and holidays
+            # can move units of one type apart, so the min must be taken inside
+            # the loop, not once before it.
+            p1 = _usd(min(nightly_price(rate_idx, p.id, d) for p in units), rate)
             days_list.append((d, n, p1))
             d += timedelta(days=1)
         # compress consecutive identical (numAvail, price) into ranges
@@ -219,8 +224,7 @@ async def _compute_calendar(days: int) -> list[dict]:
         d = start
         while d < end:
             n = 0 if (_closed(d) or (p.id, d) in busy_unit) else 1
-            uzs = float((p.price_weekend if d.weekday() == 5 else p.price_weekday) or 0)
-            days_list.append((d, n, _usd(uzs, rate)))
+            days_list.append((d, n, _usd(nightly_price(rate_idx, p.id, d), rate)))
             d += timedelta(days=1)
         cal = []
         s0 = prev = days_list[0]

@@ -13,6 +13,7 @@ from sqlalchemy import (
     String,
     Table,
     Text,
+    UniqueConstraint,
     func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -846,3 +847,81 @@ class BlockedPeriod(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     property: Mapped["Property"] = relationship()
+
+
+# ── Seasonal pricing ────────────────────────────────────────────────
+# properties.price_weekday/price_weekend stay the BASE (high season) rate.
+# A season overrides them for the dates it covers. One season can own several
+# date ranges (autumn + spring = one "low season", edited once), and holds one
+# price row per unit. Resolution lives in db/pricing.py and is the only place
+# that decides what a given night costs — site, bots, calendar and OTAs all
+# read the result.
+
+class RateSeason(Base):
+    """A named price season, e.g. «Низкий сезон» or «Новый год».
+
+    priority breaks overlaps: the highest active season covering a date wins
+    (New Year sits at 100 so it beats the low season it falls inside).
+    """
+    __tablename__ = "rate_seasons"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80))
+    priority: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    periods: Mapped[list["RateSeasonPeriod"]] = relationship(
+        back_populates="season", cascade="all, delete-orphan", lazy="selectin"
+    )
+    prices: Mapped[list["RateSeasonPrice"]] = relationship(
+        back_populates="season", cascade="all, delete-orphan", lazy="selectin"
+    )
+
+
+class RateSeasonPeriod(Base):
+    """One date range belonging to a season. date_from..date_to = NIGHTS, inclusive."""
+    __tablename__ = "rate_season_periods"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    season_id: Mapped[int] = mapped_column(
+        ForeignKey("rate_seasons.id", ondelete="CASCADE"), index=True
+    )
+    date_from: Mapped[date] = mapped_column(Date, index=True)
+    date_to: Mapped[date] = mapped_column(Date)
+    label: Mapped[str | None] = mapped_column(String(80), nullable=True)
+
+    season: Mapped["RateSeason"] = relationship(back_populates="periods")
+
+
+class RateSeasonPrice(Base):
+    """The numbers: one row per unit per season. Same two bands as the base rate."""
+    __tablename__ = "rate_season_prices"
+    __table_args__ = (UniqueConstraint("season_id", "property_id", name="uq_season_property"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    season_id: Mapped[int] = mapped_column(
+        ForeignKey("rate_seasons.id", ondelete="CASCADE"), index=True
+    )
+    property_id: Mapped[int] = mapped_column(
+        ForeignKey("properties.id", ondelete="CASCADE"), index=True
+    )
+    price_weekday: Mapped[float] = mapped_column(Numeric(15, 2))
+    price_weekend: Mapped[float] = mapped_column(Numeric(15, 2))
+
+    season: Mapped["RateSeason"] = relationship(back_populates="prices")
+    property: Mapped["Property"] = relationship()
+
+
+class Holiday(Base):
+    """A date that prices at the weekend (Saturday) rate.
+
+    Makes the «суббота и праздники» caption printed on every price table
+    actually true — before this, holidays were charged as ordinary weekdays.
+    """
+    __tablename__ = "holidays"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    date: Mapped[date] = mapped_column(Date, unique=True, index=True)
+    name: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    is_active: Mapped[bool] = mapped_column(default=True)

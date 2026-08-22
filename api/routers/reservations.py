@@ -20,6 +20,7 @@ from bot.config import settings
 from services.beds24 import kick as beds24_kick
 from db.database import get_session
 from db.hold_timing import add_working_minutes
+from db.pricing import load_rate_index, stay_total
 from services.customer_notify import (
     booking_cancelled_text,
     booking_changed_text,
@@ -122,16 +123,16 @@ async def _upsert_customer(session: AsyncSession, *, phone: str | None, name: st
     return cust.id
 
 
-def _stay_price(prop, ci, co):
-    """Estimate the full stay price from the unit's catalog rate (Sat = weekend)."""
+async def _stay_price(session, prop, ci, co):
+    """Estimate the full stay price for one unit, seasons and holidays included.
+
+    Delegates to db.pricing so the operator calendar quotes exactly what the
+    website, the bots and the OTAs quote. Returns None when the stay is invalid.
+    """
     if not prop or not ci or not co or co <= ci:
         return None
-    total = 0.0
-    d = ci
-    while d < co:
-        total += float(prop.price_weekend if d.weekday() == 5 else prop.price_weekday)
-        d += timedelta(days=1)
-    return round(total)
+    idx = await load_rate_index(session, ci, co, property_ids=[prop.id])
+    return stay_total(idx, prop.id, ci, co) or None
 
 
 def _out(r: Reservation, property_name: str | None = None, income_paid: float = 0.0,
@@ -266,11 +267,26 @@ async def list_reservations(
             )
         ).all()
         income_by_res = {rid: float(s) for (rid, s) in sums}
-    return [
-        _out(r, prop.name_ru, income_by_res.get(r.id, 0.0),
-             float(r.total_amount) if r.total_amount is not None else _stay_price(prop, r.check_in, r.check_out))
-        for (r, prop) in rows
-    ]
+    # One rate index for the whole visible range — bookings with no stored total
+    # fall back to a live, season-aware estimate.
+    # Widen to the actual stay bounds: rows may start before `from_` or end after `to`.
+    idx = (
+        await load_rate_index(
+            session,
+            min(r.check_in for (r, _p) in rows),
+            max(r.check_out for (r, _p) in rows),
+            property_ids=[p.id for (_r, p) in rows],
+        )
+        if rows else None
+    )
+    out = []
+    for (r, prop) in rows:
+        if r.total_amount is not None:
+            total = float(r.total_amount)
+        else:
+            total = stay_total(idx, prop.id, r.check_in, r.check_out) or None
+        out.append(_out(r, prop.name_ru, income_by_res.get(r.id, 0.0), total))
+    return out
 
 
 @router.get("/events")
@@ -370,7 +386,7 @@ async def create_reservation(
     if data.total_amount is not None:
         total = float(data.total_amount)
     else:
-        base = _stay_price(prop, data.check_in, data.check_out)
+        base = await _stay_price(session, prop, data.check_in, data.check_out)
         total = round(base * (1 - pct / 100)) if base is not None else None
     # NEVER auto-fill deposit_amount: it is read as "already prepaid" by the paid/balance
     # calc, so filling it here would show an uncollected 30% prepayment on every booking.
@@ -453,7 +469,7 @@ async def update_reservation(
     moved = (res.property_id != old_property_id) or (res.check_in != old_ci) or (res.check_out != old_co)
     if (moved or data.discount_percent is not None) and data.total_amount is None:
         prop_new = await session.get(Property, res.property_id)
-        base = _stay_price(prop_new, res.check_in, res.check_out)
+        base = await _stay_price(session, prop_new, res.check_in, res.check_out)
         if base is not None:
             pct = float(res.discount_percent or 0)
             res.total_amount = round(base * (1 - pct / 100))
@@ -681,7 +697,10 @@ async def _reservation_out(session: AsyncSession, res: Reservation) -> dict:
         )
     ).scalar() or 0
     prop = await session.get(Property, res.property_id)
-    total = float(res.total_amount) if res.total_amount is not None else _stay_price(prop, res.check_in, res.check_out)
+    total = (
+        float(res.total_amount) if res.total_amount is not None
+        else await _stay_price(session, prop, res.check_in, res.check_out)
+    )
     return _out(res, prop.name_ru if prop else None, float(income), total)
 
 
@@ -761,7 +780,10 @@ async def accept_payment(
         paid_sum = (await session.execute(
             select(func.coalesce(func.sum(IncomeEntry.amount), 0)).where(IncomeEntry.reservation_id == res.id)
         )).scalar() or 0
-        total_amt = float(res.total_amount) if res.total_amount is not None else _stay_price(prop2, res.check_in, res.check_out)
+        total_amt = (
+            float(res.total_amount) if res.total_amount is not None
+            else await _stay_price(session, prop2, res.check_in, res.check_out)
+        )
         await send_customer_message(
             res.telegram_user_id,
             booking_payment_text(res, prop2.name_ru if prop2 else "", amt, float(paid_sum), total_amt),

@@ -119,7 +119,7 @@ async def self_book(
         return {"ok": False, "error": date_err}
 
     now = datetime.now(timezone.utc)
-    total = _stay_total(prop.price_weekday, prop.price_weekend, data.check_in, data.check_out)
+    total = await _stay_total(session, prop, data.check_in, data.check_out)
     res = Reservation(
         property_id=prop.id,
         check_in=data.check_in,
@@ -205,7 +205,7 @@ async def web_book(
         return {"ok": False, "error": date_err}
 
     now = datetime.now(timezone.utc)
-    total = _stay_total(prop.price_weekday, prop.price_weekend, data.check_in, data.check_out)
+    total = await _stay_total(session, prop, data.check_in, data.check_out)
     res = Reservation(
         property_id=prop.id,
         check_in=data.check_in,

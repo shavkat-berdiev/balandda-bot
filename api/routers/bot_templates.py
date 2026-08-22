@@ -8,6 +8,7 @@ at request time, which means prices in the bot always match the calendar.
 import json
 import os
 import uuid
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse
@@ -20,8 +21,10 @@ from api.auth import get_current_user, require_admin
 from bot.config import settings
 from db.database import get_session
 from api.routers.public import TYPE_TO_WEB_SLUG
+from db.booking_rules import today_local
 from db.enums import PROPERTY_TYPE_LABELS, PropertyType
 from db.models import BotTemplate, BusinessUnit, Property, PropertyTypeLabel, ServiceItem
+from db.pricing import load_rate_index, season_label
 
 router = APIRouter()
 
@@ -383,10 +386,20 @@ async def _price_text(session: AsyncSession, block: str, lang: str) -> str:
                 ).order_by(Property.sort_order)
             )
         ).scalars().all()
+        # Quote the rate in force TODAY: a season overrides the base price, so
+        # during the low season the bot must not read out the high-season table.
+        today = today_local()
+        idx = await load_rate_index(session, today, today + timedelta(days=1))
+        season = None
+        for p in rows:
+            season = season or season_label(idx, p.id, today)
+
         by_type: dict[str, tuple[int, int]] = {}
         for p in rows:
             name = {"ru": p.name_ru, "uz": p.name_uz, "en": p.name_en or p.name_ru}.get(lang) or p.name_ru
-            wd, we = _i(p.price_weekday), _i(p.price_weekend)
+            w = idx.window_for(p.id, today)
+            pair = w.prices[p.id] if w else (float(p.price_weekday or 0), float(p.price_weekend or 0))
+            wd, we = _i(pair[0]), _i(pair[1])
             cur = by_type.get(name)
             by_type[name] = (min(cur[0], wd), min(cur[1], we)) if cur else (wd, we)
         head = {"ru": "💰 Цены за ночь:", "uz": "💰 Bir kecha narxi:", "en": "💰 Price per night:"}[lang]
@@ -399,7 +412,14 @@ async def _price_text(session: AsyncSession, block: str, lang: str) -> str:
             "uz": "(ish kunlari / shanba va bayramlar)",
             "en": "(weekdays / Saturday & holidays)",
         }[lang]
-        return "\n".join([head, *lines, note]) if lines else ""
+        tail = [note]
+        if season:
+            tail.append({
+                "ru": f"Действует «{season}». На другие даты цена может отличаться.",
+                "uz": f"«{season}» amal qiladi. Boshqa sanalarda narx farq qilishi mumkin.",
+                "en": f"«{season}» rates apply. Other dates may differ.",
+            }[lang])
+        return "\n".join([head, *lines, *tail]) if lines else ""
 
     if block == "pool":
         rows = (
