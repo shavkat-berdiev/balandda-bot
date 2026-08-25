@@ -443,8 +443,79 @@ async def _import_booking(b: dict) -> int:
             detail=f"Импорт с канала: {unit.name_ru} · {arrival}→{departure} · {note}",
         ))
         await session.commit()
+        await _post_topic(_channel_booking_text(
+            res, unit.name_ru, src, bid, price_usd, total_uzs))
         await _notify_operators_new(res, unit.name_ru, src)
         return 1
+
+
+# ── Telegram: «Брони платформ» topic ────────────────────────────────────
+# Bound by an OWNER with /bind inside the topic (category OTA_BOOKINGS).
+# Best-effort: a Telegram failure must never break the import.
+
+def _nights(a, b) -> int:
+    try:
+        return max(1, (b - a).days)
+    except Exception:  # noqa: BLE001
+        return 1
+
+
+def _money(n) -> str:
+    try:
+        return f"{int(round(float(n))):,}".replace(",", " ")
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _channel_booking_text(res, unit_name: str, src: ReservationSource,
+                          bid, price_usd, total_uzs) -> str:
+    from db.enums import RESERVATION_SOURCE_LABELS
+    channel = RESERVATION_SOURCE_LABELS.get(src, src.value)
+    n = _nights(res.check_in, res.check_out)
+    lines = [
+        f"🌐 <b>Новая бронь · {channel}</b>",
+        "",
+        f"🏠 <b>{unit_name}</b>",
+        f"📅 {res.check_in.strftime('%d.%m.%Y')} → "
+        f"{res.check_out.strftime('%d.%m.%Y')} ({n} н.)",
+    ]
+    if res.guest_name:
+        lines.append(f"🧑 {res.guest_name}")
+    if res.guest_phone:
+        lines.append(f"📞 {res.guest_phone}")
+    if price_usd:
+        price_line = f"💰 {price_usd:.0f} USD"
+        if total_uzs:
+            price_line += f" · ≈ {_money(total_uzs)} сум"
+        lines.append(price_line)
+    lines += [
+        f"🔖 Beds24 #{bid}",
+        f'<a href="https://beds24.com/control3.php?pagetype=bookingdetails&bookid={bid}">'
+        f"Открыть в Beds24</a>",
+    ]
+    return "\n".join(lines)
+
+
+async def _post_topic(text: str) -> bool:
+    """Post into the bound «Брони платформ» topic. Never raises."""
+    try:
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+
+        from bot.notifications import CAT_OTA_BOOKINGS, send_via_route
+
+        if not settings.bot_token:
+            return False
+        bot = Bot(token=settings.bot_token,
+                  default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+        try:
+            return await send_via_route(bot, CAT_OTA_BOOKINGS, text)
+        finally:
+            await bot.session.close()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("beds24 topic post failed: %s", e)
+        return False
 
 
 async def _notify_operators_new(res, unit_name: str, src: ReservationSource):
@@ -458,6 +529,16 @@ async def _notify_operators_new(res, unit_name: str, src: ReservationSource):
 
 
 async def _notify_operators_overbook(tval, arrival, departure, bid, guest):
+    await _post_topic(
+        f"⛔️ <b>ОВЕРБУКИНГ · {tval}</b>\n\n"
+        f"Нет свободного юнита на "
+        f"{arrival.strftime('%d.%m.%Y')} → {departure.strftime('%d.%m.%Y')}\n"
+        f"🧑 {guest or '—'}\n"
+        f"🔖 Beds24 #{bid}\n"
+        f'<a href="https://beds24.com/control3.php?pagetype=bookingdetails&bookid={bid}">'
+        f"Открыть в Beds24</a>\n\n"
+        f"<b>Требуется ручное вмешательство.</b>"
+    )
     try:
         from services.customer_notify import notify_operators_booking
         fake = SimpleNamespace(id=0, check_in=arrival, check_out=departure,
