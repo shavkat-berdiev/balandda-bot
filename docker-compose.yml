@@ -15,6 +15,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    # Without this the database is the ONE container that does not survive a host reboot,
+    # while api and bot come back and keep answering — which is exactly how 2026-08-27
+    # produced three hours of "the site is up but nothing can be booked".
+    restart: unless-stopped
 
   bot:
     build:

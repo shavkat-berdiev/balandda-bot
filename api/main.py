@@ -1,9 +1,11 @@
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
+from db.database import async_session
 from api.routers import admin_catalog, auth, bot_templates, bridge, card_transactions, categories, customers, daily_reports, prepayments, public, registration, reports, reservations, spa_schedule, stats, structured_reports, transactions, users, wallets
 
 app = FastAPI(
@@ -50,8 +52,27 @@ app.include_router(customers.router, prefix="/api/v1/customers", tags=["customer
 
 
 @app.get("/api/health")
-async def health():
-    return {"status": "ok", "service": "balandda-api"}
+async def health(response: Response):
+    """Liveness AND readiness.
+
+    This used to return {"status": "ok"} unconditionally. On 2026-08-27 the Postgres
+    container stayed down for three hours after a host reboot while this endpoint
+    answered 200 the whole time — the booking calendar and the website's booking flow
+    were dead and every monitor was green. A health check that cannot fail is not a
+    health check, so it now actually talks to the database.
+    """
+    try:
+        async with async_session() as session:
+            await session.execute(text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001 — any DB failure means "do not send traffic here"
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+        return {
+            "status": "error",
+            "service": "balandda-api",
+            "database": "unreachable",
+            "detail": type(exc).__name__,
+        }
+    return {"status": "ok", "service": "balandda-api", "database": "ok"}
 
 
 # Serve frontend static files (production build)
