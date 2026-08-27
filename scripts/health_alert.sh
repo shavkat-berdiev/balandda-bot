@@ -30,8 +30,18 @@ REMIND_EVERY="${REMIND_EVERY:-1800}"
 CURL_TIMEOUT="${CURL_TIMEOUT:-15}"
 
 [ -r "$CONF" ] || { echo "missing config: $CONF" >&2; exit 1; }
+
+# Anything set in the environment must beat the config file — otherwise a one-off
+# `HEALTH_URLS=... ./health_alert.sh` silently checks the configured URL instead, which is
+# how a "test" can pass without ever exercising the thing you meant to test.
+_env_urls="${HEALTH_URLS:-}"
+_env_chat="${TG_CHAT_ID:-}"
+
 # shellcheck disable=SC1090
 . "$CONF"
+
+[ -n "$_env_urls" ] && HEALTH_URLS="$_env_urls"
+[ -n "$_env_chat" ] && TG_CHAT_ID="$_env_chat"
 
 : "${TG_BOT_TOKEN:?TG_BOT_TOKEN not set}"
 : "${TG_CHAT_ID:?TG_CHAT_ID not set}"
