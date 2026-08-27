@@ -7,7 +7,10 @@ services:
       POSTGRES_USER: balandda
       POSTGRES_PASSWORD: change_me_in_production
     ports:
-      - "5432:5432"
+      # Loopback ONLY. A bare "5432:5432" publishes Postgres on 0.0.0.0 — docker's rules sit
+      # in front of ufw, so the firewall does not save you. This was hardened by hand on the
+      # VPS and lived nowhere else for months; keep it committed.
+      - "127.0.0.1:5432:5432"
     volumes:
       - ./docker/pgdata:/var/lib/postgresql/data
     healthcheck:
