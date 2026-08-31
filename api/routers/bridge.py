@@ -16,24 +16,30 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routers.public import _stay_total
+from api.routers.reservations import _get_or_create_report
 from bot.config import settings
 from db.booking_rules import validate_stay
 from db.database import get_session
 from db.enums import (
     BusinessUnit,
+    PaymentMethod,
+    PrepaymentStatus,
     ReservationSource,
     ReservationStatus,
     WalletTransactionStatus,
     WalletTransactionType,
 )
 from db.hold_timing import add_working_minutes
-from db.models import Property, Reservation, ReservationEvent, User, WalletTransaction
+from db.models import IncomeEntry, Prepayment, Property, Reservation, ReservationEvent, User, WalletTransaction
 from services.beds24 import kick as beds24_kick  # OTA availability push
 from services.customer_notify import (
+    booking_payment_text,
     booking_received_text,
     get_prepayment_instructions,
     notify_operators_booking,
+    send_customer_message,
 )
+from sqlalchemy import func
 
 router = APIRouter()
 
@@ -322,3 +328,120 @@ async def purchase_expense(
         "buyer_name": buyer_name,
         "balance": balance,
     }
+
+
+# ── Online payment from the website (Octo internet-acquiring) ──
+
+
+class BridgePaymentData(BaseModel):
+    booking_id: int
+    amount: float
+    provider: str = "OCTO"            # informational
+    provider_uuid: str | None = None  # octo_payment_UUID — idempotency key
+    card_mask: str | None = None      # e.g. 561468****4042
+    card_vendor: str | None = None    # uzcard / humo / visa / mastercard
+
+
+@router.post("/payment")
+async def bridge_payment(
+    data: BridgePaymentData,
+    session: AsyncSession = Depends(get_session),
+    x_bridge_secret: str | None = Header(default=None),
+):
+    """Card payment received by the website via Octo internet-acquiring.
+
+    Mirrors the calendar's accept_payment flow: records the sum as income in
+    today's report (owned by settings.octo_operator_tg), mirrors it into the
+    Prepayment ledger, flips an unpaid HOLD to CONFIRMED (stops the expiry
+    countdown), logs an event, announces to the operators' topic and messages
+    the guest if their Telegram is connected. Idempotent by provider_uuid —
+    the site calls this from both the webhook and the return-page check.
+    """
+    _check_secret(x_bridge_secret)
+    res = await session.get(Reservation, data.booking_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="booking not found")
+    amt = round(float(data.amount or 0))
+    if amt <= 0:
+        raise HTTPException(status_code=400, detail="amount must be positive")
+
+    # Idempotency: one ledger row per Octo payment UUID.
+    if data.provider_uuid:
+        dup = (
+            await session.execute(
+                select(Prepayment).where(
+                    Prepayment.reservation_id == res.id,
+                    Prepayment.note.ilike(f"%{data.provider_uuid}%"),
+                )
+            )
+        ).scalars().first()
+        if dup:
+            return {"ok": True, "already": True, "booking_id": res.id, "status": res.status.value}
+
+    operator = settings.octo_operator_tg
+    prop = await session.get(Property, res.property_id)
+    business_unit = prop.business_unit if prop and prop.business_unit else BusinessUnit.RESORT
+    report = await _get_or_create_report(session, operator, business_unit)
+
+    nights = (res.check_out - res.check_in).days or 1
+    income = IncomeEntry(
+        report_id=report.id, property_id=res.property_id, reservation_id=res.id,
+        payment_method=PaymentMethod.CARD_TRANSFER, amount=amt, num_days=nights,
+    )
+    session.add(income)
+    await session.flush()
+    report.total_income = (report.total_income or 0) + amt
+
+    note = "Octo интернет-эквайринг (сайт)"
+    if data.card_mask:
+        note += f" · карта {data.card_mask}"
+    if data.card_vendor:
+        note += f" ({data.card_vendor})"
+    if data.provider_uuid:
+        note += f" · {data.provider_uuid}"
+    session.add(Prepayment(
+        guest_name=res.guest_name or "—", property_id=res.property_id,
+        check_in_date=res.check_in, check_out_date=res.check_out,
+        amount=amt, payment_method=PaymentMethod.CARD_TRANSFER.value,
+        status=PrepaymentStatus.CONFIRMED,
+        operator_telegram_id=operator, reservation_id=res.id,
+        income_entry_id=income.id, settled_in_report_id=report.id, note=note,
+    ))
+
+    # First payment secures the booking: HOLD (red) -> CONFIRMED, stop the countdown.
+    if res.status == ReservationStatus.HOLD:
+        res.status = ReservationStatus.CONFIRMED
+        res.hold_warn_at = None
+        res.hold_expires_at = None
+        res.hold_warned_at = None
+
+    session.add(ReservationEvent(
+        reservation_id=res.id, actor_name="Octo (сайт)", action="payment",
+        detail=f"Онлайн-оплата картой: +{amt} сум · {note}",
+    ))
+    await session.commit()
+
+    # Operators' topic + guest message — best-effort, never fail the payment.
+    label = f"сайт · 💳 ОПЛАЧЕНО {amt:,} сум (Octo)".replace(",", " ")
+    try:
+        await notify_operators_booking(res, prop.name_ru if prop else "", label)
+    except Exception:
+        pass
+    if res.telegram_user_id:
+        try:
+            paid_sum = (
+                await session.execute(
+                    select(func.coalesce(func.sum(IncomeEntry.amount), 0)).where(
+                        IncomeEntry.reservation_id == res.id
+                    )
+                )
+            ).scalar() or 0
+            total_amt = float(res.total_amount) if res.total_amount is not None else float(paid_sum)
+            await send_customer_message(
+                res.telegram_user_id,
+                booking_payment_text(res, prop.name_ru if prop else "", amt, float(paid_sum), total_amt),
+            )
+        except Exception:
+            pass
+
+    return {"ok": True, "booking_id": res.id, "status": res.status.value, "amount": amt}

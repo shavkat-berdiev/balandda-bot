@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     customer_bot_username: str = "balandda_bot"           # for connect deep-links
     crm_api_url: str = "https://crm.balandda.uz"          # CRM sends customer messages via @balandda_bot
     bridge_secret: str = ""                               # shared secret with the CRM (== CRM INTAKE_SECRET)
+    # Telegram id that "owns" income rows created by online card payments (Octo).
+    # Set OCTO_OPERATOR_TG in .env to the owner's id; 0 = system/unattributed.
+    octo_operator_tg: int = 0
     prepayment_instructions: str = (
         "Для подтверждения брони внесите предоплату 20% в течение часа:\n"
         "💳 Карта: 8600 XXXX XXXX XXXX (ИМЯ ФАМИЛИЯ)\n"
