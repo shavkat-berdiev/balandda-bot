@@ -5,6 +5,7 @@ here; we attach it to the booking and return the booking-received text for the C
 to reply with.
 """
 
+import asyncio
 import secrets
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -32,6 +33,8 @@ from db.enums import (
 from db.hold_timing import add_working_minutes
 from db.models import IncomeEntry, Prepayment, Property, Reservation, ReservationEvent, User, WalletTransaction
 from services.beds24 import kick as beds24_kick  # OTA availability push
+from services.mailer import send_email
+from services.voucher import build_email, build_voucher_pdf, checkin_times, norm_lang
 from services.customer_notify import (
     booking_payment_text,
     booking_received_text,
@@ -340,6 +343,8 @@ class BridgePaymentData(BaseModel):
     provider_uuid: str | None = None  # octo_payment_UUID — idempotency key
     card_mask: str | None = None      # e.g. 561468****4042
     card_vendor: str | None = None    # uzcard / humo / visa / mastercard
+    guest_email: str | None = None    # for the confirmation e-mail + PDF voucher
+    guest_lang: str | None = None     # ru / uz / en / zh (zh -> en)
 
 
 @router.post("/payment")
@@ -440,6 +445,33 @@ async def bridge_payment(
             await send_customer_message(
                 res.telegram_user_id,
                 booking_payment_text(res, prop.name_ru if prop else "", amt, float(paid_sum), total_amt),
+            )
+        except Exception:
+            pass
+
+    # Confirmation e-mail with the PDF voucher — best-effort, never fails the payment.
+    if data.guest_email and "@" in data.guest_email:
+        try:
+            t_in, t_out = checkin_times(prop.property_type.value if prop and prop.property_type else None)
+            lang = norm_lang(data.guest_lang)
+            vd = {
+                "booking_id": res.id,
+                "guest_name": res.guest_name,
+                "unit": prop.name_ru if prop else "",
+                "check_in": res.check_in.isoformat(),
+                "check_out": res.check_out.isoformat(),
+                "guests": res.guest_count,
+                "nights": (res.check_out - res.check_in).days,
+                "paid_amount": amt,
+                "paid_card": data.card_mask,
+                "total_amount": float(res.total_amount) if res.total_amount is not None else None,
+                "t_in": t_in, "t_out": t_out,
+            }
+            subject, body = build_email(lang, vd)
+            pdf = build_voucher_pdf(lang, vd)
+            await asyncio.to_thread(
+                send_email, data.guest_email, subject, body,
+                f"balandda-voucher-{res.id}.pdf", pdf,
             )
         except Exception:
             pass

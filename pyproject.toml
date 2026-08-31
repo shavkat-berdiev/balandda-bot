@@ -26,6 +26,7 @@ dependencies = [
     "aiohttp>=3.9,<4",
     "httpx>=0.28,<1",
     "telethon>=1.36,<2",
+    "fpdf2>=2.8,<3",
 ]
 
 [project.optional-dependencies]

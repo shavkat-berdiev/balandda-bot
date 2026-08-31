@@ -13,11 +13,13 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import re
 import secrets
 
 from api.auth import get_current_user, require_owner
 from bot.config import settings
 from services.beds24 import kick as beds24_kick
+from services.octo_service import octo_refund
 from db.database import get_session
 from db.hold_timing import add_working_minutes
 from db.pricing import load_rate_index, stay_total
@@ -502,9 +504,16 @@ async def update_reservation(
     return _out(res)
 
 
+class CancelInput(BaseModel):
+    # Refund online card payments (Octo) back to the guest's card. Default: NO —
+    # the operator explicitly opts in when cancelling a wrong/duplicate booking.
+    refund_octo: bool = False
+
+
 @router.post("/{res_id}/cancel")
 async def cancel_reservation(
     res_id: int,
+    data: CancelInput | None = None,
     session: AsyncSession = Depends(get_session),
     user: dict = Depends(get_current_user),
 ):
@@ -512,14 +521,61 @@ async def cancel_reservation(
     if not res:
         raise HTTPException(status_code=404, detail="not found")
     res.status = ReservationStatus.CANCELLED
+
+    # Optional card refund of Octo online payments (operator's explicit choice).
+    octo_refunds: list[dict] = []
+    if data and data.refund_octo:
+        preps = (
+            await session.execute(
+                select(Prepayment).where(
+                    Prepayment.reservation_id == res_id,
+                    Prepayment.status == PrepaymentStatus.CONFIRMED,
+                    Prepayment.note.ilike("%Octo%"),
+                )
+            )
+        ).scalars().all()
+        name = await _actor_name(session, user.get("telegram_id"))
+        for p in preps:
+            m = re.search(r"([A-Za-z0-9][A-Za-z0-9\-]{15,})\s*$", p.note or "")
+            if not m:
+                octo_refunds.append({"amount": float(p.amount), "ok": False,
+                                     "error": "не найден UUID платежа в записи предоплаты"})
+                continue
+            amt = round(float(p.amount))
+            ok, msg = await octo_refund(m.group(1), amt, f"RF-{res_id}-{p.id}")
+            if ok:
+                p.status = PrepaymentStatus.CANCELLED
+                p.note = (p.note or "") + f" · ВОЗВРАТ на карту {_today_tashkent().isoformat()}"
+                if p.income_entry_id:
+                    inc = await session.get(IncomeEntry, p.income_entry_id)
+                    if inc is not None:
+                        rep = await session.get(StructuredReport, inc.report_id)
+                        if rep is not None:
+                            rep.total_income = (rep.total_income or 0) - round(float(inc.amount))
+                        await session.delete(inc)
+                session.add(ReservationEvent(
+                    reservation_id=res_id, actor_id=user.get("telegram_id"), actor_name=name,
+                    action="payment", detail=f"Возврат Octo: −{amt} сум на карту гостя ({msg})",
+                ))
+            else:
+                session.add(ReservationEvent(
+                    reservation_id=res_id, actor_id=user.get("telegram_id"), actor_name=name,
+                    action="payment", detail=f"Возврат Octo НЕ выполнен ({amt} сум): {msg}",
+                ))
+            octo_refunds.append({"amount": amt, "ok": ok, "error": None if ok else msg})
+
     await session.commit()
-    await _log(session, res_id, user, "cancelled", "Бронь отменена")
+    await _log(session, res_id, user, "cancelled", "Бронь отменена"
+               + (" · с возвратом оплаты на карту" if (data and data.refund_octo) else ""))
     if res.telegram_user_id:
         prop = await session.get(Property, res.property_id)
         await send_customer_message(res.telegram_user_id, booking_cancelled_text(res, prop.name_ru if prop else ""))
     await session.refresh(res)
     beds24_kick()
-    return _out(res)
+    out = _out(res)
+    if octo_refunds:
+        out["octo_refunds"] = octo_refunds
+    return out
 
 
 @router.post("/{res_id}/extend-hold")

@@ -50,6 +50,15 @@ class Settings(BaseSettings):
     # Telegram id that "owns" income rows created by online card payments (Octo).
     # Set OCTO_OPERATOR_TG in .env to the owner's id; 0 = system/unattributed.
     octo_operator_tg: int = 0
+    # Octo acquiring credentials (same shop as the website) — for card refunds.
+    octo_shop_id: int = 0
+    octo_secret: str = ""
+    # Guest confirmation e-mails (Plesk mailbox). SMTP_* in .env.
+    smtp_host: str = "mail.balandda.uz"
+    smtp_port: int = 587
+    smtp_user: str = "info@balandda.uz"
+    smtp_password: str = ""
+    smtp_from_name: str = "Balandda Chimgan"
     prepayment_instructions: str = (
         "Для подтверждения брони внесите предоплату 20% в течение часа:\n"
         "💳 Карта: 8600 XXXX XXXX XXXX (ИМЯ ФАМИЛИЯ)\n"

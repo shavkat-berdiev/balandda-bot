@@ -398,8 +398,28 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
 
   async function doCancel(id) {
     if (!confirm('Отменить эту бронь?')) return;
+    // Online card payments (Octo): the operator chooses whether to refund.
+    // Default is NO refund — per the no-show/cancellation policy.
+    let refundOcto = false;
+    const octoPreps = (prepays || []).filter(
+      (p) => /octo/i.test(p.note || '') && p.status === 'CONFIRMED'
+    );
+    if (octoPreps.length) {
+      const sum = octoPreps.reduce((s, p) => s + Number(p.amount || 0), 0);
+      refundOcto = confirm(
+        `У этой брони есть онлайн-оплата картой: ${sum.toLocaleString('ru-RU')} сум (Octo).\n\n` +
+        'Вернуть деньги на карту гостя?\n\n' +
+        'OK — ВЕРНУТЬ на карту\nОтмена — НЕ возвращать (по умолчанию)'
+      );
+    }
     try {
-      await api.cancelReservation(id);
+      const r = await api.cancelReservation(id, refundOcto ? { refund_octo: true } : undefined);
+      if (r && r.octo_refunds && r.octo_refunds.length) {
+        const bad = r.octo_refunds.filter((x) => !x.ok);
+        alert(bad.length
+          ? 'Бронь отменена, но возврат Octo НЕ прошёл: ' + (bad[0].error || 'ошибка') + '\nПопробуйте вернуть вручную в merchant.octo.uz.'
+          : 'Бронь отменена, деньги возвращаются на карту гостя ✔ (зачисление 3–15 банковских дней)');
+      }
       setDetail(null);
       await load();
     } catch (e) {

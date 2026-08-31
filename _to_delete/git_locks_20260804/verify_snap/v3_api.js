@@ -121,22 +121,6 @@ export const api = {
   createBlockedDate: (data) => request('/admin/blocked-dates', { method: 'POST', body: JSON.stringify(data) }),
   deleteBlockedDate: (id) => request(`/admin/blocked-dates/${id}`, { method: 'DELETE' }),
 
-  // Admin — Seasonal rates + holidays (single source of truth for nightly prices)
-  getRateSeasons: () => request('/admin/rate-seasons'),
-  createRateSeason: (data) => request('/admin/rate-seasons', { method: 'POST', body: JSON.stringify(data) }),
-  updateRateSeason: (id, data) => request(`/admin/rate-seasons/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
-  deleteRateSeason: (id) => request(`/admin/rate-seasons/${id}`, { method: 'DELETE' }),
-  addSeasonPeriod: (id, data) => request(`/admin/rate-seasons/${id}/periods`, { method: 'POST', body: JSON.stringify(data) }),
-  deleteSeasonPeriod: (pid) => request(`/admin/rate-seasons/periods/${pid}`, { method: 'DELETE' }),
-  setSeasonPrices: (id, rows) => request(`/admin/rate-seasons/${id}/prices`, { method: 'PUT', body: JSON.stringify(rows) }),
-  getRatePreview: (params) => request(`/admin/rate-preview?${new URLSearchParams(params)}`),
-  getHolidays: () => request('/admin/holidays'),
-  createHoliday: (data) => request('/admin/holidays', { method: 'POST', body: JSON.stringify(data) }),
-  deleteHoliday: (id) => request(`/admin/holidays/${id}`, { method: 'DELETE' }),
-  presetHolidays: (year) => request(`/admin/holidays/preset?year=${year}`, { method: 'POST' }),
-  publishRates: () => request('/admin/rates/publish', { method: 'POST' }),
-  freezeTotals: () => request('/admin/rates/freeze-totals', { method: 'POST' }),
-
   // Admin — Service types (the «Тип» dropdown, editable)
   getAdminServiceTypes: () => request('/admin/service-types'),
   createAdminServiceType: (data) => request('/admin/service-types', { method: 'POST', body: JSON.stringify(data) }),
@@ -338,7 +322,7 @@ export const api = {
   getReservations: (from, to) => request(`/reservations?from=${from}&to=${to}`),
   createReservation: (data) => request('/reservations', { method: 'POST', body: JSON.stringify(data) }),
   updateReservation: (id, data) => request(`/reservations/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-  cancelReservation: (id, body) => request(`/reservations/${id}/cancel`, { method: 'POST', ...(body ? { body: JSON.stringify(body) } : {}) }),
+  cancelReservation: (id) => request(`/reservations/${id}/cancel`, { method: 'POST' }),
   extendHold: (id) => request(`/reservations/${id}/extend-hold`, { method: 'POST' }),
   connectLink: (id) => request(`/reservations/${id}/connect-link`, { method: 'POST' }),
   waivePrepayment: (id) => request(`/reservations/${id}/waive-prepayment`, { method: 'POST' }),
