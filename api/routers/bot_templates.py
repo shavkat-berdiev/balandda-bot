@@ -20,7 +20,7 @@ from sqlalchemy.orm import selectinload
 from api.auth import get_current_user, require_admin
 from bot.config import settings
 from db.database import get_session
-from api.routers.public import TYPE_TO_WEB_SLUG
+from api.routers.public import TYPE_TO_WEB_SLUG, load_type_labels
 from db.booking_rules import today_local
 from db.enums import PROPERTY_TYPE_LABELS, PropertyType
 from db.models import BotTemplate, BusinessUnit, Property, PropertyTypeLabel, ServiceItem
@@ -31,7 +31,19 @@ router = APIRouter()
 UPLOAD_DIR = "/app/uploads/bot"
 PUBLIC_BASE = "https://analytics.berdiev.uz/api/v1/public/bot-image/"
 ACTIONS = {"reply", "submenu", "book", "agent", "lang"}
-PRICE_BLOCKS = {"none", "houses", "pool", "spa"}
+# Per-node price blocks: one accommodation type (or the pair a node describes), so a
+# node can carry its OWN live rate instead of hardcoding numbers in the body. Hardcoded
+# bodies are exactly what went stale when the autumn 2026 season started.
+TYPE_BLOCKS: dict[str, tuple[str, ...]] = {
+    "type_chalet_with_sauna": ("CHALET_WITH_SAUNA", "CHALET_WITHOUT_SAUNA"),
+    "type_chalet_without_sauna": ("CHALET_WITHOUT_SAUNA",),
+    "type_white_chalet": ("WHITE_CHALET",),
+    "type_apartment": ("APARTMENT",),
+    "type_penthouse": ("PENTHOUSE",),
+    "type_spa_suite": ("SPA_SUITE",),
+    "type_villa": ("VILLA",),
+}
+PRICE_BLOCKS = {"none", "houses", "pool", "spa", *TYPE_BLOCKS}
 LANGS = ("ru", "uz", "en")
 
 
@@ -376,8 +388,71 @@ def _money(n: int) -> str:
     return f"{n:,}".replace(",", " ")
 
 
+async def _type_price_text(session: AsyncSession, types: tuple[str, ...], lang: str) -> str:
+    """Live nightly rate for ONE accommodation type - the per-node counterpart of the
+    whole-resort "houses" table. Reads the same rate index as the calendar, so a season
+    change reaches the bot with no edit at all."""
+    rows = [
+        p for p in (
+            await session.execute(
+                select(Property).where(
+                    Property.is_active.is_(True),
+                    Property.business_unit == BusinessUnit.RESORT,
+                ).order_by(Property.sort_order)
+            )
+        ).scalars().all()
+        if p.property_type.value in types
+    ]
+    if not rows:
+        return ""
+    today = today_local()
+    idx = await load_rate_index(session, today, today + timedelta(days=1))
+    labels = await load_type_labels(session)
+    by_type: dict[str, tuple[int, int]] = {}
+    order: list[str] = []
+    for p in rows:
+        w = idx.window_for(p.id, today)
+        pair = w.prices[p.id] if w else (float(p.price_weekday or 0), float(p.price_weekend or 0))
+        wd, we = _i(pair[0]), _i(pair[1])
+        t = p.property_type.value
+        if t in by_type:
+            cur = by_type[t]
+            by_type[t] = (min(cur[0], wd), min(cur[1], we))
+        else:
+            order.append(t)
+            by_type[t] = (wd, we)
+    head = {
+        "ru": "\U0001F4B0 \u0426\u0435\u043d\u044b \u0437\u0430 \u043d\u043e\u0447\u044c (\u0431\u0443\u0434\u043d\u0438 \u0438 \u0432\u0441 / \u0441\u0443\u0431\u0431\u043e\u0442\u0430 \u0438 \u043f\u0440\u0430\u0437\u0434\u043d\u0438\u043a\u0438):",
+        "uz": "\U0001F4B0 Bir kecha narxi (ish kunlari va yakshanba / shanba va bayramlar):",
+        "en": "\U0001F4B0 Price per night (weekdays & Sunday / Saturday & holidays):",
+    }[lang]
+    lines = []
+    for t in order:
+        wd, we = by_type[t]
+        if not (wd or we):
+            continue
+        lbl = labels.get(t, {})
+        nm = lbl.get(lang) or lbl.get("ru") or t
+        cur = {"ru": "\u0441\u0443\u043c", "uz": "so'm", "en": "UZS"}[lang]
+        lines.append("\u2022 %s \u2014 %s / %s %s" % (nm, _money(wd), _money(we), cur))
+    if not lines:
+        return ""
+    season = season_label(idx, rows[0].id, today)
+    tail = []
+    if season:
+        tail.append({
+            "ru": "\u0414\u0435\u0439\u0441\u0442\u0432\u0443\u0435\u0442 \u00ab%s\u00bb. \u041d\u0430 \u0434\u0440\u0443\u0433\u0438\u0435 \u0434\u0430\u0442\u044b \u0446\u0435\u043d\u0430 \u043c\u043e\u0436\u0435\u0442 \u043e\u0442\u043b\u0438\u0447\u0430\u0442\u044c\u0441\u044f." % season,
+            "uz": "\u00ab%s\u00bb amal qiladi. Boshqa sanalarda narx farq qilishi mumkin." % season,
+            "en": "\u00ab%s\u00bb rates apply. Other dates may differ." % season,
+        }[lang])
+    return "\n".join([head, *lines, *tail])
+
+
 async def _price_text(session: AsyncSession, block: str, lang: str) -> str:
     """Render a live price table from the catalog so the bot never quotes a stale number."""
+    if block in TYPE_BLOCKS:
+        return await _type_price_text(session, TYPE_BLOCKS[block], lang)
+
     if block == "houses":
         rows = (
             await session.execute(
@@ -395,8 +470,10 @@ async def _price_text(session: AsyncSession, block: str, lang: str) -> str:
             season = season or season_label(idx, p.id, today)
 
         by_type: dict[str, tuple[int, int]] = {}
+        type_labels = await load_type_labels(session)
         for p in rows:
-            name = {"ru": p.name_ru, "uz": p.name_uz, "en": p.name_en or p.name_ru}.get(lang) or p.name_ru
+            _lbl = type_labels.get(p.property_type.value, {})
+            name = _lbl.get(lang) or _lbl.get("ru") or p.name_ru
             w = idx.window_for(p.id, today)
             pair = w.prices[p.id] if w else (float(p.price_weekday or 0), float(p.price_weekend or 0))
             wd, we = _i(pair[0]), _i(pair[1])
@@ -637,7 +714,7 @@ async def price_blocks(
     the three live price tables per language. The CRM caches this with a last-good
     fallback, so a blip here never blanks the bot's prices."""
     out: dict[str, dict[str, str]] = {}
-    for block in ("houses", "pool", "spa"):
+    for block in ("houses", "pool", "spa", *TYPE_BLOCKS):
         out[block] = {lang: await _price_text(session, block, lang) for lang in LANGS}
     response.headers["Cache-Control"] = "public, max-age=60"
     return {"blocks": out}
