@@ -34,6 +34,19 @@ async def run_migrations():
     columns to existing tables. We must ALTER TABLE manually.
     """
     migrations = [
+        # Added 2026-09: guest e-mail on reservations (voucher for bot bookings)
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'reservations'
+                  AND column_name = 'guest_email'
+            ) THEN
+                ALTER TABLE reservations ADD COLUMN guest_email VARCHAR(160) NULL;
+            END IF;
+        END $$;
+        """,
         # Added 2026-07: entry timestamp for card-transfer reconciliation
         """
         DO $$

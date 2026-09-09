@@ -703,6 +703,9 @@ class Reservation(Base):
     property_id: Mapped[int] = mapped_column(ForeignKey("properties.id"), index=True)
     guest_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     guest_phone: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # Collected by the website form and (since 2026-09) by both bot wizards, so the
+    # PDF voucher can be e-mailed when the payment lands.
+    guest_email: Mapped[str | None] = mapped_column(String(160), nullable=True)
     guest_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # Telegram link to the customer chat — @nickname now (agent-entered or self-service),
     # numeric user id filled once the customer has interacted with the bot (needed to DM them).

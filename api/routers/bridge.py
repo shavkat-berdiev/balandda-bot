@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.routers.public import _stay_total
+from services.octo_service import octo_prepare, octo_status
 from api.routers.reservations import _get_or_create_report
 from bot.config import settings
 from db.booking_rules import validate_stay
@@ -95,6 +96,7 @@ class SelfBookData(BaseModel):
     guests: int | None = None
     guest_name: str | None = None
     guest_phone: str | None = None
+    guest_email: str | None = None
     # Optional: Instagram customers self-book too, and they have no Telegram identity.
     telegram_user_id: int | None = None
     telegram_username: str | None = None
@@ -135,6 +137,7 @@ async def self_book(
         check_out=data.check_out,
         guest_name=data.guest_name,
         guest_phone=data.guest_phone,
+        guest_email=data.guest_email,
         guest_count=data.guests,
         telegram_user_id=data.telegram_user_id,
         telegram_username=(data.telegram_username.lstrip("@") if data.telegram_username else None),
@@ -170,6 +173,9 @@ async def self_book(
         "unit_name": prop.name_ru,
         "check_in": data.check_in.isoformat(),
         "check_out": data.check_out.isoformat(),
+        "nights": (data.check_out - data.check_in).days,
+        "total_amount": float(total) if total else None,
+        "prepay_amount": int(round((total or 0) * 0.2)) or None,
         "guest_name": data.guest_name,
         "message": booking_received_text(res, prop.name_ru, prepay_text),
     }
@@ -182,6 +188,7 @@ class WebBookData(BaseModel):
     guests: int | None = None
     guest_name: str
     guest_phone: str
+    guest_email: str | None = None
 
 
 @router.post("/web-book")
@@ -345,6 +352,7 @@ class BridgePaymentData(BaseModel):
     card_vendor: str | None = None    # uzcard / humo / visa / mastercard
     guest_email: str | None = None    # for the confirmation e-mail + PDF voucher
     guest_lang: str | None = None     # ru / uz / en / zh (zh -> en)
+    channel_label: str = "сайт"       # "сайт" | "бот" — for the operator messages
 
 
 @router.post("/payment")
@@ -397,7 +405,7 @@ async def bridge_payment(
     await session.flush()
     report.total_income = (report.total_income or 0) + amt
 
-    note = "Octo интернет-эквайринг (сайт)"
+    note = f"Octo интернет-эквайринг ({data.channel_label})"
     if data.card_mask:
         note += f" · карта {data.card_mask}"
     if data.card_vendor:
@@ -421,13 +429,13 @@ async def bridge_payment(
         res.hold_warned_at = None
 
     session.add(ReservationEvent(
-        reservation_id=res.id, actor_name="Octo (сайт)", action="payment",
+        reservation_id=res.id, actor_name=f"Octo ({data.channel_label})", action="payment",
         detail=f"Онлайн-оплата картой: +{amt} сум · {note}",
     ))
     await session.commit()
 
     # Operators' topic + guest message — best-effort, never fail the payment.
-    label = f"сайт · 💳 ОПЛАЧЕНО {amt:,} сум (Octo)".replace(",", " ")
+    label = f"{data.channel_label} · 💳 ОПЛАЧЕНО {amt:,} сум (Octo)".replace(",", " ")
     try:
         await notify_operators_booking(res, prop.name_ru if prop else "", label)
     except Exception:
@@ -477,3 +485,113 @@ async def bridge_payment(
             pass
 
     return {"ok": True, "booking_id": res.id, "status": res.status.value, "amount": amt}
+
+
+# ── Pay links for bookings made in the bots (Telegram + Instagram) ──
+#
+# The website creates its Octo payment inside book.php at booking time. The bots
+# create the booking first (self-book above) and ask for money afterwards, so they
+# need a way to start a payment for a booking that already exists. Same Octo shop,
+# same money flow, same /payment bookkeeping — only the entry point is new.
+#
+# The booking id is carried inside our own shop_transaction_id ("BOT-<id>-<rand>"),
+# so no extra table is needed to map a payment back to its booking.
+
+IG_DIRECT_URL = "https://ig.me/m/balandda_chimgan"
+
+
+class PayLinkData(BaseModel):
+    booking_id: int
+    kind: str = "full"                 # "full" | "deposit" (20%)
+    lang: str | None = "ru"
+    channel: str | None = "telegram"   # where to send the guest back after paying
+
+
+@router.post("/pay-link")
+async def pay_link(
+    data: PayLinkData,
+    session: AsyncSession = Depends(get_session),
+    x_bridge_secret: str | None = Header(default=None),
+):
+    """Start an Octo payment for an existing bot booking and return its pay page."""
+    _check_secret(x_bridge_secret)
+    res = await session.get(Reservation, data.booking_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="booking not found")
+    if res.status not in (ReservationStatus.HOLD, ReservationStatus.CONFIRMED):
+        return {"ok": False, "error": "not_payable"}
+    prop = await session.get(Property, res.property_id)
+    total = float(res.total_amount or 0)
+    if total <= 0 and prop:
+        total = float(await _stay_total(session, prop, res.check_in, res.check_out) or 0)
+    amount = round(total) if data.kind != "deposit" else round(total * 0.2)
+    if amount <= 0:
+        return {"ok": False, "error": "no_amount"}
+
+    tid = f"BOT-{res.id}-{secrets.token_hex(3)}"
+    unit = prop.name_ru if prop else ""
+    back = (
+        IG_DIRECT_URL
+        if (data.channel or "").lower() == "instagram"
+        else f"https://t.me/{settings.customer_bot_username}"
+    )
+    url, uuid, msg = await octo_prepare(
+        shop_transaction_id=tid,
+        total_sum=amount,
+        description=f"Оплата брони #{res.id} — {unit}, {res.check_in} → {res.check_out}",
+        return_url=back,
+        notify_url="https://analytics.berdiev.uz/api/v1/bridge/octo-notify",
+        language=(data.lang or "ru"),
+    )
+    if not url:
+        return {"ok": False, "error": msg}
+    session.add(ReservationEvent(
+        reservation_id=res.id, actor_name="Клиент (бот)", action="pay_link",
+        detail=f"Ссылка на оплату {amount} сум ({data.kind}) · {tid}",
+    ))
+    await session.commit()
+    return {"ok": True, "pay_url": url, "amount": amount, "kind": data.kind,
+            "tid": tid, "provider_uuid": uuid}
+
+
+@router.post("/octo-notify")
+async def octo_notify(
+    payload: dict,
+    session: AsyncSession = Depends(get_session),
+):
+    """Octo's webhook for bot payments (public by design — Octo sends no auth).
+
+    Nothing in the request body is trusted: we re-fetch the payment from Octo by
+    our own transaction id and only then book the money, exactly as octopay.php
+    does for the website. Applying it goes through /payment, so bot payments get
+    the identical ledger row, HOLD→CONFIRMED flip, voucher and notifications.
+    """
+    tid = str((payload or {}).get("shop_transaction_id") or "").strip()
+    if not tid.startswith("BOT-"):
+        return {"ok": True, "ignored": "not a bot payment"}
+    d = await octo_status(tid)
+    if not d:
+        return {"ok": True, "ignored": "octo unreachable"}
+    if str(d.get("status") or "") != "succeeded":
+        return {"ok": True, "status": d.get("status")}
+    try:
+        booking_id = int(tid.split("-")[1])
+    except (IndexError, ValueError):
+        return {"ok": True, "ignored": "unparsable tid"}
+    res = await session.get(Reservation, booking_id)
+    if not res:
+        return {"ok": True, "ignored": "booking gone"}
+    return await bridge_payment(
+        BridgePaymentData(
+            booking_id=booking_id,
+            amount=float(d.get("total_sum") or 0),
+            provider_uuid=d.get("octo_payment_UUID"),
+            card_mask=d.get("maskedPan"),
+            card_vendor=d.get("card_vendor"),
+            guest_email=res.guest_email,
+            guest_lang=None,
+            channel_label="бот",
+        ),
+        session=session,
+        x_bridge_secret=settings.bridge_secret,
+    )
