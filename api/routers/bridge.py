@@ -567,8 +567,8 @@ async def octo_notify(
     the identical ledger row, HOLD→CONFIRMED flip, voucher and notifications.
     """
     tid = str((payload or {}).get("shop_transaction_id") or "").strip()
-    if not tid.startswith("BOT-"):
-        return {"ok": True, "ignored": "not a bot payment"}
+    if not (tid.startswith("BOT-") or tid.startswith("CAL-")):
+        return {"ok": True, "ignored": "not ours"}
     d = await octo_status(tid)
     if not d:
         return {"ok": True, "ignored": "octo unreachable"}
@@ -590,7 +590,7 @@ async def octo_notify(
             card_vendor=d.get("card_vendor"),
             guest_email=res.guest_email,
             guest_lang=None,
-            channel_label="бот",
+            channel_label=("календарь" if tid.startswith("CAL-") else "бот"),
         ),
         session=session,
         x_bridge_secret=settings.bridge_secret,

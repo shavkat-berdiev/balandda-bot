@@ -338,6 +338,7 @@ export const api = {
   getReservations: (from, to) => request(`/reservations?from=${from}&to=${to}`),
   createReservation: (data) => request('/reservations', { method: 'POST', body: JSON.stringify(data) }),
   updateReservation: (id, data) => request(`/reservations/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  octoLink: (id, amount) => request(`/reservations/${id}/octo-link`, { method: 'POST', body: JSON.stringify(amount ? { amount } : {}) }),
   cancelReservation: (id, body) => request(`/reservations/${id}/cancel`, { method: 'POST', ...(body ? { body: JSON.stringify(body) } : {}) }),
   extendHold: (id) => request(`/reservations/${id}/extend-hold`, { method: 'POST' }),
   connectLink: (id) => request(`/reservations/${id}/connect-link`, { method: 'POST' }),

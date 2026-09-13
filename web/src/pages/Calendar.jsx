@@ -830,12 +830,33 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
             </div>
           )}
 
-          {!payForm ? (
+          {!payForm ? (<>
             <button
               onClick={() => setPayForm({ amount: String(Math.max(0, Math.round(detail.balance ?? 0)) || ''), method: 'CASH' })}
               className="w-full mb-3 px-3 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700"
             >➕ Добавить оплату / предоплату</button>
-          ) : (
+            <button
+              onClick={async () => {
+                const def = Math.max(0, Math.round(detail.balance ?? 0));
+                const inp = prompt(
+                  'Сумма для списания с карты (сум).\nОткроется платёжная страница Octo — введите там данные карты (виртуальная карта OTA или карта гостя).',
+                  String(def || '')
+                );
+                if (inp === null) return;
+                const amt = Math.round(Number(String(inp).replace(/[^0-9.]/g, '')));
+                if (!amt || amt <= 0) { alert('Введите сумму больше нуля'); return; }
+                try {
+                  const r = await api.octoLink(detail.id, amt);
+                  window.open(r.pay_url, '_blank', 'noopener');
+                  try { await navigator.clipboard.writeText(r.pay_url); } catch (e) { /* ignore */ }
+                  alert(`Платёжная страница Octo открыта (ссылка скопирована в буфер):\n${r.pay_url}\n\nПосле успешного списания ${amt.toLocaleString('ru-RU')} сум бронь отметится оплаченной автоматически.`);
+                } catch (e) {
+                  alert(e.message || 'Не удалось создать ссылку Octo');
+                }
+              }}
+              className="w-full mb-3 px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
+            >💳 Списать с карты через Octo (виртуальная карта OTA)</button>
+          </>) : (
             <div className="mb-3 p-3 rounded-lg border border-green-200 bg-green-50 space-y-2">
               <div className="grid grid-cols-2 gap-2">
                 <input type="number" placeholder="Сумма" value={payForm.amount} onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })} className="input" />

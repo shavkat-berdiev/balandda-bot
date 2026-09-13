@@ -19,7 +19,7 @@ import secrets
 from api.auth import get_current_user, require_owner
 from bot.config import settings
 from services.beds24 import kick as beds24_kick
-from services.octo_service import octo_refund
+from services.octo_service import octo_prepare, octo_refund
 from db.database import get_session
 from db.hold_timing import add_working_minutes
 from db.pricing import load_rate_index, stay_total
@@ -576,6 +576,65 @@ async def cancel_reservation(
     if octo_refunds:
         out["octo_refunds"] = octo_refunds
     return out
+
+
+class OctoLinkInput(BaseModel):
+    # Explicit amount in soums; when omitted the remaining balance is charged.
+    amount: float | None = None
+
+
+@router.post("/{res_id}/octo-link")
+async def octo_link(
+    res_id: int,
+    data: OctoLinkInput | None = None,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Octo pay page for this booking: the operator opens it and types the card
+    in (OTA virtual VISA from Expedia/Trip.com, or the guest's card). The money
+    lands through /bridge/octo-notify, which re-verifies the payment with Octo
+    before booking it, so nothing here is trusted after the redirect."""
+    res = await session.get(Reservation, res_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="not found")
+    if res.status not in (ReservationStatus.HOLD, ReservationStatus.CONFIRMED):
+        raise HTTPException(status_code=400, detail="Оплату можно принять только по активной брони")
+    prop = await session.get(Property, res.property_id)
+
+    amt = round(float(data.amount)) if (data and data.amount) else 0
+    if amt <= 0:
+        paid = (
+            await session.execute(
+                select(func.coalesce(func.sum(IncomeEntry.amount), 0)).where(
+                    IncomeEntry.reservation_id == res.id
+                )
+            )
+        ).scalar() or 0
+        amt = round(float(res.total_amount or 0) - float(paid))
+    if amt <= 0:
+        raise HTTPException(status_code=400, detail="Остаток к оплате не определён — укажите сумму вручную")
+
+    tid = f"CAL-{res.id}-{secrets.token_hex(3)}"
+    unit = prop.name_ru if prop else ""
+    url, _uuid, msg = await octo_prepare(
+        shop_transaction_id=tid,
+        total_sum=amt,
+        description=f"Оплата брони #{res.id} — {unit}, {res.check_in} → {res.check_out}",
+        return_url="https://calendar.balandda.uz/calendar",
+        notify_url="https://analytics.berdiev.uz/api/v1/bridge/octo-notify",
+        language="ru",
+        ttl=4320,  # 3 days — the operator may charge the OTA card later
+    )
+    if not url:
+        raise HTTPException(status_code=502, detail=f"Octo: {msg}")
+    session.add(ReservationEvent(
+        reservation_id=res_id, actor_id=user.get("telegram_id"),
+        actor_name=user.get("first_name") or user.get("username") or "оператор",
+        action="pay_link",
+        detail=f"Ссылка Octo на {amt} сум (виртуальная карта / ручное списание) · {tid}",
+    ))
+    await session.commit()
+    return {"ok": True, "pay_url": url, "amount": amt, "tid": tid}
 
 
 @router.post("/{res_id}/extend-hold")
