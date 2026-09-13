@@ -98,6 +98,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
   const [events, setEvents] = useState([]);   // change log for the selected reservation
   const [savingDetail, setSavingDetail] = useState(false);
   const [payForm, setPayForm] = useState(null);
+  const [octoForm, setOctoForm] = useState(null); // Octo charge mini-form (OTA virtual cards)
   const [savingPay, setSavingPay] = useState(false);
   const [payments, setPayments] = useState([]);   // payment ledger for the selected booking
   const [editPay, setEditPay] = useState(null);    // {id, amount, method} inline edit
@@ -835,27 +836,73 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
               onClick={() => setPayForm({ amount: String(Math.max(0, Math.round(detail.balance ?? 0)) || ''), method: 'CASH' })}
               className="w-full mb-3 px-3 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700"
             >➕ Добавить оплату / предоплату</button>
-            <button
-              onClick={async () => {
-                const def = Math.max(0, Math.round(detail.balance ?? 0));
-                const inp = prompt(
-                  'Сумма для списания с карты (сум).\nОткроется платёжная страница Octo — введите там данные карты (виртуальная карта OTA или карта гостя).',
-                  String(def || '')
-                );
-                if (inp === null) return;
-                const amt = Math.round(Number(String(inp).replace(/[^0-9.]/g, '')));
-                if (!amt || amt <= 0) { alert('Введите сумму больше нуля'); return; }
-                try {
-                  const r = await api.octoLink(detail.id, amt);
-                  window.open(r.pay_url, '_blank', 'noopener');
-                  try { await navigator.clipboard.writeText(r.pay_url); } catch (e) { /* ignore */ }
-                  alert(`Платёжная страница Octo открыта (ссылка скопирована в буфер):\n${r.pay_url}\n\nПосле успешного списания ${amt.toLocaleString('ru-RU')} сум бронь отметится оплаченной автоматически.`);
-                } catch (e) {
-                  alert(e.message || 'Не удалось создать ссылку Octo');
-                }
-              }}
-              className="w-full mb-3 px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
-            >💳 Списать с карты через Octo (виртуальная карта OTA)</button>
+            {!octoForm ? (
+              <button
+                onClick={() => {
+                  const bal = String(Math.max(0, Math.round(detail.balance ?? 0)) || '');
+                  setOctoForm({ currency: 'UZS', amount: bal, uzs: bal });
+                }}
+                className="w-full mb-3 px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
+              >💳 Списать с карты через Octo (виртуальная карта OTA)</button>
+            ) : (
+              <div className="mb-3 p-3 rounded-lg border border-indigo-200 bg-indigo-50 space-y-2">
+                <div className="text-sm font-medium text-indigo-900">💳 Списание с карты через Octo</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={octoForm.currency}
+                    onChange={(e) => setOctoForm({ ...octoForm, currency: e.target.value, amount: e.target.value === 'USD' ? '' : octoForm.uzs })}
+                    className="input"
+                  >
+                    <option value="UZS">Сумы (UZS)</option>
+                    <option value="USD">Доллары (USD)</option>
+                  </select>
+                  <input
+                    type="number" step={octoForm.currency === 'USD' ? '0.01' : '1'}
+                    placeholder={octoForm.currency === 'USD' ? 'Сумма, $' : 'Сумма, сум'}
+                    value={octoForm.amount}
+                    onChange={(e) => setOctoForm({ ...octoForm, amount: e.target.value })}
+                    className="input"
+                  />
+                </div>
+                {octoForm.currency === 'USD' && (
+                  <input
+                    type="number" placeholder="К учёту в отчёте, сум"
+                    value={octoForm.uzs}
+                    onChange={(e) => setOctoForm({ ...octoForm, uzs: e.target.value })}
+                    className="input w-full"
+                  />
+                )}
+                <div className="text-xs text-indigo-700">
+                  {octoForm.currency === 'USD'
+                    ? 'Введите точную сумму в $, на которую авторизована виртуальная карта (как в Expedia/Trip.com). В отчёт ляжет сумма в сумах — по умолчанию остаток по брони.'
+                    : 'Откроется платёжная страница Octo — введите там данные карты (виртуальная карта OTA или карта гостя).'}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={async () => {
+                      const amt = Number(String(octoForm.amount).replace(',', '.').replace(/[^0-9.]/g, ''));
+                      if (!amt || amt <= 0) { alert('Введите сумму больше нуля'); return; }
+                      const body = { amount: amt, currency: octoForm.currency };
+                      if (octoForm.currency === 'USD') {
+                        const uzs = Math.round(Number(String(octoForm.uzs).replace(/[^0-9]/g, '')));
+                        if (uzs > 0) body.uzs_amount = uzs;
+                      }
+                      try {
+                        const r = await api.octoLink(detail.id, body);
+                        window.open(r.pay_url, '_blank', 'noopener');
+                        try { await navigator.clipboard.writeText(r.pay_url); } catch (e) { /* ignore */ }
+                        alert(`Платёжная страница Octo (${r.currency}) открыта, ссылка скопирована в буфер:\n${r.pay_url}\n\nПосле успешного списания бронь отметится оплаченной автоматически.`);
+                        setOctoForm(null);
+                      } catch (e) {
+                        alert(e.message || 'Не удалось создать ссылку Octo');
+                      }
+                    }}
+                    className="flex-1 px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium hover:bg-indigo-700"
+                  >Создать ссылку</button>
+                  <button onClick={() => setOctoForm(null)} className="px-3 py-2 rounded-lg bg-gray-200 text-sm hover:bg-gray-300">Отмена</button>
+                </div>
+              </div>
+            )}
           </>) : (
             <div className="mb-3 p-3 rounded-lg border border-green-200 bg-green-50 space-y-2">
               <div className="grid grid-cols-2 gap-2">

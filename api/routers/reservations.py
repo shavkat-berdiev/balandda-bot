@@ -541,6 +541,12 @@ async def cancel_reservation(
                 octo_refunds.append({"amount": float(p.amount), "ok": False,
                                      "error": "не найден UUID платежа в записи предоплаты"})
                 continue
+            if "$" in (p.note or ""):
+                # Charged in dollars: the ledger row keeps the soum equivalent, so an
+                # automatic refund by that number would be wrong. Cabinet only.
+                octo_refunds.append({"amount": float(p.amount), "ok": False,
+                                     "error": "платёж в USD — возврат делается из кабинета Octo"})
+                continue
             amt = round(float(p.amount))
             ok, msg = await octo_refund(m.group(1), amt, f"RF-{res_id}-{p.id}")
             if ok:
@@ -579,8 +585,12 @@ async def cancel_reservation(
 
 
 class OctoLinkInput(BaseModel):
-    # Explicit amount in soums; when omitted the remaining balance is charged.
+    # amount is in the charge currency: soums, or dollars when currency="USD"
+    # (OTA virtual cards are authorized for an exact dollar sum). When omitted
+    # (UZS only) the remaining balance is charged.
     amount: float | None = None
+    currency: str = "UZS"            # "UZS" | "USD" — the Octo shop has both accounts
+    uzs_amount: float | None = None  # USD only: soums to book in the reports (default = balance)
 
 
 @router.post("/{res_id}/octo-link")
@@ -601,28 +611,44 @@ async def octo_link(
         raise HTTPException(status_code=400, detail="Оплату можно принять только по активной брони")
     prop = await session.get(Property, res.property_id)
 
-    amt = round(float(data.amount)) if (data and data.amount) else 0
-    if amt <= 0:
-        paid = (
-            await session.execute(
-                select(func.coalesce(func.sum(IncomeEntry.amount), 0)).where(
-                    IncomeEntry.reservation_id == res.id
-                )
+    cur = ((data.currency if data and data.currency else "UZS") or "UZS").upper()
+    if cur not in ("UZS", "USD"):
+        raise HTTPException(status_code=400, detail="Валюта: UZS или USD")
+
+    paid = (
+        await session.execute(
+            select(func.coalesce(func.sum(IncomeEntry.amount), 0)).where(
+                IncomeEntry.reservation_id == res.id
             )
-        ).scalar() or 0
-        amt = round(float(res.total_amount or 0) - float(paid))
-    if amt <= 0:
-        raise HTTPException(status_code=400, detail="Остаток к оплате не определён — укажите сумму вручную")
+        )
+    ).scalar() or 0
+    balance = round(float(res.total_amount or 0) - float(paid))
+
+    if cur == "USD":
+        amt = round(float(data.amount), 2) if (data and data.amount) else 0.0
+        if amt <= 0:
+            raise HTTPException(status_code=400, detail="Укажите сумму списания в долларах")
+        uzs = round(float(data.uzs_amount)) if (data and data.uzs_amount) else balance
+        if uzs <= 0:
+            raise HTTPException(status_code=400, detail="Не определена сумма к учёту в сумах — укажите её")
+        shown = f"{amt:.2f} USD (к учёту {uzs} сум)"
+    else:
+        amt = round(float(data.amount)) if (data and data.amount) else balance
+        if amt <= 0:
+            raise HTTPException(status_code=400, detail="Остаток к оплате не определён — укажите сумму вручную")
+        uzs = int(amt)
+        shown = f"{uzs} сум"
 
     tid = f"CAL-{res.id}-{secrets.token_hex(3)}"
     unit = prop.name_ru if prop else ""
     url, _uuid, msg = await octo_prepare(
         shop_transaction_id=tid,
         total_sum=amt,
+        currency=cur,
         description=f"Оплата брони #{res.id} — {unit}, {res.check_in} → {res.check_out}",
         return_url="https://calendar.balandda.uz/calendar",
         notify_url="https://analytics.berdiev.uz/api/v1/bridge/octo-notify",
-        language="ru",
+        language="ru" if cur == "UZS" else "en",
         ttl=4320,  # 3 days — the operator may charge the OTA card later
     )
     if not url:
@@ -631,10 +657,11 @@ async def octo_link(
         reservation_id=res_id, actor_id=user.get("telegram_id"),
         actor_name=user.get("first_name") or user.get("username") or "оператор",
         action="pay_link",
-        detail=f"Ссылка Octo на {amt} сум (виртуальная карта / ручное списание) · {tid}",
+        detail=f"Ссылка Octo на {shown} (виртуальная карта / ручное списание) · {tid}",
     ))
     await session.commit()
-    return {"ok": True, "pay_url": url, "amount": amt, "tid": tid}
+    return {"ok": True, "pay_url": url, "amount": amt, "currency": cur,
+            "uzs_amount": uzs, "tid": tid}
 
 
 @router.post("/{res_id}/extend-hold")

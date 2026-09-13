@@ -16,6 +16,7 @@ OCTO_API = "https://secure.octo.uz"
 async def octo_prepare(
     *, shop_transaction_id: str, total_sum: float, description: str,
     return_url: str, notify_url: str, language: str = "ru", ttl: int = 1440,
+    currency: str = "UZS",
 ) -> tuple[str | None, str | None, str]:
     """Create a payment and return (pay_url, payment_uuid, message).
 
@@ -33,7 +34,7 @@ async def octo_prepare(
         "init_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "test": False,
         "total_sum": round(float(total_sum), 2),
-        "currency": "UZS",
+        "currency": currency if currency in ("UZS", "USD", "RUB") else "UZS",
         "description": description[:250],
         "return_url": return_url,
         "notify_url": notify_url,

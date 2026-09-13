@@ -6,6 +6,7 @@ to reply with.
 """
 
 import asyncio
+import re
 import secrets
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -581,16 +582,40 @@ async def octo_notify(
     res = await session.get(Reservation, booking_id)
     if not res:
         return {"ok": True, "ignored": "booking gone"}
+
+    amount = float(d.get("total_sum") or 0)
+    channel = "календарь" if tid.startswith("CAL-") else "бот"
+    if tid.startswith("CAL-"):
+        # A calendar link may be in USD (OTA virtual cards). The soum sum to book
+        # was fixed at link creation and lives in the pay_link event for this tid.
+        ev = (
+            await session.execute(
+                select(ReservationEvent)
+                .where(
+                    ReservationEvent.reservation_id == booking_id,
+                    ReservationEvent.action == "pay_link",
+                    ReservationEvent.detail.ilike(f"%{tid}%"),
+                )
+                .order_by(ReservationEvent.id.desc())
+            )
+        ).scalars().first()
+        if ev and "USD" in (ev.detail or ""):
+            usd = amount
+            m_uzs = re.search(r"к учёту (\d+) сум", ev.detail or "")
+            if m_uzs:
+                amount = float(m_uzs.group(1))
+            channel = f"календарь · ${usd:.2f}"
+
     return await bridge_payment(
         BridgePaymentData(
             booking_id=booking_id,
-            amount=float(d.get("total_sum") or 0),
+            amount=amount,
             provider_uuid=d.get("octo_payment_UUID"),
             card_mask=d.get("maskedPan"),
             card_vendor=d.get("card_vendor"),
             guest_email=res.guest_email,
             guest_lang=None,
-            channel_label=("календарь" if tid.startswith("CAL-") else "бот"),
+            channel_label=channel,
         ),
         session=session,
         x_bridge_secret=settings.bridge_secret,
