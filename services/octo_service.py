@@ -12,6 +12,12 @@ from bot.config import settings
 
 OCTO_API = "https://secure.octo.uz"
 
+# Фискализация (чек ОФД): единая позиция «Гостиничные услуги (за проживание)».
+OCTO_FISCAL_SPIC = "10204001001000000"  # ИКПУ
+OCTO_FISCAL_PACKAGE_CODE = "1500169"    # «услуга (сум)»
+OCTO_FISCAL_INN = "309229173"           # СП «BALANDDA CHIMGAN»
+OCTO_FISCAL_NDS = 1                     # плательщик НДС
+
 
 async def octo_prepare(
     *, shop_transaction_id: str, total_sum: float, description: str,
@@ -41,6 +47,19 @@ async def octo_prepare(
         "language": language if language in ("ru", "uz", "en") else "ru",
         "ttl": ttl,
     }
+    # Фискализация: включается OCTO_FISCAL=true в .env после того, как Octo
+    # зарегистрирует фискальный объект (ИКПУ/упаковка/ИНН/НДС) для магазина.
+    # Только для сумовых платежей — фискальные позиции заведены в сумах.
+    if settings.octo_fiscal and currency == "UZS":
+        body["basket"] = [{
+            "position_desc": "Balandda Chimgan - gostinichnye uslugi (prozhivanie)",
+            "count": 1,
+            "price": round(float(total_sum), 2),
+            "spic": OCTO_FISCAL_SPIC,
+            "package_code": OCTO_FISCAL_PACKAGE_CODE,
+            "inn": OCTO_FISCAL_INN,
+            "nds": OCTO_FISCAL_NDS,
+        }]
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(

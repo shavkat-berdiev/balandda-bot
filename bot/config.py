@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     # Octo acquiring credentials (same shop as the website) — for card refunds.
     octo_shop_id: int = 0
     octo_secret: str = ""
+    # Фискализация чеков Octo (basket в prepare_payment). Включать ТОЛЬКО после
+    # регистрации фискального объекта на стороне Octo для магазина 42857 —
+    # иначе каждый платёж падает с 403 «Fiscal object ... not contains in system».
+    octo_fiscal: bool = False
     # Guest confirmation e-mails (Plesk mailbox). SMTP_* in .env.
     smtp_host: str = "mail.balandda.uz"
     smtp_port: int = 587
