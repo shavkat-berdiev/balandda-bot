@@ -543,6 +543,7 @@ async def pay_link(
         return_url=back,
         notify_url="https://analytics.berdiev.uz/api/v1/bridge/octo-notify",
         language=(data.lang or "ru"),
+        phone=res.guest_phone, email=res.guest_email,
     )
     if not url:
         return {"ok": False, "error": msg}

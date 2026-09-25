@@ -4,6 +4,7 @@ Credentials come from env (OCTO_SHOP_ID / OCTO_SECRET in .env) — the same
 shop the website uses for accepting payments.
 """
 
+import re
 from datetime import datetime
 
 import aiohttp
@@ -17,18 +18,32 @@ OCTO_FISCAL_SPIC = "10204001001000000"  # ИКПУ
 OCTO_FISCAL_PACKAGE_CODE = "1500169"    # «услуга (сум)»
 OCTO_FISCAL_INN = "309229173"           # СП «BALANDDA CHIMGAN»
 OCTO_FISCAL_NDS = 1                     # плательщик НДС
+OCTO_OPERATOR_PHONE = "998900077077"    # телефон оператора Balandda — подставляется в чек, если номера гостя нет
+
+
+def _fiscal_phone(phone: str | None) -> str:
+    """ОФД требует телефон плательщика в каждом чеке (иначе FiscalValidationException:
+    Phone number was not provided). Формат 998XXXXXXXXX; если номера нет или он
+    не узбекский (гость OTA) — номер оператора Balandda, как согласовано с Octo."""
+    digits = re.sub(r"\D", "", phone or "")
+    if len(digits) == 9:
+        digits = "998" + digits
+    if not (len(digits) == 12 and digits.startswith("998")):
+        digits = OCTO_OPERATOR_PHONE
+    return digits
 
 
 async def octo_prepare(
     *, shop_transaction_id: str, total_sum: float, description: str,
     return_url: str, notify_url: str, language: str = "ru", ttl: int = 1440,
-    currency: str = "UZS",
+    currency: str = "UZS", phone: str | None = None, email: str | None = None,
 ) -> tuple[str | None, str | None, str]:
     """Create a payment and return (pay_url, payment_uuid, message).
 
     Mirrors what the website does in book.php so bot bookings and website
     bookings are the same Octo shop and the same money flow. NB: `user_data`
-    is omitted on purpose - Octo rejects it with error 10.
+    must be sent COMPLETE (user_id+phone+email) - a partial block is error 10;
+    the OFD requires the payer's phone in every fiscal receipt.
     """
     if not settings.octo_shop_id or not settings.octo_secret:
         return None, None, "OCTO_SHOP_ID/OCTO_SECRET не настроены на сервере"
@@ -46,6 +61,12 @@ async def octo_prepare(
         "notify_url": notify_url,
         "language": language if language in ("ru", "uz", "en") else "ru",
         "ttl": ttl,
+    }
+    # ОФД: телефон плательщика обязателен в чеке — блок user_data всегда полный.
+    body["user_data"] = {
+        "user_id": shop_transaction_id,
+        "phone": _fiscal_phone(phone),
+        "email": (email or "").strip() or "info@balandda.uz",
     }
     # Фискализация: включается OCTO_FISCAL=true в .env после того, как Octo
     # зарегистрирует фискальный объект (ИКПУ/упаковка/ИНН/НДС) для магазина.

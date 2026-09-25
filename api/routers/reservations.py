@@ -650,6 +650,7 @@ async def octo_link(
         notify_url="https://analytics.berdiev.uz/api/v1/bridge/octo-notify",
         language="ru" if cur == "UZS" else "en",
         ttl=4320,  # 3 days — the operator may charge the OTA card later
+        phone=res.guest_phone, email=res.guest_email,
     )
     if not url:
         raise HTTPException(status_code=502, detail=f"Octo: {msg}")
