@@ -238,6 +238,29 @@ BODY = {
 }
 
 
+def build_cancel_email(d: dict) -> tuple[str, str]:
+    """Cancellation notice, RU + EN in one plain-text message (the booking has no
+    stored language, so both languages always go out)."""
+    subject = f"Бронь №{d['booking_id']} отменена — Balandda Chimgan / Booking cancelled"
+    name = d.get("guest_name") or ""
+    unit = d.get("unit") or ""
+    body = (
+        f"Здравствуйте, {name}!\n\n"
+        f"Ваша бронь №{d['booking_id']} — {unit}, {d['check_in']} → {d['check_out']} — отменена.\n"
+        "Если это произошло по ошибке или вы хотите выбрать другие даты, просто ответьте на это письмо "
+        "или свяжитесь с оператором: +998 90 007 70 77 (Telegram/телефон).\n"
+        "По вопросам внесённой предоплаты также обращайтесь к оператору.\n\n"
+        "— — —\n\n"
+        f"Hello {name}!\n\n"
+        f"Your booking #{d['booking_id']} — {unit}, {d['check_in']} → {d['check_out']} — has been cancelled.\n"
+        "If this was a mistake or you would like different dates, just reply to this e-mail "
+        "or contact our operator: +998 90 007 70 77 (Telegram/phone).\n"
+        "For questions about a prepayment you made, please also contact the operator.\n\n"
+        "Balandda Chimgan · balandda.uz · info@balandda.uz"
+    )
+    return subject, body
+
+
 def build_email(lang: str, d: dict) -> tuple[str, str]:
     """Returns (subject, plain-text body)."""
     lg = norm_lang(lang)

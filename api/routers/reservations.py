@@ -19,6 +19,9 @@ import secrets
 from api.auth import get_current_user, require_owner
 from bot.config import settings
 from services.beds24 import kick as beds24_kick
+import asyncio
+from services.mailer import send_email
+from services.voucher import build_cancel_email
 from services.octo_service import octo_prepare, octo_refund
 from db.database import get_session
 from db.hold_timing import add_working_minutes
@@ -575,9 +578,28 @@ async def cancel_reservation(
     await session.commit()
     await _log(session, res_id, user, "cancelled", "Бронь отменена"
                + (" · с возвратом оплаты на карту" if (data and data.refund_octo) else ""))
+    prop = await session.get(Property, res.property_id)
+    # Гостя уведомляем всеми доступными каналами; сбой уведомления не должен
+    # ронять отмену (она уже зафиксирована в БД).
     if res.telegram_user_id:
-        prop = await session.get(Property, res.property_id)
-        await send_customer_message(res.telegram_user_id, booking_cancelled_text(res, prop.name_ru if prop else ""))
+        try:
+            await send_customer_message(res.telegram_user_id, booking_cancelled_text(res, prop.name_ru if prop else ""))
+        except Exception:
+            pass
+    # Письмо об отмене — если у брони есть e-mail (сайт и Instagram его собирают;
+    # у ручных броней из календаря адреса обычно нет — уведомляет оператор).
+    if res.guest_email and "@" in res.guest_email:
+        try:
+            subject, body = build_cancel_email({
+                "booking_id": res.id,
+                "guest_name": res.guest_name,
+                "unit": prop.name_ru if prop else "",
+                "check_in": res.check_in.isoformat(),
+                "check_out": res.check_out.isoformat(),
+            })
+            await asyncio.to_thread(send_email, res.guest_email, subject, body)
+        except Exception:
+            pass
     await session.refresh(res)
     beds24_kick()
     out = _out(res)
