@@ -62,13 +62,29 @@ async def send_customer_message(telegram_user_id: int | None, text: str) -> bool
         return False
 
 
-async def notify_operators_booking(res, unit_name: str, source_label: str = "сайт") -> bool:
-    """Announce a non-bot booking (website self-booking) to the operators' Брони topic
-    via the CRM. Best-effort — never breaks the booking flow."""
+async def notify_operators_booking(
+    res, unit_name: str, source_label: str = "сайт",
+    kind: str = "site", ref: str | None = None,
+    link: str | None = None, amount_text: str | None = None,
+    nights: int | None = None, status: str | None = None,
+) -> bool:
+    """Announce a booking to the operators via the CRM, which owns the group.
+
+    Since 2026-09-29 the CRM renders ONE stateful card per booking — Принял / Связался /
+    Предоплату получил / Бронь подтверждена / Бронь отменена — and routes it by `kind`
+    ("site"/"bot"/"instagram" → «Брони», "ota" → «Брони платформ»). Channel bookings used
+    to be posted twice: once here and once directly by services/beds24.py into «Брони
+    платформ», so every Booking.com reservation appeared in two topics.
+
+    `ref` is the idempotency key: a retry edits the existing card instead of adding one.
+    Best-effort — never breaks the booking flow.
+    """
     if not settings.bridge_secret:
         return False
     url = settings.crm_api_url.rstrip("/") + "/api/operator-booking"
     payload = {
+        "kind": kind,
+        "ref": str(ref if ref is not None else res.id),
         "booking_id": res.id,
         "unit_name": unit_name,
         "check_in": res.check_in.isoformat(),
@@ -76,7 +92,16 @@ async def notify_operators_booking(res, unit_name: str, source_label: str = "с�
         "guest_name": res.guest_name,
         "guest_phone": res.guest_phone,
         "source_label": source_label,
+        "channel_label": source_label,
     }
+    if link:
+        payload["link"] = link
+    if amount_text:
+        payload["amount_text"] = amount_text
+    if nights is not None:
+        payload["nights"] = nights
+    if status:
+        payload["status"] = status
     try:
         async with aiohttp.ClientSession() as s:
             async with s.post(

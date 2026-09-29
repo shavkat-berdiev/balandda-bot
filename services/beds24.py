@@ -443,9 +443,13 @@ async def _import_booking(b: dict) -> int:
             detail=f"Импорт с канала: {unit.name_ru} · {arrival}→{departure} · {note}",
         ))
         await session.commit()
-        await _post_topic(_channel_booking_text(
-            res, unit.name_ru, src, bid, price_usd, total_uzs))
-        await _notify_operators_new(res, unit.name_ru, src)
+        # ONE card, posted by the CRM bot into «Брони платформ» with the status buttons.
+        # Until 2026-09-29 this block sent a plain message here AND asked the CRM to post
+        # its own copy into «Брони» — the same reservation, two topics, two bots, no state.
+        await _notify_operators_new(
+            res, unit.name_ru, src, bid=bid,
+            price_usd=price_usd, total_uzs=total_uzs,
+        )
         return 1
 
 
@@ -518,12 +522,31 @@ async def _post_topic(text: str) -> bool:
         return False
 
 
-async def _notify_operators_new(res, unit_name: str, src: ReservationSource):
+async def _notify_operators_new(res, unit_name: str, src: ReservationSource,
+                                bid=None, price_usd=None, total_uzs=None):
     try:
         from db.enums import RESERVATION_SOURCE_LABELS
         from services.customer_notify import notify_operators_booking
-        await notify_operators_booking(res, unit_name,
-                                       RESERVATION_SOURCE_LABELS.get(src, src.value))
+        amount = None
+        if price_usd:
+            amount = f"{price_usd:.0f} USD"
+            if total_uzs:
+                amount += f" · ≈ {_money(total_uzs)} сум"
+        link = (
+            f"https://beds24.com/control3.php?pagetype=bookingdetails&bookid={bid}"
+            if bid else None
+        )
+        await notify_operators_booking(
+            res, unit_name,
+            RESERVATION_SOURCE_LABELS.get(src, src.value),
+            kind="ota",
+            # The Beds24 id is the stable key for a channel booking: the sync re-runs and
+            # must not produce a second card for a reservation operators already worked.
+            ref=f"beds24-{bid}" if bid else f"res-{res.id}",
+            link=link,
+            amount_text=amount,
+            nights=_nights(res.check_in, res.check_out),
+        )
     except Exception as e:  # noqa: BLE001
         logger.warning("beds24 operator notify failed: %s", e)
 
@@ -544,6 +567,9 @@ async def _notify_operators_overbook(tval, arrival, departure, bid, guest):
         fake = SimpleNamespace(id=0, check_in=arrival, check_out=departure,
                                guest_name=f"⚠️ ОВЕРБУКИНГ {tval}: {guest or '—'}",
                                guest_phone=f"Beds24 #{bid}")
-        await notify_operators_booking(fake, f"⚠️ НЕТ СВОБОДНЫХ {tval}", "OTA overbooking")
+        await notify_operators_booking(
+            fake, f"⚠️ НЕТ СВОБОДНЫХ {tval}", "OTA overbooking",
+            kind="ota", ref=f"overbook-{bid}",
+        )
     except Exception as e:  # noqa: BLE001
         logger.warning("beds24 overbook notify failed: %s", e)

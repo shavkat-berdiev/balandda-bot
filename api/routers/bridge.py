@@ -441,9 +441,15 @@ async def bridge_payment(
     await session.commit()
 
     # Operators' topic + guest message — best-effort, never fail the payment.
-    label = f"{data.channel_label} · 💳 ОПЛАЧЕНО {amt:,} сум (Octo)".replace(",", " ")
+    # Since 2026-09-29 this does NOT post a second message: the CRM finds the card already
+    # open for this reservation, writes the paid amount onto it and moves its status to
+    # «Предоплату получил» automatically, so nobody has to press that button by hand.
+    paid_text = f"💳 ОПЛАЧЕНО {amt:,} сум (Octo · {data.channel_label})".replace(",", " ")
     try:
-        await notify_operators_booking(res, prop.name_ru if prop else "", label)
+        await notify_operators_booking(
+            res, prop.name_ru if prop else "",
+            amount_text=paid_text, status="prepaid",
+        )
     except Exception:
         pass
     if res.telegram_user_id:
