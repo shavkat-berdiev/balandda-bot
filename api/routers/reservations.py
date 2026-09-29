@@ -522,9 +522,11 @@ async def cancel_reservation(
         raise HTTPException(status_code=404, detail="not found")
     res.status = ReservationStatus.CANCELLED
 
-    # Optional card refund of Octo online payments (operator's explicit choice).
+    # Возвраты на карту из календаря ЗАМОРОЖЕНЫ (решение 29.09.2026): депозит
+    # при отмене НЕ возвращается. Исключения — только вручную через бэк-офис
+    # Octo (merchant.octo.uz). Флаг refund_octo из интерфейса игнорируется.
     octo_refunds: list[dict] = []
-    if data and data.refund_octo:
+    if False and data and data.refund_octo:
         preps = (
             await session.execute(
                 select(Prepayment).where(

@@ -354,6 +354,7 @@ class BridgePaymentData(BaseModel):
     guest_email: str | None = None    # for the confirmation e-mail + PDF voucher
     guest_lang: str | None = None     # ru / uz / en / zh (zh -> en)
     channel_label: str = "сайт"       # "сайт" | "бот" — for the operator messages
+    total_override: float | None = None  # 100% со скидкой 5%: новая итоговая стоимость брони
 
 
 @router.post("/payment")
@@ -378,6 +379,10 @@ async def bridge_payment(
     amt = round(float(data.amount or 0))
     if amt <= 0:
         raise HTTPException(status_code=400, detail="amount must be positive")
+    if data.total_override and float(data.total_override) > 0:
+        # Оплата 100% со скидкой 5%: фактически оплаченная сумма становится
+        # итоговой стоимостью брони, чтобы в календаре не висел «остаток» 5%.
+        res.total_amount = round(float(data.total_override))
 
     # Idempotency: one ledger row per Octo payment UUID.
     if data.provider_uuid:
@@ -525,7 +530,8 @@ async def pay_link(
     total = float(res.total_amount or 0)
     if total <= 0 and prop:
         total = float(await _stay_total(session, prop, res.check_in, res.check_out) or 0)
-    amount = round(total) if data.kind != "deposit" else round(total * 0.2)
+    # 100% онлайн-оплата даёт скидку 5%; депозит 20% — без скидки.
+    amount = round(total * 0.95) if data.kind != "deposit" else round(total * 0.2)
     if amount <= 0:
         return {"ok": False, "error": "no_amount"}
 
@@ -549,7 +555,9 @@ async def pay_link(
         return {"ok": False, "error": msg}
     session.add(ReservationEvent(
         reservation_id=res.id, actor_name="Клиент (бот)", action="pay_link",
-        detail=f"Ссылка на оплату {amount} сум ({data.kind}) · {tid}",
+        detail=f"Ссылка на оплату {amount} сум ({data.kind}"
+               + (", скидка 5%" if data.kind != "deposit" else "")
+               + f") · {tid}",
     ))
     await session.commit()
     return {"ok": True, "pay_url": url, "amount": amount, "kind": data.kind,
@@ -585,27 +593,30 @@ async def octo_notify(
         return {"ok": True, "ignored": "booking gone"}
 
     amount = float(d.get("total_sum") or 0)
+    total_override = None
     channel = "календарь" if tid.startswith("CAL-") else "бот"
-    if tid.startswith("CAL-"):
-        # A calendar link may be in USD (OTA virtual cards). The soum sum to book
-        # was fixed at link creation and lives in the pay_link event for this tid.
-        ev = (
-            await session.execute(
-                select(ReservationEvent)
-                .where(
-                    ReservationEvent.reservation_id == booking_id,
-                    ReservationEvent.action == "pay_link",
-                    ReservationEvent.detail.ilike(f"%{tid}%"),
-                )
-                .order_by(ReservationEvent.id.desc())
+    # The pay_link event for this tid says how the link was created: a USD
+    # calendar link carries the soum sum to book, a discounted 100% bot link
+    # marks that the paid sum becomes the booking's new total.
+    ev = (
+        await session.execute(
+            select(ReservationEvent)
+            .where(
+                ReservationEvent.reservation_id == booking_id,
+                ReservationEvent.action == "pay_link",
+                ReservationEvent.detail.ilike(f"%{tid}%"),
             )
-        ).scalars().first()
-        if ev and "USD" in (ev.detail or ""):
-            usd = amount
-            m_uzs = re.search(r"к учёту (\d+) сум", ev.detail or "")
-            if m_uzs:
-                amount = float(m_uzs.group(1))
-            channel = f"календарь · ${usd:.2f}"
+            .order_by(ReservationEvent.id.desc())
+        )
+    ).scalars().first()
+    if tid.startswith("CAL-") and ev and "USD" in (ev.detail or ""):
+        usd = amount
+        m_uzs = re.search(r"к учёту (\d+) сум", ev.detail or "")
+        if m_uzs:
+            amount = float(m_uzs.group(1))
+        channel = f"календарь · ${usd:.2f}"
+    if ev and "скидка 5%" in (ev.detail or ""):
+        total_override = amount
 
     return await bridge_payment(
         BridgePaymentData(
@@ -617,6 +628,7 @@ async def octo_notify(
             guest_email=res.guest_email,
             guest_lang=None,
             channel_label=channel,
+            total_override=total_override,
         ),
         session=session,
         x_bridge_secret=settings.bridge_secret,

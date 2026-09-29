@@ -70,8 +70,8 @@ async def octo_prepare(
     }
     # Фискализация: включается OCTO_FISCAL=true в .env после того, как Octo
     # зарегистрирует фискальный объект (ИКПУ/упаковка/ИНН/НДС) для магазина.
-    # Только для сумовых платежей — фискальные позиции заведены в сумах.
-    if settings.octo_fiscal and currency == "UZS":
+    # На все платежи, включая USD (Octo принимает basket и в долларах).
+    if settings.octo_fiscal:
         body["basket"] = [{
             "position_desc": "Balandda Chimgan - gostinichnye uslugi (prozhivanie)",
             "count": 1,
