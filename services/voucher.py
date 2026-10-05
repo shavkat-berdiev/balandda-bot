@@ -26,11 +26,12 @@ from fpdf import FPDF
 ASSETS = os.path.join(os.path.dirname(__file__), "voucher_assets")
 
 CONTACT = {
-    "phone": "+998 90 007 70 77",
-    "phone_tel": "+998900077077",
-    "hours": "9:00–21:00",
-    "telegram": "t.me/balandda_chimgan",
-    "telegram_url": "https://t.me/balandda_chimgan",
+    # Reception (on site, longer hours) — guests talk to reception once booked.
+    "phone": "+998 99 018 70 77",
+    "phone_tel": "+998990187077",
+    "hours": "",
+    "telegram": "t.me/balandda_admin",
+    "telegram_url": "https://t.me/balandda_admin",
     "email": "info@balandda.uz",
     "site": "balandda.uz",
     "map_url": "https://g.page/r/CYq21GpVptwtEAo/",
@@ -104,8 +105,8 @@ T = {
                        "is via Beldersay. Simply type “Balandda Chimgan” in Waze, Yandex Maps or Google Maps.",
         "scan_map": "Scan for directions",
         "before": "Before you arrive",
-        "before_txt": "Please call or message us before you set off and let us know your approximate arrival time.",
-        "scan_tg": "Message us",
+        "before_txt": "Please call or message our reception before you set off and let us know your approximate arrival time.",
+        "scan_tg": "Message reception",
         "show": "Show this voucher at check-in — a phone screen is fine.",
         "valid": "Generated automatically · valid without a stamp",
         "stay_title": "Your stay at Balandda",
@@ -159,8 +160,8 @@ T = {
                        "Яндекс Картах или Google Maps.",
         "scan_map": "Маршрут — сканируйте",
         "before": "Перед приездом",
-        "before_txt": "Пожалуйста, позвоните или напишите нам перед выездом и сообщите примерное время прибытия.",
-        "scan_tg": "Написать нам",
+        "before_txt": "Пожалуйста, позвоните или напишите на ресепшн перед выездом и сообщите примерное время прибытия.",
+        "scan_tg": "Написать на ресепшн",
         "show": "Покажите этот ваучер при заселении — можно с экрана телефона.",
         "valid": "Сформирован автоматически · действителен без печати",
         "stay_title": "Ваш отдых в Balandda",
@@ -210,8 +211,8 @@ T = {
                        "orqali. Waze, Yandex yoki Google xaritalarida “Balandda Chimgan” deb yozing.",
         "scan_map": "Yo'nalish — skanerlang",
         "before": "Kelishdan oldin",
-        "before_txt": "Yo'lga chiqishdan oldin qo'ng'iroq qiling yoki yozing va taxminiy kelish vaqtingizni ayting.",
-        "scan_tg": "Bizga yozing",
+        "before_txt": "Yo'lga chiqishdan oldin resepshnga qo'ng'iroq qiling yoki yozing va taxminiy kelish vaqtingizni ayting.",
+        "scan_tg": "Resepshnga yozing",
         "show": "Joylashishda ushbu vaucherni ko'rsating — telefon ekranidan ham bo'ladi.",
         "valid": "Avtomatik shakllantirilgan · muhrsiz haqiqiy",
         "stay_title": "Balandda'dagi dam olishingiz",
@@ -487,7 +488,8 @@ def build_voucher_pdf(lang: str, d: dict) -> bytes:
     for ico, title, body, qrf, cap, extra, link in (
         ("map-pin", t["getting"], t["getting_txt"], "map.png", t["scan_map"], ADDRESS[lg], CONTACT["map_url"]),
         ("phone", t["before"], t["before_txt"], "telegram.png", t["scan_tg"],
-         f"{CONTACT['phone']}  ·  {CONTACT['telegram']}  ·  {CONTACT['hours']}", CONTACT["telegram_url"]),
+         "  ·  ".join(x for x in (CONTACT["phone"], CONTACT["telegram"], CONTACT["hours"]) if x),
+         CONTACT["telegram_url"]),
     ):
         y0 = y
         pdf.icon(ico, M, y0 + 0.2, 4.6)
@@ -586,13 +588,13 @@ SUBJ_PENDING = {
 }
 E = {
     "en": {"attached": "Your voucher is attached (PDF) — show it at check-in; a phone screen is fine.",
-           "btn_map": "Directions", "btn_tg": "Message us", "btn_menu": "Menu",
+           "btn_map": "Directions", "btn_tg": "Message reception", "btn_menu": "Menu",
            "team": "Balandda team", "questions": "Questions or changes"},
     "ru": {"attached": "Ваучер во вложении (PDF) — покажите его при заселении, можно с экрана телефона.",
-           "btn_map": "Маршрут", "btn_tg": "Написать нам", "btn_menu": "Меню",
+           "btn_map": "Маршрут", "btn_tg": "Написать на ресепшн", "btn_menu": "Меню",
            "team": "Команда Balandda", "questions": "Вопросы и изменения брони"},
     "uz": {"attached": "Vaucher ilova qilingan (PDF) — joylashishda ko'rsating, telefon ekranidan ham bo'ladi.",
-           "btn_map": "Yo'nalish", "btn_tg": "Bizga yozing", "btn_menu": "Menyu",
+           "btn_map": "Yo'nalish", "btn_tg": "Resepshnga yozing", "btn_menu": "Menyu",
            "team": "Balandda jamoasi", "questions": "Savollar va bronni o'zgartirish"},
 }
 SITE_IMG = "https://www.balandda.uz/assets/img/"
@@ -627,7 +629,7 @@ def build_email(lang: str, d: dict) -> tuple[str, str]:
         lines.append(f"{t['balance']}: {_fmt_sum(bal)} {t['uzs']}")
     lines += ["", f"{t['getting']}: {t['getting_txt']}", f"{ADDRESS[lg]} — {CONTACT['map_url']}", "",
               f"{t['before']}: {t['before_txt']}",
-              f"{CONTACT['phone']} ({CONTACT['hours']}) · {CONTACT['telegram_url']} · {CONTACT['email']}", "",
+              f"{CONTACT['phone']} · {CONTACT['telegram_url']} · {CONTACT['email']}", "",
               f"{t['cancel']}", "", t["see_you"], f"— {e['team']} · {CONTACT['site']}"]
     return _subject(lg, d), "\n".join(lines)
 
@@ -703,7 +705,7 @@ def build_email_html(lang: str, d: dict) -> str:
   <p style="{font}margin:0 0 10px;font-size:13px;color:{grey}">{h(ADDRESS[lg])}</p>
   <h2 style="{font}font-size:16px;margin:14px 0 6px;color:#171d29">{h(t['before'])}</h2>
   <p style="{font}margin:0 0 4px;font-size:14px;line-height:1.55;color:#3c4850">{h(t['before_txt'])}</p>
-  <p style="{font}margin:0 0 10px;font-size:14px;font-weight:600"><a href="tel:{CONTACT['phone_tel']}" style="color:{blue};text-decoration:none">{CONTACT['phone']}</a> <span style="color:{grey};font-weight:400">({CONTACT['hours']})</span></p>
+  <p style="{font}margin:0 0 10px;font-size:14px;font-weight:600"><a href="tel:{CONTACT['phone_tel']}" style="color:{blue};text-decoration:none">{CONTACT['phone']}</a> <span style="color:{grey};font-weight:400">· <a href="{CONTACT['telegram_url']}" style="color:{blue};text-decoration:none">{CONTACT['telegram']}</a></span></p>
   {btn(e['btn_map'], CONTACT['map_url'], blue, '#ffffff')}{btn(e['btn_tg'], CONTACT['telegram_url'], navy, '#ffffff')}{btn(e['btn_menu'], CONTACT['menu_url'], lime, '#122733')}
 </td></tr>
 {f'<tr><td style="padding:14px 28px 6px"><h2 style="{font}font-size:16px;margin:8px 0 4px;color:#171d29">{h(t["stay_title"])}</h2><table role="presentation" width="100%" cellpadding="0" cellspacing="0">{guide}</table></td></tr>' if guide else ''}
