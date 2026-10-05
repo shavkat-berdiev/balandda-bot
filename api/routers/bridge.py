@@ -37,6 +37,14 @@ from db.models import IncomeEntry, Prepayment, Property, Reservation, Reservatio
 from services.beds24 import kick as beds24_kick  # OTA availability push
 from services.mailer import send_email
 from services.voucher import build_email, build_voucher_pdf, checkin_times, norm_lang
+from services.voucher_mail import clean_email, send_booking_voucher
+
+
+def _safe_email(raw):
+    try:
+        return clean_email(raw)
+    except ValueError:
+        return None
 from services.customer_notify import (
     booking_payment_text,
     booking_received_text,
@@ -229,6 +237,7 @@ async def web_book(
         check_out=data.check_out,
         guest_name=data.guest_name,
         guest_phone=data.guest_phone,
+        guest_email=_safe_email(data.guest_email),   # was dropped before 2026-10-05
         guest_count=data.guests,
         status=ReservationStatus.HOLD,
         source=ReservationSource.DIRECT,
@@ -470,29 +479,16 @@ async def bridge_payment(
             pass
 
     # Confirmation e-mail with the PDF voucher — best-effort, never fails the payment.
-    if data.guest_email and "@" in data.guest_email:
+    # Falls back to the address stored on the booking (calendar / bot payments carry
+    # none in the payload); every attempt is written to the booking's log.
+    email = _safe_email(data.guest_email) or _safe_email(res.guest_email)
+    if email:
+        if not res.guest_email:
+            res.guest_email = email
         try:
-            t_in, t_out = checkin_times(prop.property_type.value if prop and prop.property_type else None)
-            lang = norm_lang(data.guest_lang)
-            vd = {
-                "booking_id": res.id,
-                "guest_name": res.guest_name,
-                "unit": prop.name_ru if prop else "",
-                "check_in": res.check_in.isoformat(),
-                "check_out": res.check_out.isoformat(),
-                "guests": res.guest_count,
-                "nights": (res.check_out - res.check_in).days,
-                "paid_amount": amt,
-                "paid_card": data.card_mask,
-                "total_amount": float(res.total_amount) if res.total_amount is not None else None,
-                "t_in": t_in, "t_out": t_out,
-            }
-            subject, body = build_email(lang, vd)
-            pdf = build_voucher_pdf(lang, vd)
-            await asyncio.to_thread(
-                send_email, data.guest_email, subject, body,
-                f"balandda-voucher-{res.id}.pdf", pdf,
-            )
+            await send_booking_voucher(session, res, email, lang=data.guest_lang,
+                                       actor_name=f"Octo ({data.channel_label})",
+                                       paid_card=data.card_mask)
         except Exception:
             pass
 

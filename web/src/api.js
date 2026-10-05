@@ -338,6 +338,8 @@ export const api = {
   getReservations: (from, to) => request(`/reservations?from=${from}&to=${to}`),
   createReservation: (data) => request('/reservations', { method: 'POST', body: JSON.stringify(data) }),
   updateReservation: (id, data) => request(`/reservations/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  voucherPdfUrl: (id, lang) => blobUrl(`/reservations/${id}/voucher.pdf?lang=${encodeURIComponent(lang || '')}`),
+  sendVoucher: (id, body) => request(`/reservations/${id}/send-voucher`, { method: 'POST', body: JSON.stringify(body || {}) }),
   octoLink: (id, body) => request(`/reservations/${id}/octo-link`, { method: 'POST', body: JSON.stringify(body || {}) }),
   cancelReservation: (id, body) => request(`/reservations/${id}/cancel`, { method: 'POST', ...(body ? { body: JSON.stringify(body) } : {}) }),
   extendHold: (id) => request(`/reservations/${id}/extend-hold`, { method: 'POST' }),

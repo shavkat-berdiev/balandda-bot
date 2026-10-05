@@ -21,7 +21,9 @@ from bot.config import settings
 from services.beds24 import kick as beds24_kick
 import asyncio
 from services.mailer import send_email
-from services.voucher import build_cancel_email
+from services.voucher import build_cancel_email, build_voucher_pdf, load_voucher_data, norm_lang
+from services.voucher_mail import clean_email, guess_lang, send_booking_voucher
+from fastapi.responses import Response
 from services.octo_service import octo_prepare, octo_refund
 from db.database import get_session
 from db.hold_timing import add_working_minutes
@@ -60,6 +62,7 @@ class ReservationCreate(BaseModel):
     check_out: date
     guest_name: str | None = None
     guest_phone: str | None = None
+    guest_email: str | None = None
     guest_count: int | None = None
     telegram_username: str | None = None
     telegram_user_id: int | None = None
@@ -83,6 +86,7 @@ class ReservationUpdate(BaseModel):
     check_out: date | None = None
     guest_name: str | None = None
     guest_phone: str | None = None
+    guest_email: str | None = None
     guest_count: int | None = None
     telegram_username: str | None = None
     telegram_user_id: int | None = None
@@ -157,6 +161,7 @@ def _out(r: Reservation, property_name: str | None = None, income_paid: float = 
         "property_name": property_name,
         "guest_name": r.guest_name,
         "guest_phone": r.guest_phone,
+        "guest_email": r.guest_email,
         "guest_count": r.guest_count,
         "check_in": r.check_in.isoformat(),
         "check_out": r.check_out.isoformat(),
@@ -181,6 +186,13 @@ def _out(r: Reservation, property_name: str | None = None, income_paid: float = 
     }
 
 
+def _email_or_400(raw: str | None) -> str | None:
+    try:
+        return clean_email(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Некорректный e-mail")
+
+
 def _clean_username(u: str | None) -> str | None:
     if not u:
         return None
@@ -196,11 +208,11 @@ def _parse_status(value: str) -> ReservationStatus:
 
 
 # ---- change-log helpers ----
-_FIELDS = ["check_in", "check_out", "guest_name", "guest_phone",
+_FIELDS = ["check_in", "check_out", "guest_name", "guest_phone", "guest_email",
            "guest_count", "total_amount", "deposit_amount", "note", "status"]
 _FIELD_LABELS = {
     "check_in": "Заезд", "check_out": "Выезд", "guest_name": "Имя",
-    "guest_phone": "Телефон", "guest_count": "Гостей",
+    "guest_phone": "Телефон", "guest_email": "E-mail", "guest_count": "Гостей",
     "total_amount": "Сумма", "deposit_amount": "Предоплата",
     "note": "Заметка", "status": "Статус",
 }
@@ -409,6 +421,7 @@ async def create_reservation(
         check_out=data.check_out,
         guest_name=data.guest_name,
         guest_phone=data.guest_phone,
+        guest_email=_email_or_400(data.guest_email),
         guest_count=data.guest_count,
         telegram_username=_clean_username(data.telegram_username),
         telegram_user_id=data.telegram_user_id,
@@ -462,6 +475,8 @@ async def update_reservation(
         res.telegram_username = _clean_username(data.telegram_username)
     if data.telegram_user_id is not None:
         res.telegram_user_id = data.telegram_user_id
+    if data.guest_email is not None:          # "" clears it
+        res.guest_email = _email_or_400(data.guest_email)
     if data.discount_percent is not None:
         res.discount_percent = data.discount_percent
     if data.discount_reason is not None:
@@ -1210,3 +1225,61 @@ async def import_prepayments(
     await session.commit()
 
     return {"created": created, "skipped": skipped, "linked_income": linked_income}
+
+
+# ---- Guest voucher: download + (re)send by e-mail ----
+
+@router.get("/{res_id}/voucher.pdf")
+async def voucher_pdf(
+    res_id: int,
+    lang: str | None = None,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """The same PDF the guest receives, for download / sending by hand."""
+    res = await session.get(Reservation, res_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="not found")
+    lg = norm_lang(lang) if lang else await guess_lang(session, res)
+    vd = await load_voucher_data(session, res, lg)
+    pdf = await asyncio.to_thread(build_voucher_pdf, lg, vd)
+    return Response(
+        content=pdf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="balandda-voucher-{res.id}-{lg}.pdf"'},
+    )
+
+
+class SendVoucherInput(BaseModel):
+    email: str | None = None   # saved onto the booking when given
+    lang: str | None = None    # ru | uz | en; default: guessed from the guest
+
+
+@router.post("/{res_id}/send-voucher")
+async def send_voucher(
+    res_id: int,
+    data: SendVoucherInput,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    res = await session.get(Reservation, res_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="not found")
+    st = res.status if isinstance(res.status, ReservationStatus) else ReservationStatus(res.status)
+    if st.value in ("CANCELLED", "EXPIRED", "BLOCKED"):
+        raise HTTPException(status_code=400, detail="Для этой брони ваучер не отправляется")
+    if data.email is not None:
+        new = _email_or_400(data.email)
+        if new and new != res.guest_email:
+            old = res.guest_email
+            res.guest_email = new
+            await session.commit()
+            await _log(session, res.id, user, "updated", f"E-mail: {old or '—'} → {new}")
+    if not res.guest_email:
+        raise HTTPException(status_code=400, detail="Укажите e-mail гостя")
+    actor_id = user.get("telegram_id") if user else None
+    name = None
+    if actor_id:
+        name = (await session.execute(select(User.full_name).where(User.telegram_id == actor_id))).scalar_one_or_none()
+    ok, err = await send_booking_voucher(session, res, res.guest_email, lang=data.lang,
+                                         actor_name=name or "оператор", actor_id=actor_id)
+    return {"ok": ok, "email": res.guest_email, "error": err}

@@ -36,7 +36,7 @@ function cap(s, n = 9) {
   s = (s ?? '').toString();
   return s.length > n ? s.slice(0, n) + '…' : s;
 }
-const ACTION_LABELS = { created: 'создано', updated: 'изменено', cancelled: 'отменено', restored: 'восстановлено', deleted: 'удалено', payment: 'оплата', auto: 'авто' };
+const ACTION_LABELS = { created: 'создано', updated: 'изменено', cancelled: 'отменено', restored: 'восстановлено', deleted: 'удалено', payment: 'оплата', auto: 'авто', email: 'e-mail' };
 function currentUser() {
   try { return JSON.parse(localStorage.getItem('user') || '{}'); } catch { return {}; }
 }
@@ -110,6 +110,8 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
   const [linkCopied, setLinkCopied] = useState(false);
   const [bookMsgs, setBookMsgs] = useState(null);   // editable invitation text {ru,uz,en,zh} from balandda.uz
   const [msgLang, setMsgLang] = useState('ru');
+  const [voucherLang, setVoucherLang] = useState('ru'); // language of the guest voucher
+  const [sendingVoucher, setSendingVoucher] = useState(false);
 
   useEffect(() => {
     fetch('https://www.balandda.uz/bookingmsg.php').then((r) => (r.ok ? r.json() : null)).then((m) => { if (m) setBookMsgs(m); }).catch(() => {});
@@ -196,11 +198,13 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
       status: detail.status,
       check_in: detail.check_in, check_out: detail.check_out,
       guest_name: detail.guest_name || '', guest_phone: detail.guest_phone || '',
+      guest_email: detail.guest_email || '',
       telegram_username: detail.telegram_username || '',
       guest_count: detail.guest_count ?? '', total_amount: detail.total_amount ?? '',
       deposit_amount: detail.deposit_amount ?? '', note: detail.note || '',
       discount: Number(detail.discount_percent) || 0, discount_reason: detail.discount_reason || '',
     });
+    { const ph = (detail.guest_phone || '').replace(/\D/g, ''); setVoucherLang(!ph || ph.startsWith('998') || ph.length === 9 ? 'ru' : 'en'); }
     api.getReservationEvents(detail.id).then(setEvents).catch(() => setEvents([]));
     api.getReservationPayments(detail.id).then(setPayments).catch(() => setPayments([]));
     api.prepaymentsByReservation(detail.id).then(setPrepays).catch(() => setPrepays([]));
@@ -284,7 +288,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
     setForm({
       step: 1, createdRes: null,
       property_id, check_in, check_out,
-      guest_name: '', guest_phone: '', guest_count: '', telegram_username: '',
+      guest_name: '', guest_phone: '', guest_email: '', guest_count: '', telegram_username: '',
       status: expires ? 'HOLD' : 'CONFIRMED', source: 'MANUAL',
       discount: 0, discount_reason: '',
       ...calcAmounts(property_id, check_in, check_out),
@@ -361,6 +365,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
         check_out: form.check_out,
         guest_name: form.guest_name || null,
         guest_phone: form.guest_phone || null,
+        guest_email: (form.guest_email || '').trim() || null,
         guest_count: form.guest_count ? Number(form.guest_count) : null,
         telegram_username: form.telegram_username || null,
         status: form.status,
@@ -481,6 +486,35 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
     }
   }
 
+  async function doDownloadVoucher() {
+    try {
+      const url = await api.voucherPdfUrl(detail.id, voucherLang);
+      const a = document.createElement('a');
+      a.href = url; a.download = `balandda-voucher-${detail.id}-${voucherLang}.pdf`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 15000);
+    } catch (e) {
+      alert('Не удалось сформировать ваучер');
+    }
+  }
+
+  async function doSendVoucher() {
+    const email = (detailForm.guest_email || '').trim();
+    if (!email) { alert('Укажите e-mail гостя'); return; }
+    setSendingVoucher(true);
+    try {
+      const r = await api.sendVoucher(detail.id, { email, lang: voucherLang });
+      api.getReservationEvents(detail.id).then(setEvents).catch(() => {});
+      if (r.ok) alert(`Ваучер отправлен на ${r.email}`);
+      else alert(`Письмо НЕ отправлено: ${r.error || 'ошибка'}`);
+      load();
+    } catch (e) {
+      alert(e.message || 'Не удалось отправить ваучер');
+    } finally {
+      setSendingVoucher(false);
+    }
+  }
+
   async function saveDetail() {
     setSavingDetail(true);
     try {
@@ -490,6 +524,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
         check_out: detailForm.check_out,
         guest_name: detailForm.guest_name || null,
         guest_phone: detailForm.guest_phone || null,
+        guest_email: (detailForm.guest_email || '').trim(),
         guest_count: detailForm.guest_count ? Number(detailForm.guest_count) : null,
         telegram_username: detailForm.telegram_username || null,
         total_amount: detailForm.total_amount ? Number(detailForm.total_amount) : null,
@@ -673,6 +708,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
                 </Field>
                 <Field label="Telegram (ник)"><input value={form.telegram_username} onChange={(e) => setForm({ ...form, telegram_username: e.target.value })} className="input" placeholder="@username" /></Field>
               </div>
+              <Field label="E-mail (для ваучера)"><input type="email" value={form.guest_email} onChange={(e) => setForm({ ...form, guest_email: e.target.value })} className="input" placeholder="guest@mail.com" /></Field>
               {custSuggest && (
                 <button type="button" onClick={() => useCustomer(custSuggest)}
                   className="w-full text-left px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-900 hover:bg-amber-100">
@@ -754,6 +790,38 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
               {detail.balance != null && detail.balance <= 0 ? ' ✓' : ''}
             </span>
           </div>
+
+          {/* Guest voucher: e-mail + download / (re)send */}
+          {!['BLOCKED', 'CANCELLED', 'EXPIRED'].includes(detail.status) && (() => {
+            const last = events.find((ev) => ev.action === 'email');
+            const failed = last && (last.detail || '').includes('НЕ отправлен');
+            return (
+              <div className="mb-3 p-3 rounded-lg border border-sky-200 bg-sky-50/60 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-sky-900">📄 Ваучер гостя</span>
+                  <span className="flex gap-1">
+                    {['ru', 'uz', 'en'].map((l) => (
+                      <button key={l} onClick={() => setVoucherLang(l)} className={`px-2 py-0.5 rounded text-xs font-medium ${voucherLang === l ? 'bg-sky-600 text-white' : 'bg-white text-sky-700 border border-sky-200'}`}>{l.toUpperCase()}</button>
+                    ))}
+                  </span>
+                </div>
+                <input type="email" value={detailForm.guest_email} onChange={(e) => setDetailForm({ ...detailForm, guest_email: e.target.value })} className="input" placeholder="E-mail гостя" />
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={doDownloadVoucher} className="px-3 py-2 rounded-lg bg-white border border-sky-200 text-sky-700 text-sm font-medium hover:bg-sky-100">⬇️ Скачать PDF</button>
+                  <button onClick={doSendVoucher} disabled={sendingVoucher || !(detailForm.guest_email || '').trim()} className="px-3 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50">
+                    {sendingVoucher ? 'Отправка…' : (last && !failed ? '✉️ Отправить ещё раз' : '✉️ Отправить на e-mail')}
+                  </button>
+                </div>
+                {last ? (
+                  <div className={`text-xs ${failed ? 'text-red-600' : 'text-sky-800'}`}>
+                    {failed ? '⚠️ ' : '✓ '}{fmtDateTime(last.created_at)} · {last.detail}
+                  </div>
+                ) : (
+                  <div className="text-xs text-gray-500">Ваучер ещё не отправлялся.</div>
+                )}
+              </div>
+            );
+          })()}
 
           {/* Telegram: connect link to message the customer via @balandda_bot */}
           <button onClick={doConnectLink} className="w-full mb-2 px-3 py-2 rounded-lg bg-sky-50 text-sky-700 text-sm font-medium hover:bg-sky-100">
