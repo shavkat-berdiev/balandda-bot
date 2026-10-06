@@ -125,7 +125,7 @@ T = {
              "Lunch and dinner in the restaurant or on the terrace with mountain views. "
              "See the menu at menu.balandda.uz."),
             ("waves-ladder", "Pool & SPA",
-             "The heated infinity pool is free for our guests. SPA treatments are available on request."),
+             "The shared pool is heated during the summer season and is free for guests. SPA treatments are available on request."),
             ("wifi", "Wi-Fi & TV",
              "High-speed Wi-Fi covers the whole resort. Every TV has Netflix and ITV with prepaid "
              "subscriptions, plus YouTube."),
@@ -179,7 +179,7 @@ T = {
             ("utensils", "Ресторан и терраса",
              "Обеды и ужины в ресторане или на террасе с видом на горы. Меню — на menu.balandda.uz."),
             ("waves-ladder", "Бассейн и SPA",
-             "Подогреваемый инфинити-бассейн — бесплатно для гостей. SPA-процедуры — по предварительной записи."),
+             "Общий бассейн с подогревом в летний сезон — бесплатно для гостей. SPA-процедуры — по предварительной записи."),
             ("wifi", "Wi-Fi и ТВ",
              "Высокоскоростной Wi-Fi работает на всей территории. На каждом телевизоре — Netflix и ITV "
              "с оплаченной подпиской, а также YouTube."),
@@ -231,7 +231,7 @@ T = {
             ("utensils", "Restoran va terassa",
              "Tushlik va kechki ovqat restoranda yoki tog' manzarali terassada. Menyu — menu.balandda.uz."),
             ("waves-ladder", "Basseyn va SPA",
-             "Isitiladigan infinity-basseyn mehmonlar uchun bepul. SPA muolajalari — oldindan yozilish orqali."),
+             "Umumiy basseyn yozgi mavsumda isitiladi — mehmonlar uchun bepul. SPA muolajalari — oldindan yozilish orqali."),
             ("wifi", "Wi-Fi va TV",
              "Tezkor Wi-Fi butun hudud bo'ylab ishlaydi. Har bir televizorda oldindan to'langan obunali "
              "Netflix va ITV, shuningdek YouTube bor."),
