@@ -24,6 +24,16 @@ logger = logging.getLogger(__name__)
 debug_router = Router()
 
 
+STALE_SESSION_TEXT = (
+    "⚠️ Сессия сброшена — начните заново: /start\n"
+    "⚠️ Sessiya yangilandi — qaytadan boshlang: /start"
+)
+STALE_BUTTON_ALERT = (
+    "⚠️ Эта кнопка устарела. Нажмите /start и начните заново.\n\n"
+    "⚠️ Bu tugma eskirgan. /start ni bosib, qaytadan boshlang."
+)
+
+
 @debug_router.message()
 async def debug_catch_all(message: types.Message):
     logger.warning(
@@ -31,6 +41,26 @@ async def debug_catch_all(message: types.Message):
         f"content_type={message.content_type}, "
         f"text={message.text[:80] if message.text else 'None'}"
     )
+    # Never leave a private-chat user talking to silence
+    if message.chat.type == "private":
+        try:
+            await message.answer(STALE_SESSION_TEXT)
+        except Exception:
+            pass
+
+
+@debug_router.callback_query()
+async def stale_callback(callback: types.CallbackQuery):
+    """A button no handler accepted (old card, or flow state lost) - say so instead of spinning."""
+    data = callback.data or ""
+    if data.endswith(":noop"):
+        await callback.answer()  # calendar headers / blanks
+        return
+    logger.warning(f"UNHANDLED callback from user={callback.from_user.id}, data={data[:64]}")
+    try:
+        await callback.answer(STALE_BUTTON_ALERT, show_alert=True)
+    except Exception:
+        pass
 
 
 # Import order matters — more specific routers first

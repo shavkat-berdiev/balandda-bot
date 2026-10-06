@@ -1199,7 +1199,13 @@ async def main():
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
 
-    dp = Dispatcher()
+    # FSM state lives in Postgres so in-progress entries survive restarts/deploys
+    from bot.fsm_storage import PgStorage
+
+    storage = PgStorage(engine)
+    await storage.setup()
+
+    dp = Dispatcher(storage=storage)
     dp.include_router(main_router)
 
     # Error handler
