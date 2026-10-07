@@ -36,7 +36,7 @@ function cap(s, n = 9) {
   s = (s ?? '').toString();
   return s.length > n ? s.slice(0, n) + '…' : s;
 }
-const ACTION_LABELS = { created: 'создано', updated: 'изменено', cancelled: 'отменено', restored: 'восстановлено', deleted: 'удалено', payment: 'оплата', auto: 'авто', email: 'e-mail' };
+const ACTION_LABELS = { created: 'создано', updated: 'изменено', cancelled: 'отменено', restored: 'восстановлено', deleted: 'удалено', payment: 'оплата', auto: 'авто', email: 'e-mail', telegram: 'Telegram' };
 function currentUser() {
   try { return JSON.parse(localStorage.getItem('user') || '{}'); } catch { return {}; }
 }
@@ -112,6 +112,8 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
   const [msgLang, setMsgLang] = useState('ru');
   const [voucherLang, setVoucherLang] = useState('ru'); // language of the guest voucher
   const [sendingVoucher, setSendingVoucher] = useState(false);
+  const [tgBusy, setTgBusy] = useState(null);          // 'pay' | 'voucher' while sending to Telegram
+  const [pendingDraft, setPendingDraft] = useState(null); // «/бронь» draft waiting for units to load
 
   useEffect(() => {
     fetch('https://www.balandda.uz/bookingmsg.php').then((r) => (r.ok ? r.json() : null)).then((m) => { if (m) setBookMsgs(m); }).catch(() => {});
@@ -167,6 +169,59 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
   }, [rangeFrom, rangeTo, businessUnit]);
 
   useEffect(() => { load(); }, [load]);
+
+  // «/бронь» in a @balandda_chimgan chat → the operators' card links here with ?tgdraft=<token>.
+  // Fetch the draft, then open the new-booking form pre-filled once the units are loaded.
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('tgdraft');
+    if (!t || businessUnit !== 'RESORT') return;
+    const u = new URL(window.location.href);
+    u.searchParams.delete('tgdraft');
+    window.history.replaceState(null, '', u.toString());
+    api.tgDraft(t).then((d) => setPendingDraft({ ...d, token: t }))
+      .catch((e) => alert('Черновик брони не найден: ' + (e.message || '')));
+  }, [businessUnit]);
+  useEffect(() => {
+    if (!pendingDraft || !units.length) return;
+    const d = pendingDraft;
+    setPendingDraft(null);
+    if (d.status === 'booked' && d.reservation_id
+        && !confirm(`По этому чату уже оформлена бронь №${d.reservation_id}. Оформить ещё одну?`)) return;
+    openNew(null, d.check_in ? new Date(d.check_in + 'T00:00:00') : null);
+    setForm((f) => {
+      if (!f) return f;
+      const next = {
+        ...f,
+        guest_name: d.customer_name || '', guest_phone: d.phone || '', telegram_username: d.username || '',
+        guest_count: d.guests || '', source: 'TELEGRAM', tg_draft: d.token,
+        tg_label: [d.customer_name, d.username ? '@' + d.username : null].filter(Boolean).join(' · '),
+      };
+      if (d.check_in && d.check_out && d.check_out > d.check_in) next.check_out = d.check_out;
+      return { ...next, ...calcAmounts(next.property_id, next.check_in, next.check_out, 0) };
+    });
+  }, [pendingDraft, units]);
+
+  // Payment request / voucher into the guest's Telegram (their chimgan chat or @balandda_bot).
+  function langFromPhone(phone) {
+    const ph = (phone || '').replace(/\D/g, '');
+    return !ph || ph.startsWith('998') || ph.length === 9 ? 'ru' : 'en';
+  }
+  async function tgSend(id, kind, lang) {
+    setTgBusy(kind);
+    try {
+      const r = await api.tgSend(id, { kind, lang: lang || voucherLang });
+      const where = r.via === 'business' ? 'в чат @balandda_chimgan' : r.via === 'bot' ? 'в @balandda_bot' : 'в Telegram';
+      if (r.ok) alert(`${kind === 'pay' ? 'Счёт на оплату' : 'Ваучер'} отправлен ${where}`);
+      else alert(`Не отправлено: ${r.error || 'ошибка'}`);
+      if (detail && detail.id === id) api.getReservationEvents(id).then(setEvents).catch(() => {});
+      return r;
+    } catch (e) {
+      alert(e.message || 'Не удалось отправить');
+      return null;
+    } finally {
+      setTgBusy(null);
+    }
+  }
 
   // Resolved nightly prices for the visible range (seasons + holidays applied),
   // so an operator quote matches the site, the bots and the OTAs to the sum.
@@ -377,6 +432,7 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
         discount_percent: Number(form.discount) || 0,
         discount_reason: form.discount ? (form.discount_reason || null) : null,
         note: form.note || null,
+        tg_draft: form.tg_draft || undefined,
       };
       const res = await api.createReservation(body);
       await load();
@@ -678,6 +734,12 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
         <Modal onClose={() => setForm(null)} title={form.step === 2 ? 'Предоплата · шаг 2 из 2' : 'Новая бронь · шаг 1 из 2'}>
           {form.step === 1 ? (
             <form onSubmit={submitNew} className="space-y-3">
+              {form.tg_draft && (
+                <div className="p-2.5 rounded-lg bg-sky-50 border border-sky-200 text-sm text-sky-900">
+                  💬 Бронь из чата @balandda_chimgan{form.tg_label ? <> · <b>{form.tg_label}</b></> : null}.
+                  <div className="text-xs text-sky-700 mt-0.5">Данные взяты из переписки — проверьте. После сохранения счёт и ваучер уйдут клиенту в этот чат.</div>
+                </div>
+              )}
               <Field label="Объект">
                 <select required value={form.property_id} onChange={(e) => updateForm({ property_id: e.target.value })} className="input">
                   {units.map((u) => <option key={u.id} value={u.id}>{u.name_ru}</option>)}
@@ -770,6 +832,13 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
                 </Field>
               </div>
               <p className="text-xs text-gray-400">Предзаполнено 20% — измените, если клиент платит больше.</p>
+              {form.tg_draft && form.createdRes && (
+                <button type="button" disabled={!!tgBusy}
+                  onClick={async () => { const r = await tgSend(form.createdRes.id, 'pay', langFromPhone(form.guest_phone)); if (r && r.ok) { setForm(null); load(); } }}
+                  className="w-full px-3 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50">
+                  {tgBusy === 'pay' ? 'Отправка…' : '💳 Отправить клиенту счёт на оплату в Telegram'}
+                </button>
+              )}
               <div className="flex justify-between gap-2 pt-2">
                 <button type="button" onClick={() => setForm(null)} className="px-4 py-2 rounded-lg border border-gray-200 text-sm">Позже (оставить красной)</button>
                 <button type="button" onClick={submitPrepay} className="px-4 py-2 rounded-lg bg-green-600 text-white text-sm font-medium hover:bg-green-700">Провести предоплату</button>
@@ -822,6 +891,20 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
               </div>
             );
           })()}
+
+          {/* Guest linked to Telegram (chimgan chat or bot): payment request + voucher there */}
+          {detail.telegram_user_id && !['BLOCKED', 'CANCELLED', 'EXPIRED'].includes(detail.status) && (
+            <div className="mb-3 grid grid-cols-2 gap-2">
+              <button onClick={() => tgSend(detail.id, 'pay')} disabled={!!tgBusy}
+                className="px-3 py-2 rounded-lg bg-sky-600 text-white text-sm font-medium hover:bg-sky-700 disabled:opacity-50">
+                {tgBusy === 'pay' ? 'Отправка…' : '💳 Счёт в Telegram'}
+              </button>
+              <button onClick={() => tgSend(detail.id, 'voucher')} disabled={!!tgBusy}
+                className="px-3 py-2 rounded-lg bg-white border border-sky-200 text-sky-700 text-sm font-medium hover:bg-sky-100 disabled:opacity-50">
+                {tgBusy === 'voucher' ? 'Отправка…' : '📄 Ваучер в Telegram'}
+              </button>
+            </div>
+          )}
 
           {/* Telegram: connect link to message the customer via @balandda_bot */}
           <button onClick={doConnectLink} className="w-full mb-2 px-3 py-2 rounded-lg bg-sky-50 text-sky-700 text-sm font-medium hover:bg-sky-100">

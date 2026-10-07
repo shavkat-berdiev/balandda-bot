@@ -37,7 +37,7 @@ from db.models import IncomeEntry, Prepayment, Property, Reservation, Reservatio
 from services.beds24 import kick as beds24_kick  # OTA availability push
 from services.mailer import send_email
 from services.voucher import build_email, build_voucher_pdf, checkin_times, norm_lang
-from services.voucher_mail import clean_email, send_booking_voucher
+from services.voucher_mail import clean_email, send_booking_voucher, send_booking_voucher_tg
 
 
 def _safe_email(raw):
@@ -478,6 +478,14 @@ async def bridge_payment(
         except Exception:
             pass
 
+    # Voucher PDF into the guest's Telegram too (chimgan chat or @balandda_bot) — best-effort.
+    if res.telegram_user_id:
+        try:
+            await send_booking_voucher_tg(session, res, lang=data.guest_lang,
+                                          actor_name=f"Octo ({data.channel_label})")
+        except Exception:
+            pass
+
     # Confirmation e-mail with the PDF voucher — best-effort, never fails the payment.
     # Falls back to the address stored on the booking (calendar / bot payments carry
     # none in the payload); every attempt is written to the booking's log.
@@ -532,16 +540,24 @@ async def pay_link(
     total = float(res.total_amount or 0)
     if total <= 0 and prop:
         total = float(await _stay_total(session, prop, res.check_in, res.check_out) or 0)
-    # 100% онлайн-оплата даёт скидку 5%; депозит 20% — без скидки.
-    amount = round(total * 0.95) if data.kind != "deposit" else round(total * 0.2)
+    # 100% онлайн-оплата даёт скидку 5%; депозит 20% — без скидки; "balance" — остаток
+    # после уже внесённых оплат, без скидки (кнопка из Telegram-счёта, 2026-10).
+    if data.kind == "balance":
+        paid = float((await session.execute(
+            select(func.coalesce(func.sum(IncomeEntry.amount), 0)).where(IncomeEntry.reservation_id == res.id)
+        )).scalar() or 0)
+        amount = round(max(0.0, total - paid))
+    else:
+        amount = round(total * 0.95) if data.kind != "deposit" else round(total * 0.2)
     if amount <= 0:
         return {"ok": False, "error": "no_amount"}
 
     tid = f"BOT-{res.id}-{secrets.token_hex(3)}"
     unit = prop.name_ru if prop else ""
+    ch = (data.channel or "").lower()
     back = (
-        IG_DIRECT_URL
-        if (data.channel or "").lower() == "instagram"
+        IG_DIRECT_URL if ch == "instagram"
+        else "https://t.me/balandda_chimgan" if ch == "chimgan"
         else f"https://t.me/{settings.customer_bot_username}"
     )
     url, uuid, msg = await octo_prepare(
@@ -558,12 +574,57 @@ async def pay_link(
     session.add(ReservationEvent(
         reservation_id=res.id, actor_name="Клиент (бот)", action="pay_link",
         detail=f"Ссылка на оплату {amount} сум ({data.kind}"
-               + (", скидка 5%" if data.kind != "deposit" else "")
+               + (", скидка 5%" if data.kind == "full" else "")
                + f") · {tid}",
     ))
     await session.commit()
     return {"ok": True, "pay_url": url, "amount": amount, "kind": data.kind,
             "tid": tid, "provider_uuid": uuid}
+
+
+def _pay_page(msg: str) -> str:
+    from html import escape
+    return (
+        "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>Balandda Chimgan</title></head><body style='margin:0;background:#f4f7f8;font-family:Segoe UI,Helvetica,Arial,sans-serif'>"
+        "<div style='max-width:460px;margin:12vh auto;background:#fff;border-radius:14px;padding:28px 24px;text-align:center;color:#171d29'>"
+        "<div style='font-weight:700;font-size:18px;margin-bottom:10px'>Balandda Chimgan</div>"
+        f"<p style='font-size:15px;line-height:1.5;color:#3c4850'>{escape(msg)}</p>"
+        "<p style='font-size:14px;margin-top:18px'><a href='https://t.me/balandda_chimgan' style='color:#00a7e1'>t.me/balandda_chimgan</a>"
+        " · <a href='tel:+998990187077' style='color:#00a7e1'>+998 99 018 70 77</a></p></div></body></html>"
+    )
+
+
+@router.get("/pay/{res_id}/{kind}/{sig}")
+async def pay_redirect(res_id: int, kind: str, sig: str, l: str | None = None,
+                       session: AsyncSession = Depends(get_session)):
+    """One-tap pay button from a Telegram payment request (public, HMAC-signed link).
+
+    Creates the Octo payment only now, then redirects to the Octo page. A deposit/100% link
+    tapped after something was already paid becomes «pay the balance» — never a second full charge.
+    """
+    from fastapi.responses import HTMLResponse, RedirectResponse
+    from services.tg_pay import verify
+    if not verify(res_id, kind, sig):
+        return HTMLResponse(_pay_page("Ссылка на оплату недействительна. / Payment link is invalid."), status_code=404)
+    res = await session.get(Reservation, res_id)
+    if not res or res.status not in (ReservationStatus.HOLD, ReservationStatus.CONFIRMED):
+        return HTMLResponse(_pay_page("Эта бронь уже не активна — свяжитесь с ресепшн. / This booking is no longer active — please contact reception."), status_code=410)
+    paid = float((await session.execute(
+        select(func.coalesce(func.sum(IncomeEntry.amount), 0)).where(IncomeEntry.reservation_id == res.id)
+    )).scalar() or 0)
+    total = float(res.total_amount or 0)
+    if paid > 0:
+        if total and paid >= total - 1:
+            return HTMLResponse(_pay_page("Бронь уже оплачена полностью. Спасибо! / This booking is already paid in full. Thank you!"))
+        kind = "balance"
+    lang = (l or "ru").lower()
+    r = await pay_link(PayLinkData(booking_id=res_id, kind=kind, lang=lang if lang in ("ru", "uz", "en") else "ru",
+                                   channel="chimgan"),
+                       session=session, x_bridge_secret=settings.bridge_secret)
+    if not r.get("ok"):
+        return HTMLResponse(_pay_page("Не удалось открыть оплату. Попробуйте позже или свяжитесь с ресепшн. / Could not open the payment page."), status_code=502)
+    return RedirectResponse(r["pay_url"], status_code=302)
 
 
 @router.post("/octo-notify")

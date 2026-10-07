@@ -22,13 +22,16 @@ from services.beds24 import kick as beds24_kick
 import asyncio
 from services.mailer import send_email
 from services.voucher import build_cancel_email, build_voucher_pdf, load_voucher_data, norm_lang
-from services.voucher_mail import clean_email, guess_lang, send_booking_voucher
+from services.voucher_mail import clean_email, guess_lang, send_booking_voucher, send_booking_voucher_tg
+from services.tg_pay import pay_message
 from fastapi.responses import Response
 from services.octo_service import octo_prepare, octo_refund
 from db.database import get_session
 from db.hold_timing import add_working_minutes
 from db.pricing import load_rate_index, stay_total
 from services.customer_notify import (
+    crm_notify,
+    crm_request,
     booking_cancelled_text,
     booking_changed_text,
     booking_confirmed_text,
@@ -73,6 +76,7 @@ class ReservationCreate(BaseModel):
     discount_percent: float | None = None
     discount_reason: str | None = None
     note: str | None = None
+    tg_draft: str | None = None        # «/бронь» draft token from a @balandda_chimgan chat
 
 
 class PaymentInput(BaseModel):
@@ -409,10 +413,20 @@ async def create_reservation(
     # calc, so filling it here would show an uncollected 30% prepayment on every booking.
     deposit = data.deposit_amount
 
+    # «/бронь» from a @balandda_chimgan chat: the draft carries the guest's Telegram id, so
+    # the booking is linked to that chat and payment requests / vouchers can go there.
+    draft = None
+    if data.tg_draft:
+        st_, draft = await crm_request("GET", f"/api/tg-draft/{data.tg_draft}")
+        if st_ != 200 or not draft.get("ok"):
+            raise HTTPException(status_code=400, detail="Черновик Telegram-брони не найден")
+    tg_uid = int(draft["chat_id"]) if draft else data.telegram_user_id
+    tg_uname = data.telegram_username or ((draft or {}).get("username"))
+
     # Auto-save the guest by phone and link the record.
     customer_id = await _upsert_customer(
         session, phone=data.guest_phone, name=data.guest_name,
-        tg_username=data.telegram_username, tg_user_id=data.telegram_user_id,
+        tg_username=tg_uname, tg_user_id=tg_uid,
     )
 
     res = Reservation(
@@ -423,8 +437,8 @@ async def create_reservation(
         guest_phone=data.guest_phone,
         guest_email=_email_or_400(data.guest_email),
         guest_count=data.guest_count,
-        telegram_username=_clean_username(data.telegram_username),
-        telegram_user_id=data.telegram_user_id,
+        telegram_username=_clean_username(tg_uname),
+        telegram_user_id=tg_uid,
         status=status,
         source=source,
         total_amount=total,
@@ -446,6 +460,14 @@ async def create_reservation(
     await session.refresh(res)
     await _log(session, res.id, user, "created",
                f"{data.guest_name or RESERVATION_SOURCE_LABELS.get(source, source.value)} · {data.check_in}→{data.check_out}")
+    if draft:
+        await _log(session, res.id, user, "telegram",
+                   "Бронь из чата @balandda_chimgan" + (f" (@{draft.get('username')})" if draft.get("username") else ""))
+        await crm_request("POST", f"/api/tg-draft/{data.tg_draft}/booked", {
+            "reservation_id": res.id, "unit_name": prop.name_ru if prop else None,
+            "check_in": data.check_in.isoformat(), "check_out": data.check_out.isoformat(),
+            "operator": await _actor_name(session, user.get("telegram_id") if user else None),
+        })
     beds24_kick()
     return _out(res)
 
@@ -1283,3 +1305,61 @@ async def send_voucher(
     ok, err = await send_booking_voucher(session, res, res.guest_email, lang=data.lang,
                                          actor_name=name or "оператор", actor_id=actor_id)
     return {"ok": ok, "email": res.guest_email, "error": err}
+
+
+# ---- Telegram: «/бронь» drafts + payment request / voucher into the guest's chat ----
+
+@router.get("/tg-draft/{token}")
+async def tg_draft(token: str, user: dict = Depends(get_current_user)):
+    """A «/бронь» draft from a @balandda_chimgan chat, to pre-fill the new-booking form."""
+    st_, d = await crm_request("GET", f"/api/tg-draft/{token}")
+    if st_ != 200 or not d.get("ok"):
+        raise HTTPException(status_code=404, detail="Черновик не найден")
+    return d
+
+
+class TgSendInput(BaseModel):
+    kind: str = "pay"          # pay | voucher
+    lang: str | None = None    # ru | uz | en; default: guessed from the guest
+
+
+@router.post("/{res_id}/tg-send")
+async def tg_send(
+    res_id: int,
+    data: TgSendInput,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    res = await session.get(Reservation, res_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="not found")
+    if not res.telegram_user_id:
+        raise HTTPException(status_code=400, detail="Бронь не привязана к Telegram")
+    st = res.status if isinstance(res.status, ReservationStatus) else ReservationStatus(res.status)
+    if st.value in ("CANCELLED", "EXPIRED", "BLOCKED"):
+        raise HTTPException(status_code=400, detail="Для этой брони отправка недоступна")
+    name = await _actor_name(session, user.get("telegram_id") if user else None)
+    actor_id = user.get("telegram_id") if user else None
+    if data.kind == "voucher":
+        ok, via, err = await send_booking_voucher_tg(session, res, lang=data.lang,
+                                                     actor_name=name or "оператор", actor_id=actor_id)
+        return {"ok": ok, "via": via, "error": err}
+    lg = norm_lang(data.lang) if data.lang else await guess_lang(session, res)
+    vd = await load_voucher_data(session, res, lg)
+    if not res.connect_token:
+        res.connect_token = secrets.token_urlsafe(12)[:16]
+        await session.commit()
+    connect_url = f"https://t.me/{settings.customer_bot_username}?start=connect_{res.connect_token}"
+    text, rows = pay_message(lg, vd, connect_url=connect_url)
+    if not rows:
+        raise HTTPException(status_code=400, detail="Бронь уже оплачена полностью — отправьте ваучер")
+    for row in rows:
+        for b in row:
+            if "/bridge/pay/" in b["url"]:
+                b["url"] += f"?l={lg}"
+    r = await crm_notify(res.telegram_user_id, text, buttons=rows)
+    where = {"business": "в чат @balandda_chimgan", "bot": "в @balandda_bot"}.get(r.get("via") or "", "в Telegram")
+    await _log(session, res.id, user, "telegram",
+               f"Счёт на оплату ({lg.upper()}) отправлен {where}" if r["ok"]
+               else f"Счёт на оплату НЕ отправлен в Telegram: {r.get('error')}")
+    return {"ok": r["ok"], "via": r.get("via"), "error": r.get("error")}

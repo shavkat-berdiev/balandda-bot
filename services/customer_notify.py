@@ -40,26 +40,57 @@ async def get_prepayment_instructions() -> str:
     return text
 
 
-async def send_customer_message(telegram_user_id: int | None, text: str) -> bool:
-    """Ask the CRM to deliver `text` to the customer via @balandda_bot."""
-    if not telegram_user_id or not settings.bridge_secret:
-        return False
-    url = settings.crm_api_url.rstrip("/") + "/api/notify"
+async def crm_request(method: str, path: str, json: dict | None = None, timeout: float = 30) -> tuple[int, dict]:
+    """Call the CRM bridge (X-Bridge-Secret). Returns (http_status, json_body); 0 on network error."""
+    if not settings.bridge_secret:
+        return 0, {"ok": False, "error": "bridge secret not set"}
+    url = settings.crm_api_url.rstrip("/") + path
     try:
         async with aiohttp.ClientSession() as s:
-            async with s.post(
-                url,
-                json={"telegram_user_id": telegram_user_id, "text": text},
+            async with s.request(
+                method, url, json=json,
                 headers={"X-Bridge-Secret": settings.bridge_secret},
-                timeout=aiohttp.ClientTimeout(total=10),
+                timeout=aiohttp.ClientTimeout(total=timeout),
             ) as r:
-                if r.status >= 400:
-                    logger.warning("notify CRM failed %s: %s", r.status, await r.text())
-                    return False
-                return True
+                try:
+                    data = await r.json(content_type=None)
+                except Exception:  # noqa: BLE001
+                    data = {"ok": False, "error": (await r.text())[:300]}
+                return r.status, (data if isinstance(data, dict) else {"ok": False, "data": data})
     except Exception as e:  # noqa: BLE001 - best effort
-        logger.warning("notify CRM error: %s", e)
+        logger.warning("CRM %s %s error: %s", method, path, e)
+        return 0, {"ok": False, "error": str(e)}
+
+
+async def crm_notify(telegram_user_id: int | None, text: str | None = None, *, via: str | None = None,
+                     buttons: list | None = None, document: tuple[str, bytes] | None = None) -> dict:
+    """Deliver to a guest's Telegram through the CRM. Since 2026-10 the CRM reaches them in
+    their @balandda_chimgan chat (business connection) or the @balandda_bot chat, whichever
+    works — `via` only picks which to try first. Returns {ok, via, error}."""
+    if not telegram_user_id:
+        return {"ok": False, "error": "бронь не привязана к Telegram"}
+    body: dict = {"telegram_user_id": int(telegram_user_id)}
+    if text:
+        body["text"] = text
+    if via:
+        body["via"] = via
+    if buttons:
+        body["buttons"] = buttons
+    if document:
+        import base64
+        body["document"] = {"filename": document[0], "base64": base64.b64encode(document[1]).decode()}
+    status, data = await crm_request("POST", "/api/notify", body, timeout=60 if document else 15)
+    if status == 200 and data.get("ok"):
+        return {"ok": True, "via": data.get("via")}
+    logger.warning("notify CRM failed %s: %s", status, data)
+    return {"ok": False, "error": data.get("error") or f"HTTP {status}"}
+
+
+async def send_customer_message(telegram_user_id: int | None, text: str) -> bool:
+    """Deliver `text` to the customer's Telegram (chimgan chat or @balandda_bot)."""
+    if not telegram_user_id or not settings.bridge_secret:
         return False
+    return (await crm_notify(telegram_user_id, text))["ok"]
 
 
 async def notify_operators_booking(

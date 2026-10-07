@@ -68,3 +68,30 @@ async def send_booking_voucher(session, res, email: str, lang: str | None = None
                                  action="email", detail=detail))
     await session.commit()
     return err is None, err
+
+
+async def send_booking_voucher_tg(session, res, lang: str | None = None,
+                                  actor_name: str = "Система", actor_id: int | None = None) -> tuple[bool, str | None, str | None]:
+    """Voucher PDF to the guest's Telegram (chimgan chat or @balandda_bot). Logged on the booking."""
+    from services.customer_notify import crm_notify
+    from services.tg_pay import voucher_caption
+    lg = norm_lang(lang) if lang else await guess_lang(session, res)
+    err, via = None, None
+    try:
+        vd = await load_voucher_data(session, res, lg)
+        pdf = await asyncio.to_thread(build_voucher_pdf, lg, vd)
+        r = await crm_notify(res.telegram_user_id, voucher_caption(lg, res.id),
+                             document=(f"balandda-voucher-{res.id}.pdf", pdf))
+        via = r.get("via")
+        if not r.get("ok"):
+            err = r.get("error") or "ошибка"
+    except Exception as e:  # noqa: BLE001
+        err = f"{type(e).__name__}: {e}"[:300]
+    where = {"business": "в чат @balandda_chimgan", "bot": "в @balandda_bot"}.get(via or "", "в Telegram")
+    session.add(ReservationEvent(
+        reservation_id=res.id, actor_id=actor_id, actor_name=actor_name, action="telegram",
+        detail=(f"Ваучер ({lg.upper()}) отправлен {where}" if err is None
+                else f"Ваучер ({lg.upper()}) НЕ отправлен в Telegram: {err}"),
+    ))
+    await session.commit()
+    return err is None, via, err
