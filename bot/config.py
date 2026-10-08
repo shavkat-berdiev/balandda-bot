@@ -45,6 +45,8 @@ class Settings(BaseSettings):
 
     # Customer messaging bridge (@balandda_bot lives in the CRM project)
     customer_bot_username: str = "balandda_bot"           # for connect deep-links
+    # @balandda_bot token — ONLY to verify Telegram Mini App sign-in (operators' booking form).
+    customer_bot_token: str = ""
     crm_api_url: str = "https://crm.balandda.uz"          # CRM sends customer messages via @balandda_bot
     bridge_secret: str = ""                               # shared secret with the CRM (== CRM INTAKE_SECRET)
     # Telegram id that "owns" income rows created by online card payments (Octo).

@@ -21,6 +21,7 @@ import AdminShop from './pages/AdminShop';
 import AdminReports from './pages/AdminReports';
 import Prepayments from './pages/Prepayments';
 import Calendar from './pages/Calendar';
+import TgApp from './pages/TgApp';
 import ChangeLog from './pages/ChangeLog';
 import Wallets from './pages/Wallets';
 
@@ -47,6 +48,9 @@ export default function App() {
     localStorage.removeItem('user');
     setUser(null);
   };
+
+  // Telegram Mini App (operators' booking form) signs in with Telegram, not the login page.
+  if (window.location.pathname.startsWith('/tgapp')) return <TgApp />;
 
   if (loading) {
     return (
