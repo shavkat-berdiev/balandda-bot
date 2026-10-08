@@ -198,6 +198,9 @@ class WebBookData(BaseModel):
     guest_name: str
     guest_phone: str
     guest_email: str | None = None
+    # Ad click ids / UTM from the site (BL_ADS_GET): gclid, gbraid, wbraid, yclid, fbclid,
+    # fbp, fbc, ym_cid, ga_cid, utm_* — kept for offline conversions (services/ad_conversions.py).
+    ads: dict | None = None
 
 
 @router.post("/web-book")
@@ -258,6 +261,12 @@ async def web_book(
         reservation_id=res.id, actor_name="Клиент (сайт)", action="created",
         detail=f"Онлайн-бронь (сайт): {prop.name_ru} · {data.check_in}→{data.check_out}",
     ))
+    if data.ads:
+        from services.ad_conversions import clean_ads
+        from db.models import ReservationAds
+        _ads = clean_ads(data.ads)
+        if _ads:
+            session.add(ReservationAds(reservation_id=res.id, data=_ads, origin="site"))
     await session.commit()
     beds24_kick()
 

@@ -44,6 +44,8 @@ app.include_router(public.router, prefix="/api/v1/public", tags=["public"])
 app.include_router(reservations.router, prefix="/api/v1/reservations", tags=["reservations"])
 app.include_router(bridge.router, prefix="/api/v1/bridge", tags=["bridge"])
 app.include_router(tgapp.router, prefix="/api/v1/tgapp", tags=["tgapp"])
+from api.routers import ad_conversions as _ad_conversions  # noqa: E402
+app.include_router(_ad_conversions.router, prefix="/api/v1/ad-conversions", tags=["ad-conversions"])
 app.include_router(spa_schedule.router, prefix="/api/v1/spa", tags=["spa-schedule"])
 # Unified bot content: /bot-templates (admin) + /bot-flow, /bot-image (public — Meta fetches these)
 app.include_router(bot_templates.router, prefix="/api/v1", tags=["bot-templates"])

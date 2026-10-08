@@ -928,3 +928,43 @@ class Holiday(Base):
     date: Mapped[date] = mapped_column(Date, unique=True, index=True)
     name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True)
+
+
+# ───────────── Server-side ad conversions (2026-10) — see services/ad_conversions.py ─────────────
+from sqlalchemy.dialects.postgresql import JSONB as _JSONB  # noqa: E402
+
+
+class ReservationAds(Base):
+    """Ad click ids / UTM tags known for a booking: from the website (book.php → web-book)
+    or from a Telegram click on the site, matched by the guest's Telegram id via the CRM."""
+    __tablename__ = "reservation_ads"
+
+    reservation_id: Mapped[int] = mapped_column(
+        ForeignKey("reservations.id", ondelete="CASCADE"), primary_key=True)
+    data: Mapped[dict] = mapped_column(_JSONB, default=dict)
+    origin: Mapped[str | None] = mapped_column(String(30), nullable=True)   # site | telegram_code | crm
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AdConversion(Base):
+    """Ledger of conversions reported (or reportable) to ad platforms — one row per
+    (reservation, event). Meta is sent server-side; Google/Yandex are exported as CSV."""
+    __tablename__ = "ad_conversions"
+    __table_args__ = (UniqueConstraint("reservation_id", "event_name", name="uq_ad_conv_res_event"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    reservation_id: Mapped[int] = mapped_column(
+        ForeignKey("reservations.id", ondelete="CASCADE"), index=True)
+    event_name: Mapped[str] = mapped_column(String(20))           # Lead | Purchase
+    event_id: Mapped[str] = mapped_column(String(64))              # lead-<id> | paid-<id>
+    event_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    value: Mapped[float | None] = mapped_column(Numeric(15, 2), nullable=True)
+    currency: Mapped[str] = mapped_column(String(3), default="UZS")
+    source: Mapped[str | None] = mapped_column(String(20), nullable=True)          # reservation source
+    pay_kind: Mapped[str | None] = mapped_column(String(20), nullable=True)        # octo | octo_site | offline
+    ad_origin: Mapped[bool] = mapped_column(default=False)
+    ads: Mapped[dict | None] = mapped_column(_JSONB, nullable=True)                 # click ids snapshot
+    meta_status: Mapped[str] = mapped_column(String(20), default="pending")         # pending|sent|test|error|skip_*
+    meta_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    meta_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -14,7 +14,7 @@ from sqlalchemy.orm import selectinload
 from bot import iiko_wallet_sync, owner_digest
 from bot.config import settings
 from db.database import async_session
-from services import beds24
+from services import ad_conversions, beds24
 from db.enums import (
     EXPENSE_CATEGORY_LABELS,
     PAYMENT_METHOD_LABELS,
@@ -376,6 +376,15 @@ async def process_hold_expiries(bot: Bot):
 def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     """Set up and return the APScheduler instance."""
     scheduler = AsyncIOScheduler(timezone=settings.timezone)
+
+    # Lead / Purchase → Meta CAPI + ledger for Google/Yandex (services/ad_conversions.py)
+    scheduler.add_job(
+        ad_conversions.run_scan,
+        IntervalTrigger(minutes=5),
+        id="ad_conversions",
+        name="Ad conversions (Meta CAPI)",
+        replace_existing=True,
+    )
 
     scheduler.add_job(
         process_hold_expiries,

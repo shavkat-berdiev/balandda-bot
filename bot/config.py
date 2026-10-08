@@ -47,6 +47,15 @@ class Settings(BaseSettings):
     customer_bot_username: str = "balandda_bot"           # for connect deep-links
     # @balandda_bot token — ONLY to verify Telegram Mini App sign-in (operators' booking form).
     customer_bot_token: str = ""
+    # Server-side ad conversions (services/ad_conversions.py). Empty token → ledger only.
+    meta_capi_token: str = ""
+    meta_dataset_id: str = "911329980388718"
+    meta_test_event_code: str = ""          # set → events go to Events Manager «Test events» only
+    ad_conv_since: str = "2026-10-08"       # nothing before this date is reported
+    google_conv_purchase: str = "Balandda offline purchase"
+    google_conv_lead: str = "Balandda chat lead"
+    yandex_target_purchase: str = "offline_purchase"
+    yandex_target_lead: str = "offline_lead"
     crm_api_url: str = "https://crm.balandda.uz"          # CRM sends customer messages via @balandda_bot
     bridge_secret: str = ""                               # shared secret with the CRM (== CRM INTAKE_SECRET)
     # Telegram id that "owns" income rows created by online card payments (Octo).
