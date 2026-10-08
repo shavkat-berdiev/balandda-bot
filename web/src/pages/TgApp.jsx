@@ -4,6 +4,7 @@
 // launch data, checked server-side against the calendar's staff (POST /api/v1/tgapp/auth).
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
+import GuestApp from './GuestApp';
 
 const DISCOUNTS = [0, 5, 10, 15, 20, 25, 30, 50];
 const REASONS = [
@@ -68,6 +69,7 @@ export default function TgApp() {
   const [lang, setLang] = useState('ru');
   const [sent, setSent] = useState('');
   const [sending, setSending] = useState(false);
+  const [guest, setGuest] = useState(false);  // guest booking mode (see GuestApp)
 
   // 1. Telegram sign-in → session token → draft + units
   useEffect(() => {
@@ -76,12 +78,18 @@ export default function TgApp() {
       setWa(w);
       try { w?.ready(); w?.expand(); } catch { /* ignore */ }
       if (!w || !w.initData) { setPhase('noTg'); return; }
+      // Guest mode: bot menu / cards (?mode=guest), or startapp=g / g_<draft token>.
+      // Operator draft tokens are exactly 12 chars, so «g_…» of another length is a guest link.
+      const sp = w.initDataUnsafe?.start_param || '';
+      const qmode = new URLSearchParams(window.location.search).get('mode');
+      if (qmode === 'guest' || sp === 'g' || (sp.startsWith('g_') && sp.length !== 12)) { setGuest(true); return; }
       try {
         const r = await fetch('/api/v1/tgapp/auth', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ init_data: w.initData }),
         });
         const j = await r.json().catch(() => ({}));
+        if (r.status === 403) { setGuest(true); return; }   // not staff → it's a guest
         if (!r.ok) { setError(j.detail || 'Нет доступа'); setPhase('denied'); return; }
         localStorage.setItem('token', j.token);
         localStorage.setItem('user', JSON.stringify(j.user));
@@ -189,6 +197,8 @@ export default function TgApp() {
 
   const input = 'w-full border border-gray-200 rounded-lg px-3 py-2.5 text-[15px] bg-white focus:outline-none focus:ring-2 focus:ring-sky-400';
   const shell = (body) => <div className="min-h-screen bg-gray-50 text-gray-900 px-4 py-4">{body}</div>;
+
+  if (guest) return <GuestApp wa={wa} />;
 
   if (phase === 'loading') {
     return shell(<div className="flex justify-center pt-24"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-sky-600" /></div>);

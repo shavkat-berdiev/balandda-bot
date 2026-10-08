@@ -596,7 +596,7 @@ def _pay_page(msg: str) -> str:
 
 
 @router.get("/pay/{res_id}/{kind}/{sig}")
-async def pay_redirect(res_id: int, kind: str, sig: str, l: str | None = None,
+async def pay_redirect(res_id: int, kind: str, sig: str, l: str | None = None, c: str | None = None,
                        session: AsyncSession = Depends(get_session)):
     """One-tap pay button from a Telegram payment request (public, HMAC-signed link).
 
@@ -620,7 +620,8 @@ async def pay_redirect(res_id: int, kind: str, sig: str, l: str | None = None,
         kind = "balance"
     lang = (l or "ru").lower()
     r = await pay_link(PayLinkData(booking_id=res_id, kind=kind, lang=lang if lang in ("ru", "uz", "en") else "ru",
-                                   channel="chimgan"),
+                                   # c=bot: link sent from @balandda_bot (guest Mini App) → back to the bot
+                                   channel="telegram" if (c or "").lower() == "bot" else "chimgan"),
                        session=session, x_bridge_secret=settings.bridge_secret)
     if not r.get("ok"):
         return HTMLResponse(_pay_page("Не удалось открыть оплату. Попробуйте позже или свяжитесь с ресепшн. / Could not open the payment page."), status_code=502)
