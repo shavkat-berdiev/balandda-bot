@@ -747,6 +747,32 @@ class Reservation(Base):
     property: Mapped["Property"] = relationship()
 
 
+class ReservationExtra(Base):
+    """Operator-charged add-on on a booking (late checkout, extra bed).
+
+    Calendar-only: never offered on the website or in the bots. Adding one raises
+    the booking's total_amount by `amount` (removing it lowers it back), so the
+    balance, the calendar colour and the Octo charge form all include it. The
+    structured-report dashboard attributes this share of the booking's payments
+    to «Доп. услуги» instead of «Проживание».
+    """
+    __tablename__ = "reservation_extras"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    reservation_id: Mapped[int] = mapped_column(
+        ForeignKey("reservations.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(30))        # LATE_CHECKOUT_15 / LATE_CHECKOUT_18 / EXTRA_BED
+    label: Mapped[str] = mapped_column(String(120))
+    quantity: Mapped[int] = mapped_column(Integer, default=1)
+    unit_price: Mapped[float] = mapped_column(Numeric(15, 2))
+    amount: Mapped[float] = mapped_column(Numeric(15, 2))
+    note: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    actor_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class ReservationEvent(Base):
     """Audit log for a reservation: who changed what and when."""
     __tablename__ = "reservation_events"

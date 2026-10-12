@@ -33,7 +33,7 @@ from db.enums import (
     WalletTransactionType,
 )
 from db.hold_timing import add_working_minutes
-from db.models import IncomeEntry, Prepayment, Property, Reservation, ReservationEvent, User, WalletTransaction
+from db.models import IncomeEntry, Prepayment, Property, Reservation, ReservationEvent, ReservationExtra, User, WalletTransaction
 from services.beds24 import kick as beds24_kick  # OTA availability push
 from services.mailer import send_email
 from services.voucher import build_email, build_voucher_pdf, checkin_times, norm_lang
@@ -375,6 +375,22 @@ class BridgePaymentData(BaseModel):
     total_override: float | None = None  # 100% со скидкой 5%: новая итоговая стоимость брони
 
 
+ONLINE_DISCOUNT_PCT = 5   # 100% online card payment (site + bots) is charged at 95%
+
+
+def _online_discount(total: float, extras: float, amt: float) -> int | None:
+    """The 5% discount granted by this payment, or None if it is not a 100% online one.
+
+    Site and bot full payments are round(base * 0.95), where base is the booking total
+    as it stood when the pay link was made — with or without add-ons charged since.
+    """
+    tol = max(1000, total * 0.001)
+    for base in (total, total - extras):
+        if base > 0 and amt < base and abs(amt - round(base * (1 - ONLINE_DISCOUNT_PCT / 100))) <= tol:
+            return round(base - amt)
+    return None
+
+
 @router.post("/payment")
 async def bridge_payment(
     data: BridgePaymentData,
@@ -397,11 +413,6 @@ async def bridge_payment(
     amt = round(float(data.amount or 0))
     if amt <= 0:
         raise HTTPException(status_code=400, detail="amount must be positive")
-    if data.total_override and float(data.total_override) > 0:
-        # Оплата 100% со скидкой 5%: фактически оплаченная сумма становится
-        # итоговой стоимостью брони, чтобы в календаре не висел «остаток» 5%.
-        res.total_amount = round(float(data.total_override))
-
     # Idempotency: one ledger row per Octo payment UUID.
     if data.provider_uuid:
         dup = (
@@ -414,6 +425,50 @@ async def bridge_payment(
         ).scalars().first()
         if dup:
             return {"ok": True, "already": True, "booking_id": res.id, "status": res.status.value}
+
+    # Оплата 100% со скидкой 5%: скидка вычитается из итоговой стоимости брони, чтобы
+    # в календаре не висел «остаток» 5% и бронь стала зелёной. The site's webhook
+    # (octopay.php) never sent total_override — only the return-page path did, and the
+    # webhook almost always wins the race — so the backend also recognises the
+    # discounted full payment by its amount (a first payment of 95% of the stay).
+    # The discount is SUBTRACTED rather than total := paid, so operator add-ons
+    # (late checkout, extra bed) charged before or after the link stay owed.
+    explicit = bool(data.total_override and float(data.total_override) > 0)
+    discount = None
+    if explicit or not (data.channel_label or "").startswith("календарь"):
+        extras = float((
+            await session.execute(
+                select(func.coalesce(func.sum(ReservationExtra.amount), 0)).where(
+                    ReservationExtra.reservation_id == res.id
+                )
+            )
+        ).scalar() or 0)
+        discount = _online_discount(float(res.total_amount or 0), extras, amt)
+        if explicit and discount is None:
+            # Link built on a total we can no longer reconstruct: the guest paid 95%
+            # of something, so the discount was amt * 5/95.
+            discount = round(amt * ONLINE_DISCOUNT_PCT / (100 - ONLINE_DISCOUNT_PCT))
+        if not explicit and discount is not None:
+            paid_before = (
+                await session.execute(
+                    select(func.coalesce(func.sum(IncomeEntry.amount), 0)).where(
+                        IncomeEntry.reservation_id == res.id
+                    )
+                )
+            ).scalar() or 0
+            if float(paid_before) > 0:
+                discount = None          # not a first payment → not the 100% online option
+    if discount and res.total_amount is not None:
+        res.total_amount = max(0, round(float(res.total_amount)) - discount)
+        pct = float(res.discount_percent or 0)
+        if not pct:
+            res.discount_percent = ONLINE_DISCOUNT_PCT
+            res.discount_reason = "ONLINE_PAYMENT"
+        else:
+            # stack on the operator's discount so a later re-price keeps both
+            res.discount_percent = round(100 - (100 - pct) * (100 - ONLINE_DISCOUNT_PCT) / 100, 2)
+    elif explicit and res.total_amount is None:
+        res.total_amount = round(float(data.total_override))
 
     operator = settings.octo_operator_tg
     prop = await session.get(Property, res.property_id)

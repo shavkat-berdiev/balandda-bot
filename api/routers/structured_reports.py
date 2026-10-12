@@ -19,6 +19,7 @@ from db.enums import (
     PAYMENT_METHOD_LABELS,
     PaymentMethod,
     PROPERTY_TYPE_LABELS,
+    RESERVATION_EXTRA_LABELS,
 )
 from db.models import (
     BusinessUnit,
@@ -30,6 +31,8 @@ from db.models import (
     PrepaymentStatus,
     Property,
     ReportStatus,
+    Reservation,
+    ReservationExtra,
     ServiceItem,
     StaffMember,
     StructuredReport,
@@ -650,6 +653,40 @@ async def structured_dashboard(
     result = await session.execute(query)
     reports = result.scalars().all()
 
+    # Operator add-ons (late checkout, extra bed) are part of a booking's total, and
+    # its payments are single ledger rows. Each payment linked to a booking is split
+    # in proportion extras / total: that share is reported as «Доп. услуги к брони»
+    # (by kind), the rest as accommodation. Once the booking is paid in full the
+    # split equals the add-ons exactly; a partial payment gets its fair share.
+    extras_share: dict[int, tuple[float, dict[str, float]]] = {}
+    res_ids = {
+        e.reservation_id for rep in reports for e in rep.income_entries
+        if e.reservation_id and e.property
+    }
+    if res_ids:
+        ex_rows = (
+            await session.execute(
+                select(ReservationExtra.reservation_id, ReservationExtra.kind,
+                       func.sum(ReservationExtra.amount))
+                .where(ReservationExtra.reservation_id.in_(res_ids))
+                .group_by(ReservationExtra.reservation_id, ReservationExtra.kind)
+            )
+        ).all()
+        by_res: dict[int, dict[str, float]] = {}
+        for rid, kind, amt_sum in ex_rows:
+            by_res.setdefault(rid, {})[kind] = float(amt_sum or 0)
+        if by_res:
+            totals = dict((
+                await session.execute(
+                    select(Reservation.id, Reservation.total_amount).where(Reservation.id.in_(list(by_res)))
+                )
+            ).all())
+            for rid, kinds in by_res.items():
+                tot = float(totals.get(rid) or 0)
+                ex_sum = sum(kinds.values())
+                if tot > 0 and ex_sum > 0:
+                    extras_share[rid] = (min(1.0, ex_sum / tot), {k: v / ex_sum for k, v in kinds.items()})
+
     total_income = 0.0
     total_expense = 0.0
     report_count = 0
@@ -682,17 +719,30 @@ async def structured_dashboard(
         for entry in report.income_entries:
             amt = float(entry.amount)
 
+            # Add-on share of a booking payment → «Доп. услуги к брони», by kind.
+            if entry.property and entry.reservation_id in extras_share:
+                share, kinds = extras_share[entry.reservation_id]
+                ex_amt = amt * share
+                if ex_amt:
+                    by_income_cat["Доп. услуги к брони"] = by_income_cat.get("Доп. услуги к брони", 0) + ex_amt
+                    for kind, frac in kinds.items():
+                        lbl = RESERVATION_EXTRA_LABELS.get(kind, kind)
+                        by_service[lbl] = by_service.get(lbl, 0) + ex_amt * frac
+                acc_amt = amt - ex_amt
+            else:
+                acc_amt = amt
+
             # By income category
             if entry.property:
                 cat = "Проживание"
                 prop_name = entry.property.name_ru
-                by_property[prop_name] = by_property.get(prop_name, 0) + amt
+                by_property[prop_name] = by_property.get(prop_name, 0) + acc_amt
                 pt_label = PROPERTY_TYPE_LABELS.get(
                     entry.property.property_type, entry.property.property_type.value
                 )
-                prop_type_totals[pt_label] = prop_type_totals.get(pt_label, 0) + amt
+                prop_type_totals[pt_label] = prop_type_totals.get(pt_label, 0) + acc_amt
                 day_pt = daily_prop_type.setdefault(day_key, {})
-                day_pt[pt_label] = day_pt.get(pt_label, 0) + amt
+                day_pt[pt_label] = day_pt.get(pt_label, 0) + acc_amt
             elif entry.service_item:
                 cat = "Услуги"
                 svc_name = entry.service_item.name_ru
@@ -701,7 +751,7 @@ async def structured_dashboard(
                 cat = _minibar_category(entry.minibar_item)
             else:
                 cat = "Прочее"
-            by_income_cat[cat] = by_income_cat.get(cat, 0) + amt
+            by_income_cat[cat] = by_income_cat.get(cat, 0) + (acc_amt if entry.property else amt)
 
             # By payment method
             pm_label = PAYMENT_METHOD_LABELS.get(entry.payment_method, entry.payment_method.value)

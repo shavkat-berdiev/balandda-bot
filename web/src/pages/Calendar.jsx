@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react';
 import { api } from '../api';
 import { PAYMENT_METHODS } from '../constants/payments';
@@ -36,7 +36,7 @@ function cap(s, n = 9) {
   s = (s ?? '').toString();
   return s.length > n ? s.slice(0, n) + '…' : s;
 }
-const ACTION_LABELS = { created: 'создано', updated: 'изменено', cancelled: 'отменено', restored: 'восстановлено', deleted: 'удалено', payment: 'оплата', auto: 'авто', email: 'e-mail', telegram: 'Telegram' };
+const ACTION_LABELS = { created: 'создано', updated: 'изменено', cancelled: 'отменено', restored: 'восстановлено', deleted: 'удалено', payment: 'оплата', auto: 'авто', email: 'e-mail', telegram: 'Telegram', extra: 'доп. услуга' };
 function currentUser() {
   try { return JSON.parse(localStorage.getItem('user') || '{}'); } catch { return {}; }
 }
@@ -101,6 +101,10 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
   const [octoForm, setOctoForm] = useState(null); // Octo charge mini-form (OTA virtual cards)
   const [savingPay, setSavingPay] = useState(false);
   const [payments, setPayments] = useState([]);   // payment ledger for the selected booking
+  const [extras, setExtras] = useState(null);      // {items, quote} operator add-ons (late checkout, extra bed)
+  const [bedForm, setBedForm] = useState(null);    // {persons, nights} extra-bed mini-form
+  const [savingExtra, setSavingExtra] = useState(false);
+  const openIdRef = useRef(null);                  // id of the open card — drops late add-on answers
   const [editPay, setEditPay] = useState(null);    // {id, amount, method} inline edit
   const [prepays, setPrepays] = useState([]);      // prepayments (with proof) for the selected booking
   const [preFile, setPreFile] = useState(null);
@@ -246,8 +250,8 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
 
   // When a booking is selected: load an editable copy + its change log + payment ledger.
   useEffect(() => {
-    if (!detail) { setDetailForm(null); setEvents([]); setPayForm(null); setPayments([]); setEditPay(null); setPrepays([]); setPreFile(null); setShotUrls({}); return; }
-    setPayForm(null); setEditPay(null); setPreFile(null); setShotUrls({}); setConnectUrl(''); setLinkCopied(false);
+    if (!detail) { setDetailForm(null); setEvents([]); setPayForm(null); setPayments([]); setEditPay(null); setPrepays([]); setPreFile(null); setShotUrls({}); setExtras(null); setBedForm(null); openIdRef.current = null; return; }
+    setPayForm(null); setEditPay(null); setBedForm(null); setExtras(null); setPreFile(null); setShotUrls({}); setConnectUrl(''); setLinkCopied(false);
     setDetailForm({
       property_id: detail.property_id,
       status: detail.status,
@@ -262,6 +266,13 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
     { const ph = (detail.guest_phone || '').replace(/\D/g, ''); setVoucherLang(!ph || ph.startsWith('998') || ph.length === 9 ? 'ru' : 'en'); }
     api.getReservationEvents(detail.id).then(setEvents).catch(() => setEvents([]));
     api.getReservationPayments(detail.id).then(setPayments).catch(() => setPayments([]));
+    if (autoPrice) {
+      const openId = detail.id;
+      openIdRef.current = openId;
+      api.getReservationExtras(openId)
+        .then((x) => { if (openIdRef.current === openId) setExtras(x); })
+        .catch(() => { if (openIdRef.current === openId) setExtras(null); });
+    }
     api.prepaymentsByReservation(detail.id).then(setPrepays).catch(() => setPrepays([]));
   }, [detail]);
 
@@ -274,10 +285,39 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
       }
       if ('property_id' in patch || 'check_in' in patch || 'check_out' in patch || 'discount' in patch) {
         const a = calcAmounts(next.property_id, next.check_in, next.check_out, Number(next.discount) || 0);
-        if (a.total_amount) next.total_amount = a.total_amount;
+        // add-ons (late checkout, extra bed) are part of the total and survive a re-price
+        if (a.total_amount) next.total_amount = String(Number(a.total_amount) + Math.round(Number(detail?.extras_total) || 0));
       }
       return next;
     });
+  }
+
+  async function addExtra(body) {
+    if (!detail) return;
+    setSavingExtra(true);
+    try {
+      const updated = await api.addReservationExtra(detail.id, body);
+      setDetail(updated);   // reloads ledger, log and add-ons via effect
+      await load();         // calendar colour: green → blue while the add-on is unpaid
+    } catch (e) {
+      alert(e.message || 'Не удалось добавить услугу');
+    } finally {
+      setSavingExtra(false);
+    }
+  }
+
+  async function removeExtra(x) {
+    if (!detail || !window.confirm(`Удалить «${x.label}» (${money(x.amount)} сум)?`)) return;
+    setSavingExtra(true);
+    try {
+      const updated = await api.deleteReservationExtra(detail.id, x.id);
+      setDetail(updated);
+      await load();
+    } catch (e) {
+      alert(e.message || 'Не удалось удалить услугу');
+    } finally {
+      setSavingExtra(false);
+    }
   }
 
   async function reloadPayments(id) {
@@ -583,8 +623,13 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
         guest_email: (detailForm.guest_email || '').trim(),
         guest_count: detailForm.guest_count ? Number(detailForm.guest_count) : null,
         telegram_username: detailForm.telegram_username || null,
-        total_amount: detailForm.total_amount ? Number(detailForm.total_amount) : null,
-        discount_percent: Number(detailForm.discount) || 0,
+        // Send the price and the discount only when the operator changed them: the card may
+        // have been opened before an online payment or an add-on moved the stored total,
+        // and echoing the old number back would silently undo that.
+        total_amount: detailForm.total_amount && Math.round(Number(detailForm.total_amount)) !== Math.round(Number(detail.total_amount))
+          ? Number(detailForm.total_amount) : null,
+        discount_percent: (Number(detailForm.discount) || 0) !== (Number(detail.discount_percent) || 0)
+          ? (Number(detailForm.discount) || 0) : null,
         discount_reason: detailForm.discount ? (detailForm.discount_reason || null) : null,
         note: detailForm.note || null,
         property_id: detailForm.property_id ? Number(detailForm.property_id) : undefined,
@@ -860,6 +905,71 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
             </span>
           </div>
 
+          {/* Operator add-ons — calendar only, never offered on the site or in the bots.
+              Each one raises the booking total, so the balance / payment prefill include it. */}
+          {autoPrice && extras && !['BLOCKED', 'CANCELLED', 'EXPIRED'].includes(detail.status) && (() => {
+            const q = extras.quote || {};
+            const items = extras.items || [];
+            const hasLate = items.some((x) => x.kind.startsWith('LATE_CHECKOUT'));
+            const btn = 'px-2.5 py-2 rounded-lg border text-xs font-medium text-left leading-tight disabled:opacity-40';
+            return (
+              <div className="mb-3 p-3 rounded-lg border border-amber-200 bg-amber-50/60 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-medium text-amber-900">➕ Доп. услуги</span>
+                  {Number(detail.extras_total) > 0 && <span className="text-xs text-amber-800">в сумме брони: {money(detail.extras_total)} сум</span>}
+                </div>
+                {items.length > 0 && (
+                  <ul className="space-y-1">
+                    {items.map((x) => (
+                      <li key={x.id} className="flex items-center justify-between gap-2 text-sm bg-white rounded-md px-2.5 py-1.5">
+                        <span className="text-gray-700">{x.label} · <b>{money(x.amount)}</b> сум</span>
+                        <button onClick={() => removeExtra(x)} disabled={savingExtra} className="text-red-500 hover:underline text-xs shrink-0">удал.</button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                <div className="grid grid-cols-3 gap-2">
+                  <button
+                    disabled={savingExtra || hasLate || !q.LATE_CHECKOUT_15}
+                    onClick={() => addExtra({ kind: 'LATE_CHECKOUT_15' })}
+                    className={`${btn} bg-white border-amber-200 text-amber-900 hover:bg-amber-100`}
+                  >Поздний выезд до 15:00<br /><span className="text-amber-700">+20% · {money(q.LATE_CHECKOUT_15)}</span></button>
+                  <button
+                    disabled={savingExtra || hasLate || !q.LATE_CHECKOUT_18}
+                    onClick={() => addExtra({ kind: 'LATE_CHECKOUT_18' })}
+                    className={`${btn} bg-white border-amber-200 text-amber-900 hover:bg-amber-100`}
+                  >Поздний выезд до 18:00<br /><span className="text-amber-700">+30% · {money(q.LATE_CHECKOUT_18)}</span></button>
+                  <button
+                    disabled={savingExtra}
+                    onClick={() => setBedForm(bedForm ? null : { persons: 1, nights: q.nights || 1 })}
+                    className={`${btn} bg-white border-amber-200 text-amber-900 hover:bg-amber-100`}
+                  >Доп. место<br /><span className="text-amber-700">{money(q.EXTRA_BED || 300000)} / ночь</span></button>
+                </div>
+                {bedForm && (
+                  <div className="grid grid-cols-3 gap-2 items-end">
+                    <label className="text-xs text-amber-900">Доп. гостей
+                      <input type="number" min="1" value={bedForm.persons} onChange={(e) => setBedForm({ ...bedForm, persons: e.target.value })} className="input mt-0.5" />
+                    </label>
+                    <label className="text-xs text-amber-900">Ночей
+                      <input type="number" min="1" value={bedForm.nights} onChange={(e) => setBedForm({ ...bedForm, nights: e.target.value })} className="input mt-0.5" />
+                    </label>
+                    <span className="text-sm font-medium text-amber-900 pb-2">= {money((Number(bedForm.persons) || 0) * (Number(bedForm.nights) || 0) * (q.EXTRA_BED || 300000))} сум</span>
+                    <button
+                      disabled={savingExtra || !(Number(bedForm.persons) > 0) || !(Number(bedForm.nights) > 0)}
+                      onClick={() => addExtra({ kind: 'EXTRA_BED', persons: Number(bedForm.persons), nights: Number(bedForm.nights) })}
+                      className="col-span-3 px-3 py-2 rounded-lg bg-amber-600 text-white text-sm font-medium hover:bg-amber-700 disabled:opacity-50"
+                    >Добавить</button>
+                  </div>
+                )}
+                {q.base_night ? (
+                  <p className="text-xs text-amber-700">Поздний выезд — % от цены последней ночи ({money(q.base_night)} сум{Number(detail.discount_percent) ? `, со скидкой ${Number(detail.discount_percent)}%` : ''}). Сумма добавляется к брони; оплату проводите как обычно.</p>
+                ) : (
+                  <p className="text-xs text-amber-700">Сумма добавляется к брони; оплату проводите как обычно.</p>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Guest voucher: e-mail + download / (re)send */}
           {!['BLOCKED', 'CANCELLED', 'EXPIRED'].includes(detail.status) && (() => {
             const last = events.find((ev) => ev.action === 'email');
@@ -1088,12 +1198,13 @@ export default function Calendar({ businessUnit = 'RESORT', autoPrice = true, ti
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Скидка">
                   <select value={detailForm.discount} onChange={(e) => updateDetailForm({ discount: Number(e.target.value) })} className="input">
-                    {[0, 10, 15, 20, 25, 30, 50].map((d) => <option key={d} value={d}>{d ? `${d}%` : 'Без скидки'}</option>)}
+                    {[0, 5, 10, 15, 20, 25, 30, 50].map((d) => <option key={d} value={d}>{d ? `${d}%` : 'Без скидки'}</option>)}
                   </select>
                 </Field>
                 <Field label="Причина скидки">
                   <select value={detailForm.discount_reason} onChange={(e) => setDetailForm({ ...detailForm, discount_reason: e.target.value })} className="input" disabled={!detailForm.discount}>
                     <option value="">—</option>
+                    <option value="ONLINE_PAYMENT">Онлайн-оплата 100%</option>
                     <option value="VIP_GUEST">VIP гость</option>
                     <option value="BIRTHDAY">День рождения</option>
                     <option value="PROMOTION">Акция</option>

@@ -393,3 +393,11 @@ WALLET_TRANSACTION_TYPE_LABELS = {
     WalletTransactionType.EXPENSE: "Расход",
     WalletTransactionType.ADJUSTMENT: "Корректировка",
 }
+
+
+# Operator add-ons on a booking (calendar only) — see db.models.ReservationExtra.
+RESERVATION_EXTRA_LABELS = {
+    "LATE_CHECKOUT_15": "Поздний выезд до 15:00",
+    "LATE_CHECKOUT_18": "Поздний выезд до 18:00",
+    "EXTRA_BED": "Доп. место (доп. гость)",
+}

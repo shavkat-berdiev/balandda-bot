@@ -355,6 +355,9 @@ export const api = {
   getInactiveReservations: (limit = 200) => request(`/reservations/inactive?limit=${limit}`),
   acceptPayment: (id, data) => request(`/reservations/${id}/payment`, { method: 'POST', body: JSON.stringify(data) }),
   getReservationPayments: (id) => request(`/reservations/${id}/payments`),
+  getReservationExtras: (id) => request(`/reservations/${id}/extras`),
+  addReservationExtra: (id, body) => request(`/reservations/${id}/extras`, { method: 'POST', body: JSON.stringify(body) }),
+  deleteReservationExtra: (id, extraId) => request(`/reservations/${id}/extras/${extraId}`, { method: 'DELETE' }),
   editReservationPayment: (id, incomeId, data) => request(`/reservations/${id}/payments/${incomeId}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteReservationPayment: (id, incomeId) => request(`/reservations/${id}/payments/${incomeId}`, { method: 'DELETE' }),
   getAvailability: (checkIn, checkOut, guests = 1) =>

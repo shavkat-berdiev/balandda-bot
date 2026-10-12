@@ -28,6 +28,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.on_event("startup")
+async def _ensure_new_tables() -> None:
+    """Create tables the API reads before the bot's create_all has run.
+
+    The bot container creates the schema at its start; the API reloads new code
+    on its own, so a fresh table (reservation_extras, 2026-10) must not depend on
+    which container comes up first. checkfirst makes this a no-op afterwards.
+    """
+    from db.database import engine
+    from db.models import ReservationExtra
+
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(lambda c: ReservationExtra.__table__.create(c, checkfirst=True))
+    except Exception:  # noqa: BLE001 — never block API start on this
+        pass
+
+
 # API routes
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(transactions.router, prefix="/api/v1/transactions", tags=["transactions"])

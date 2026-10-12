@@ -28,7 +28,7 @@ from fastapi.responses import Response
 from services.octo_service import octo_prepare, octo_refund
 from db.database import get_session
 from db.hold_timing import add_working_minutes
-from db.pricing import load_rate_index, stay_total
+from db.pricing import load_rate_index, nightly_price, stay_total
 from services.customer_notify import (
     crm_notify,
     crm_request,
@@ -43,6 +43,7 @@ from db.enums import (
     PAYMENT_METHOD_LABELS,
     PaymentMethod,
     PrepaymentStatus,
+    RESERVATION_EXTRA_LABELS,
     RESERVATION_SOURCE_LABELS,
     RESERVATION_STATUS_LABELS,
     ReportStatus,
@@ -52,7 +53,7 @@ from db.enums import (
     WalletTransactionType,
 )
 from db.models import (
-    IncomeEntry, Prepayment, Property, Reservation, ReservationEvent,
+    IncomeEntry, Prepayment, Property, Reservation, ReservationEvent, ReservationExtra,
     StructuredReport, User, WalletTransaction,
 )
 
@@ -149,7 +150,7 @@ async def _stay_price(session, prop, ci, co):
 
 
 def _out(r: Reservation, property_name: str | None = None, income_paid: float = 0.0,
-         total_override: float | None = None) -> dict:
+         total_override: float | None = None, extras_total: float = 0.0) -> dict:
     st = r.status if isinstance(r.status, ReservationStatus) else ReservationStatus(r.status)
     sr = r.source if isinstance(r.source, ReservationSource) else ReservationSource(r.source)
     deposit = float(r.deposit_amount) if r.deposit_amount is not None else 0.0
@@ -179,6 +180,8 @@ def _out(r: Reservation, property_name: str | None = None, income_paid: float = 
         "balance": (total - paid) if total is not None else None,
         "discount_percent": float(r.discount_percent or 0),
         "discount_reason": r.discount_reason,
+        # Operator add-ons (late checkout, extra bed) — already INCLUDED in total_amount.
+        "extras_total": float(extras_total or 0),
         "customer_id": r.customer_id,
         "note": r.note,
         "telegram_username": r.telegram_username,
@@ -260,6 +263,20 @@ async def _log(session: AsyncSession, reservation_id: int, actor: dict, action: 
     await session.commit()
 
 
+async def _extras_sums(session: AsyncSession, res_ids: list[int]) -> dict[int, float]:
+    """{reservation_id: sum of operator add-ons} for the given bookings."""
+    if not res_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(ReservationExtra.reservation_id, func.coalesce(func.sum(ReservationExtra.amount), 0))
+            .where(ReservationExtra.reservation_id.in_(res_ids))
+            .group_by(ReservationExtra.reservation_id)
+        )
+    ).all()
+    return {rid: float(s) for (rid, s) in rows}
+
+
 @router.get("")
 async def list_reservations(
     from_: date = Query(..., alias="from"),
@@ -288,6 +305,7 @@ async def list_reservations(
             )
         ).all()
         income_by_res = {rid: float(s) for (rid, s) in sums}
+    extras_by_res = await _extras_sums(session, res_ids)
     # One rate index for the whole visible range — bookings with no stored total
     # fall back to a live, season-aware estimate.
     # Widen to the actual stay bounds: rows may start before `from_` or end after `to`.
@@ -306,7 +324,8 @@ async def list_reservations(
             total = float(r.total_amount)
         else:
             total = stay_total(idx, prop.id, r.check_in, r.check_out) or None
-        out.append(_out(r, prop.name_ru, income_by_res.get(r.id, 0.0), total))
+        out.append(_out(r, prop.name_ru, income_by_res.get(r.id, 0.0), total,
+                        extras_by_res.get(r.id, 0.0)))
     return out
 
 
@@ -514,7 +533,8 @@ async def update_reservation(
         base = await _stay_price(session, prop_new, res.check_in, res.check_out)
         if base is not None:
             pct = float(res.discount_percent or 0)
-            res.total_amount = round(base * (1 - pct / 100))
+            extras = (await _extras_sums(session, [res.id])).get(res.id, 0.0)
+            res.total_amount = round(base * (1 - pct / 100)) + round(extras)
             # Do NOT touch deposit_amount — it is read as "already prepaid".
 
     # Keep the guest base fresh if phone/name changed here.
@@ -905,7 +925,8 @@ async def _reservation_out(session: AsyncSession, res: Reservation) -> dict:
         float(res.total_amount) if res.total_amount is not None
         else await _stay_price(session, prop, res.check_in, res.check_out)
     )
-    return _out(res, prop.name_ru if prop else None, float(income), total)
+    extras = (await _extras_sums(session, [res.id])).get(res.id, 0.0)
+    return _out(res, prop.name_ru if prop else None, float(income), total, extras)
 
 
 async def _actor_name(session: AsyncSession, operator: int) -> str | None:
@@ -1126,6 +1147,179 @@ async def delete_payment(
     await session.delete(income)
     await session.commit()
     res = await session.get(Reservation, res_id)
+    return await _reservation_out(session, res)
+
+
+# ---- operator add-ons: late checkout / extra bed (calendar only) ----
+#
+# Not sold on the website or in the bots — the operator adds them on the booking
+# card when the guest asks. Each one raises total_amount, so the balance, the
+# «Добавить оплату» prefill and the Octo charge form pick it up with no extra work.
+
+EXTRA_BED_PRICE = 300_000          # UZS per extra person, per night
+
+EXTRA_KINDS = {
+    "LATE_CHECKOUT_15": {"label": RESERVATION_EXTRA_LABELS["LATE_CHECKOUT_15"], "percent": 20},
+    "LATE_CHECKOUT_18": {"label": RESERVATION_EXTRA_LABELS["LATE_CHECKOUT_18"], "percent": 30},
+    "EXTRA_BED": {"label": RESERVATION_EXTRA_LABELS["EXTRA_BED"], "unit_price": EXTRA_BED_PRICE},
+}
+_NO_EXTRAS = (ReservationStatus.BLOCKED, ReservationStatus.CANCELLED, ReservationStatus.EXPIRED)
+
+
+class ExtraInput(BaseModel):
+    kind: str
+    persons: int | None = None     # EXTRA_BED: extra guests (default 1)
+    nights: int | None = None      # EXTRA_BED: nights charged (default = the whole stay)
+    amount: float | None = None    # explicit override of the computed sum
+    note: str | None = None
+
+
+async def _extras_quote(session: AsyncSession, res: Reservation) -> dict:
+    """Suggested sums for the add-on buttons of one booking.
+
+    Late checkout is a mark-up on the price of the booking's LAST night (the night
+    the guest is extending out of), at the unit's live season-aware rate with the
+    booking's discount applied — the same number the calendar quotes for that night.
+    """
+    nights = max(1, (res.check_out - res.check_in).days)
+    last_night = res.check_out - timedelta(days=1)
+    base = 0
+    try:
+        idx = await load_rate_index(session, last_night, res.check_out, property_ids=[res.property_id])
+        base = nightly_price(idx, res.property_id, last_night)
+    except Exception:  # noqa: BLE001 — a quote must never break the card
+        base = 0
+    pct = float(res.discount_percent or 0)
+    base = round(base * (1 - pct / 100)) if base else 0
+    return {
+        "base_night": base,
+        "base_night_date": last_night.isoformat(),
+        "nights": nights,
+        "LATE_CHECKOUT_15": round(base * 0.20) if base else None,
+        "LATE_CHECKOUT_18": round(base * 0.30) if base else None,
+        "EXTRA_BED": EXTRA_BED_PRICE,
+    }
+
+
+def _extra_out(x: ReservationExtra) -> dict:
+    return {
+        "id": x.id, "kind": x.kind, "label": x.label,
+        "quantity": x.quantity, "unit_price": float(x.unit_price), "amount": float(x.amount),
+        "note": x.note, "actor_name": x.actor_name,
+        "created_at": x.created_at.isoformat() if x.created_at else None,
+    }
+
+
+@router.get("/{res_id}/extras")
+async def list_extras(
+    res_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    res = await session.get(Reservation, res_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="not found")
+    rows = (
+        await session.execute(
+            select(ReservationExtra).where(ReservationExtra.reservation_id == res_id)
+            .order_by(ReservationExtra.id)
+        )
+    ).scalars().all()
+    return {"items": [_extra_out(x) for x in rows], "quote": await _extras_quote(session, res)}
+
+
+@router.post("/{res_id}/extras")
+async def add_extra(
+    res_id: int,
+    data: ExtraInput,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Charge an add-on to the booking: raises total_amount by its sum."""
+    res = await session.get(Reservation, res_id)
+    if not res:
+        raise HTTPException(status_code=404, detail="not found")
+    if res.status in _NO_EXTRAS:
+        raise HTTPException(status_code=400, detail="К этой брони нельзя добавить услугу")
+    spec = EXTRA_KINDS.get(data.kind)
+    if not spec:
+        raise HTTPException(status_code=400, detail="Неизвестная услуга")
+    kinds_now = set((
+        await session.execute(
+            select(ReservationExtra.kind).where(ReservationExtra.reservation_id == res_id)
+        )
+    ).scalars().all())
+    if data.kind.startswith("LATE_CHECKOUT") and kinds_now & {"LATE_CHECKOUT_15", "LATE_CHECKOUT_18"}:
+        raise HTTPException(status_code=400, detail="Поздний выезд уже добавлен — удалите его, чтобы выбрать другой")
+
+    quote = await _extras_quote(session, res)
+    label = spec["label"]
+    if data.kind == "EXTRA_BED":
+        persons = max(1, int(data.persons or 1))
+        nights = max(1, int(data.nights or quote["nights"]))
+        quantity, unit_price = persons * nights, float(EXTRA_BED_PRICE)
+        computed = unit_price * quantity
+        label = f"{label} · {persons} чел. × {nights} ноч."
+    else:
+        quantity, unit_price = 1, float(quote[data.kind] or 0)
+        computed = unit_price
+        if quote["base_night"]:
+            label = f"{label} · {spec['percent']}% от {quote['base_night']:,} сум".replace(",", " ")
+    amount = round(float(data.amount)) if data.amount is not None else round(computed)
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Не удалось рассчитать сумму — укажите её вручную")
+    if data.amount is not None and round(computed) != amount:
+        unit_price = amount / quantity if quantity else amount
+
+    # Base the new total on the stored one; a booking with no stored total gets the
+    # live stay price first, exactly what the calendar was already showing for it.
+    if res.total_amount is None:
+        prop = await session.get(Property, res.property_id)
+        stay = await _stay_price(session, prop, res.check_in, res.check_out) or 0
+        pct = float(res.discount_percent or 0)
+        res.total_amount = round(stay * (1 - pct / 100)) + round(sum(
+            float(a) for a in (await session.execute(
+                select(ReservationExtra.amount).where(ReservationExtra.reservation_id == res_id)
+            )).scalars().all()
+        ))
+    res.total_amount = round(float(res.total_amount)) + amount
+
+    actor = await _actor_name(session, user.get("telegram_id")) or user.get("full_name")
+    x = ReservationExtra(
+        reservation_id=res_id, kind=data.kind, label=label[:120], quantity=quantity,
+        unit_price=round(unit_price, 2), amount=amount,
+        note=(data.note or None) and data.note[:255],
+        created_by=user.get("telegram_id"), actor_name=actor,
+    )
+    session.add(x)
+    await session.commit()
+    await _log(session, res_id, user, "extra",
+               f"Доп. услуга: {label} · +{amount:,} сум → итого {round(float(res.total_amount)):,} сум".replace(",", " "))
+    await session.refresh(res)
+    return await _reservation_out(session, res)
+
+
+@router.delete("/{res_id}/extras/{extra_id}")
+async def delete_extra(
+    res_id: int,
+    extra_id: int,
+    session: AsyncSession = Depends(get_session),
+    user: dict = Depends(get_current_user),
+):
+    """Remove an add-on: lowers total_amount by its sum. Payments already taken stay."""
+    res = await session.get(Reservation, res_id)
+    x = await session.get(ReservationExtra, extra_id)
+    if not res or not x or x.reservation_id != res_id:
+        raise HTTPException(status_code=404, detail="not found")
+    amount = round(float(x.amount))
+    label = x.label
+    if res.total_amount is not None:
+        res.total_amount = max(0, round(float(res.total_amount)) - amount)
+    await session.delete(x)
+    await session.commit()
+    await _log(session, res_id, user, "extra",
+               f"Доп. услуга удалена: {label} · −{amount:,} сум".replace(",", " "))
+    await session.refresh(res)
     return await _reservation_out(session, res)
 
 
