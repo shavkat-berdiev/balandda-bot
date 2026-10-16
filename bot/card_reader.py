@@ -10,7 +10,10 @@ are set in the environment. On startup it catches up on messages missed while
 the bot was down (by message id), then listens for new ones.
 """
 
+import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 
@@ -22,6 +25,12 @@ from db.models import CardTransaction
 logger = logging.getLogger(__name__)
 
 CATCHUP_LIMIT = 300  # max history messages to scan on startup
+WATCHDOG_INTERVAL = 60   # seconds between Telegram connection checks
+POLL_EVERY = 5           # history catch-up every N watchdog ticks (~5 min safety net)
+CATCHUP_POST_HOURS = 12  # missed IN transfers newer than this are still posted (marked delayed)
+DELAYED_AFTER_MIN = 5    # a caught-up transfer older than this is labelled 'delayed'
+
+_store_lock = asyncio.Lock()  # live handler and poller must not race on the same message
 
 _BUSINESS_LABELS = {"BALANDDA": "Balandda", "XUSH": "XUSH"}
 
@@ -30,7 +39,7 @@ def _fmt_amount(amount: float) -> str:
     return f"{amount:,.0f}".replace(",", " ")
 
 
-async def _notify_incoming(bot, tx: CardTransaction) -> None:
+async def _notify_incoming(bot, tx: CardTransaction, delayed: bool = False) -> None:
     """Real-time post of an incoming transfer into the business's bound topic.
 
     Deliberately NO owner-DM fallback: an unbound category means real-time
@@ -57,6 +66,8 @@ async def _notify_incoming(bot, tx: CardTransaction) -> None:
         f"🕓 {t}\n\n"
         f"Проверьте: есть ли этот перевод в отчёте / предоплате."
     )
+    if delayed:
+        text += "\n\n⏱ <i>Отправлено с задержкой (был сбой связи с Telegram)</i>"
     if not await send_via_route(bot, category, text):
         logger.info(
             f"Real-time card post skipped ({tx.business}): category {category} not bound to a topic"
@@ -72,6 +83,11 @@ def is_configured() -> bool:
 
 
 async def _store_message(msg_id: int, text: str) -> CardTransaction | None:
+    async with _store_lock:
+        return await _store_message_unlocked(msg_id, text)
+
+
+async def _store_message_unlocked(msg_id: int, text: str) -> CardTransaction | None:
     """Parse and store one CardXabar message. Returns the row if new+parsed."""
     parsed = parse_cardxabar_message(text)
     if parsed is None:
@@ -136,6 +152,72 @@ async def _resolve_chat(client):
     return None
 
 
+def _aware(dt: datetime) -> datetime:
+    return dt if dt.tzinfo else dt.replace(tzinfo=ZoneInfo(settings.timezone))
+
+
+async def _post_incoming(bot, tx: CardTransaction | None, delayed: bool = False) -> None:
+    if tx is None or bot is None or tx.direction != "IN" or not tx.business:
+        return
+    try:
+        await _notify_incoming(bot, tx, delayed=delayed)
+    except Exception as e:
+        logger.error(f"Card reader: real-time post failed: {e}", exc_info=True)
+
+
+async def _catch_up(client, chat, bot) -> int:
+    """Store CardXabar messages newer than the last stored one.
+
+    Incoming business transfers younger than CATCHUP_POST_HOURS are still
+    posted to their topic (labelled delayed if late); older ones are stored
+    silently so a first start or a long outage doesn't flood the group.
+    Dedup by tg_message_id guarantees nothing is posted twice.
+    """
+    last_id = await _last_stored_message_id()
+    new: list[CardTransaction] = []
+    async for msg in client.iter_messages(chat, min_id=last_id, limit=CATCHUP_LIMIT):
+        if msg.text:
+            tx = await _store_message(msg.id, msg.text)
+            if tx is not None:
+                new.append(tx)
+    now = datetime.now(timezone.utc)
+    for tx in sorted(new, key=lambda t: t.tg_message_id):
+        age = now - _aware(tx.tx_time)
+        if age <= timedelta(hours=CATCHUP_POST_HOURS):
+            await _post_incoming(bot, tx, delayed=age > timedelta(minutes=DELAYED_AFTER_MIN))
+    if new:
+        logger.info(f"Card reader: caught up {len(new)} missed transaction(s)")
+    return len(new)
+
+
+async def _watchdog(client, chat, bot) -> None:
+    """Keep the userbot alive.
+
+    Telethon gives up after a few failed reconnects (2026-10-16: a 6-minute
+    network blip at 06:30 left the reader dead all morning). This loop
+    reconnects whenever the client is down and periodically re-reads history
+    so nothing is missed even if live updates silently stall.
+    """
+    tick = 0
+    while True:
+        await asyncio.sleep(WATCHDOG_INTERVAL)
+        tick += 1
+        try:
+            if not client.is_connected():
+                logger.warning("Card reader: Telegram connection lost — reconnecting")
+                await client.connect()
+                logger.info("Card reader: reconnected to Telegram")
+                await _catch_up(client, chat, bot)
+                tick = 0
+            elif tick >= POLL_EVERY:
+                tick = 0
+                await _catch_up(client, chat, bot)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning(f"Card reader: watchdog error ({e.__class__.__name__}: {e}) — retrying")
+
+
 async def start_card_reader(bot=None):
     """Connect and start listening. Returns the client, or None if disabled/failed.
 
@@ -177,23 +259,13 @@ async def start_card_reader(bot=None):
             await client.disconnect()
             return None
 
-        # Catch up on messages missed while we were down
-        last_id = await _last_stored_message_id()
-        caught_up = 0
-        async for msg in client.iter_messages(chat, min_id=last_id, limit=CATCHUP_LIMIT):
-            if msg.text and await _store_message(msg.id, msg.text):
-                caught_up += 1
-        if caught_up:
-            logger.info(f"Card reader: caught up {caught_up} missed transaction(s)")
+        # Catch up on messages missed while we were down (recent IN ones get posted)
+        await _catch_up(client, chat, bot)
 
         async def _handle_live(event):
             tx = await _store_message(event.message.id, event.message.text)
             # Real-time group post for NEW incoming transfers on business cards
-            if tx is not None and bot is not None and tx.direction == "IN" and tx.business:
-                try:
-                    await _notify_incoming(bot, tx)
-                except Exception as e:
-                    logger.error(f"Card reader: real-time post failed: {e}", exc_info=True)
+            await _post_incoming(bot, tx)
 
         @client.on(events.NewMessage(chats=chat))
         async def _on_new_message(event):
@@ -212,7 +284,8 @@ async def start_card_reader(bot=None):
             except Exception as e:
                 logger.error(f"Card reader: failed to process edit: {e}", exc_info=True)
 
-        logger.info("Card reader started — listening to CardXabar")
+        client._card_watchdog = asyncio.create_task(_watchdog(client, chat, bot))
+        logger.info("Card reader started — listening to CardXabar (watchdog on)")
         return client
 
     except Exception as e:
