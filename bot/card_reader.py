@@ -29,6 +29,7 @@ WATCHDOG_INTERVAL = 60   # seconds between Telegram connection checks
 POLL_EVERY = 5           # history catch-up every N watchdog ticks (~5 min safety net)
 CATCHUP_POST_HOURS = 12  # missed IN transfers newer than this are still posted (marked delayed)
 DELAYED_AFTER_MIN = 5    # a caught-up transfer older than this is labelled 'delayed'
+CATCHUP_TIMEOUT = 120    # seconds; a catch-up stuck on a dead connection is abandoned
 
 _store_lock = asyncio.Lock()  # live handler and poller must not race on the same message
 
@@ -194,28 +195,50 @@ async def _watchdog(client, chat, bot) -> None:
     """Keep the userbot alive.
 
     Telethon gives up after a few failed reconnects (2026-10-16: a 6-minute
-    network blip at 06:30 left the reader dead all morning). This loop
-    reconnects whenever the client is down and periodically re-reads history
-    so nothing is missed even if live updates silently stall.
+    network blip left the reader dead all morning). This loop reconnects
+    whenever the client is down and periodically re-reads history so nothing
+    is missed even if live updates silently stall.
+
+    2026-11-06: right after a reconnect Telethon's update loop crashed and
+    dropped the connection, cancelling the in-flight catch-up request. That
+    CancelledError was re-raised and silently ended this loop for 2 days.
+    Now only a real cancellation of this task (shutdown) stops it.
     """
     tick = 0
     while True:
-        await asyncio.sleep(WATCHDOG_INTERVAL)
-        tick += 1
         try:
+            await asyncio.sleep(WATCHDOG_INTERVAL)
+            tick += 1
             if not client.is_connected():
                 logger.warning("Card reader: Telegram connection lost — reconnecting")
                 await client.connect()
                 logger.info("Card reader: reconnected to Telegram")
-                await _catch_up(client, chat, bot)
                 tick = 0
+                await asyncio.wait_for(_catch_up(client, chat, bot), CATCHUP_TIMEOUT)
             elif tick >= POLL_EVERY:
                 tick = 0
-                await _catch_up(client, chat, bot)
+                await asyncio.wait_for(_catch_up(client, chat, bot), CATCHUP_TIMEOUT)
         except asyncio.CancelledError:
-            raise
+            task = asyncio.current_task()
+            if task is not None and task.cancelling():
+                raise  # genuine shutdown
+            logger.warning("Card reader: Telegram request cancelled (connection dropped) — retrying")
         except Exception as e:
             logger.warning(f"Card reader: watchdog error ({e.__class__.__name__}: {e}) — retrying")
+
+
+def _start_watchdog(client, chat, bot) -> asyncio.Task:
+    """Run the watchdog and restart it if it ever ends for any reason but shutdown."""
+    task = asyncio.create_task(_watchdog(client, chat, bot))
+
+    def _on_done(t: asyncio.Task) -> None:
+        if t.cancelled():
+            return
+        logger.error(f"Card reader: watchdog stopped unexpectedly ({t.exception()!r}) — restarting it")
+        client._card_watchdog = _start_watchdog(client, chat, bot)
+
+    task.add_done_callback(_on_done)
+    return task
 
 
 async def start_card_reader(bot=None):
@@ -284,7 +307,7 @@ async def start_card_reader(bot=None):
             except Exception as e:
                 logger.error(f"Card reader: failed to process edit: {e}", exc_info=True)
 
-        client._card_watchdog = asyncio.create_task(_watchdog(client, chat, bot))
+        client._card_watchdog = _start_watchdog(client, chat, bot)
         logger.info("Card reader started — listening to CardXabar (watchdog on)")
         return client
 
